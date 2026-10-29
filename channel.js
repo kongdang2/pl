@@ -33,8 +33,55 @@
     const n = ch.rows.filter((m) => m.sender !== ME && m.id > seen.get()).length;
     $('chBadge').hidden = !n; $('chBadge').textContent = n > 99 ? '99+' : String(n);
   }
+  // 팝업 크기·위치: 가장자리 4곳과 모서리 4곳을 끌어 바꾼다. 내 브라우저에 기억(sonik.ch.box), 손잡이 두 번 누르면 처음 크기로
+  const box = {
+    get() { try { return JSON.parse(localStorage.getItem('sonik.ch.box') || 'null'); } catch (_) { return null; } },
+    set(v) { try { if (v) localStorage.setItem('sonik.ch.box', JSON.stringify(v)); else localStorage.removeItem('sonik.ch.box'); } catch (_) { /* 무시 */ } },
+  };
+  const MIN_W = 340, MIN_H = 320, wide = () => window.innerWidth > 600;
+  function place(b) {
+    const st = $('chCard').style;
+    if (!b || !wide()) { st.left = st.top = st.width = st.height = st.right = st.bottom = ''; return; }
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const w = Math.min(Math.max(b.w, MIN_W), vw - 16), h = Math.min(Math.max(b.h, MIN_H), vh - 16);
+    const l = Math.min(Math.max(b.l, 8), vw - w - 8), t = Math.min(Math.max(b.t, 8), vh - h - 8);
+    Object.assign(st, { left: l + 'px', top: t + 'px', width: w + 'px', height: h + 'px', right: 'auto', bottom: 'auto' });
+  }
+  function resizable() {
+    const card = $('chCard');
+    for (const d of ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']) {
+      const g = document.createElement('div');
+      g.className = 'ch-rz ch-rz-' + d;
+      g.ondblclick = () => { box.set(null); place(null); };
+      g.onpointerdown = (e) => {
+        if (e.button !== 0 || !wide()) return;
+        e.preventDefault(); g.setPointerCapture(e.pointerId);
+        const r = card.getBoundingClientRect(), x0 = e.clientX, y0 = e.clientY;
+        document.body.classList.add('ch-resizing'); document.body.style.cursor = getComputedStyle(g).cursor;
+        const mv = (ev) => {
+          const dx = ev.clientX - x0, dy = ev.clientY - y0, b = { l: r.left, t: r.top, w: r.width, h: r.height };
+          // 끄는 쪽 가장자리만 움직이고 반대쪽은 그대로 둔다(화면 밖으로는 늘리지 않음)
+          if (d.includes('e')) b.w = Math.min(r.width + dx, window.innerWidth - 8 - r.left);
+          if (d.includes('s')) b.h = Math.min(r.height + dy, window.innerHeight - 8 - r.top);
+          if (d.includes('w')) { b.w = Math.min(Math.max(r.width - dx, MIN_W), r.right - 8); b.l = r.right - b.w; }
+          if (d.includes('n')) { b.h = Math.min(Math.max(r.height - dy, MIN_H), r.bottom - 8); b.t = r.bottom - b.h; }
+          place(b);
+        };
+        const up = () => {
+          g.removeEventListener('pointermove', mv); g.removeEventListener('pointerup', up); g.removeEventListener('pointercancel', up);
+          document.body.classList.remove('ch-resizing'); document.body.style.cursor = '';
+          const q = card.getBoundingClientRect();
+          box.set({ l: Math.round(q.left), t: Math.round(q.top), w: Math.round(q.width), h: Math.round(q.height) });
+        };
+        g.addEventListener('pointermove', mv); g.addEventListener('pointerup', up); g.addEventListener('pointercancel', up);
+      };
+      card.appendChild(g);
+    }
+    window.addEventListener('resize', () => { if (ch.open) place(box.get()); });
+  }
   function setOpen(v) {
     ch.open = v;
+    if (v) place(box.get());
     $('chCard').hidden = !v;
     $('chFab').classList.toggle('open', v);
     if (v) { ch.lastTop = 0; load().then(() => { render(true); $('chBody').focus(); }); } else badge();
@@ -281,6 +328,7 @@
       // 캡처 이미지 붙여넣기(Ctrl+V)와 끌어놓기
       $('chBody').onpaste = (e) => { const fs = [...(e.clipboardData && e.clipboardData.files || [])]; if (fs.length) { e.preventDefault(); addFiles(fs); } };
       const card = $('chCard');
+      resizable();
       card.ondragover = (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { e.preventDefault(); card.classList.add('drop'); } };
       card.ondragleave = (e) => { if (e.target === card) card.classList.remove('drop'); };
       card.ondrop = (e) => { e.preventDefault(); card.classList.remove('drop'); addFiles(e.dataTransfer.files); };

@@ -399,8 +399,44 @@ function run(agent, input, resumeId, images, opt) {
 
 function keepLog(m, tag, out) { fs.writeFileSync(path.join(LOG_DIR, stamp().replace(/[-:T]/g, '') + '_' + m.id + '_' + tag + '.txt'), out); }
 
+// 웹 엔진 자동 갱신: 운영본이 바뀌어 Codex 「통과」가 나오면 웹테스트\웹엔진갱신.cjs 가 웹판을 만들고 검증해 웹에 올린다.
+// 중계는 10분마다 그 프로그램을 따로 띄운다(본 작업과는 따로, 자기끼리는 한 번에 하나). 「웹 엔진 갱신 다시 해줘」는 --force 로 바로 띄운다.
+const ENGINE_JOB = path.join(ROOT, '웹테스트', '웹엔진갱신.cjs');
+let engineRun = null;
+function engineCheck(force) {
+  if (engineRun || !fs.existsSync(ENGINE_JOB)) return false;
+  const p = cp.spawn(process.execPath, [ENGINE_JOB].concat(force ? ['--force'] : []), { cwd: ROOT, windowsHide: true });
+  let out = '';
+  p.stdout.on('data', (d) => { out += d; }); p.stderr.on('data', (d) => { out += d; });
+  p.on('error', (e) => { engineRun = null; log('웹 엔진 갱신 실행 실패', e.message); });
+  p.on('close', (code) => {
+    engineRun = null;
+    const last = out.trim().split('\n').pop() || '';
+    if (force || code || !/할 일 없음|대기|건너뜀/.test(last)) log('웹 엔진 갱신 끝', 'code', code, last);
+  });
+  engineRun = p;
+  return true;
+}
+async function engineLoop(once) {
+  for (;;) {
+    try { const ctl = await getRelay(); if (ctl && !ctl.paused) engineCheck(false); } catch (e) { log('웹 엔진 확인 오류', e.message); }
+    if (once) break;
+    await new Promise((r) => setTimeout(r, (conf.engineCheckMin || 10) * 60000));
+  }
+}
+const ENGINE_RETRY = /웹\s*엔진\s*(자동\s*)?갱신[^\n]{0,10}다시/;
+
 async function handle(m, ctl) {
   const quick = !!m.quick;
+  if (m.recipient !== 'Codex' && ENGINE_RETRY.test(m.body || '')) {
+    const ok = engineCheck(true);
+    await post({ sender: 'Claude', recipient: 'hong', topic: m.topic || '웹 엔진 자동 갱신', status: '안내', reply_to: m.id,
+      body: ok ? '[중계] 웹 엔진 갱신을 다시 시작했습니다. 끝나면 결과를 이 채널에 올립니다(웹 자동검증까지 보통 10~20분).'
+        : (fs.existsSync(ENGINE_JOB) ? '[중계] 웹 엔진 갱신이 이미 진행 중입니다. 끝나면 결과를 올립니다.' : '[중계] `웹테스트\\웹엔진갱신.cjs` 가 없어 시작하지 못했습니다.') });
+    await patchMsg(m.id, { status: '답변', run_state: '완료', run_note: '웹 엔진 갱신 ' + (ok ? '시작' : '못 함') });
+    log('웹 엔진 갱신 다시 요청 #' + m.id, ok ? '시작' : '못 함');
+    return;
+  }
   const ch = await chain(m, conf.contextMax || 30);
   const hops = hopsSinceHong(ch);
   if (hops >= ctl.max_hops) {
@@ -556,5 +592,5 @@ async function loop(quick, sec, once) {
   const beat = () => setRelay({ heartbeat: new Date().toISOString() }).catch((e) => log('신호 오류', e.message));
   await beat();
   if (!once) setInterval(beat, 30000);
-  await Promise.all([loop(false, conf.pollSec, once), loop(true, 8, once)]);
+  await Promise.all([loop(false, conf.pollSec, once), loop(true, 8, once), engineLoop(once)]);
 })().catch((e) => { log('중단', e.message); process.exit(1); });
