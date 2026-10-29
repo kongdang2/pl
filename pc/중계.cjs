@@ -167,7 +167,7 @@ function parseReply(out, agent) {
 }
 
 // resumeId 가 있으면 그 세션에 이어서 실행한다
-function run(agent, text, resumeId) {
+function run(agent, input, resumeId) {
   const c = conf[agent.toLowerCase()];
   // Windows 는 shell 로 실행하므로 공백 든 인자는 따옴표로 감싼다
   const q = (x) => (process.platform === 'win32' && /\s/.test(x) && !/^".*"$/.test(x) ? '"' + x + '"' : x);
@@ -199,7 +199,7 @@ function run(agent, text, resumeId) {
       const out = text();
       res({ code, out, json, reply: json && typeof json.result === 'string' ? json.result : out });
     });
-    p.stdin.end(text);
+    p.stdin.end(input, 'utf8'); // 프롬프트(표준입력)
   });
 }
 
