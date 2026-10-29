@@ -1,5 +1,6 @@
 // 소통 채널 — hong · Codex · Claude 가 주고받는 글(sk_channel)을 채팅 형태로 보여준다. 관리자(hong)와 에이전트 계정만 읽고 쓴다.
 // 상태: 대기(받는이가 답해야 함) → 답변 → 완료, 알림만이면 안내. hong 이 「모두」로 보내면 Claude → Codex 순서로 둘 다 답한다(셋이 대화). 글 내용은 고치지 않고 상태만 바꾼다.
+// 화면 오른쪽 아래 💬 버튼으로 여닫는 팝업이라 목록·시스템 화면 어디서나 쓴다. 닫혀 있으면 새 글 수를 버튼에 표시한다.
 // PC 중계(소통\중계.cjs)가 Codex·Claude 앞 「대기」 글을 실행하고 답을 올린다(sk_relay: 신호·멈춤).
 (function () {
   const $ = (id) => document.getElementById(id);
@@ -8,7 +9,10 @@
   const day = (s) => new Date(s).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' });
   const ME = 'hong', MINE = (m) => m.sender !== ME && (m.recipient === ME || m.recipient === '모두');
   const RUN = { 실행중: '⏳ 작업 중', 완료: '✓ 자동 처리', 실패: '✗ 자동 실패', 건너뜀: '⏸ 왕복 한도' };
-  const ch = { sb: null, rows: [], replyTo: null, timer: null, onlyMine: false, to: 'Claude', relay: null, lastTop: 0 };
+  const ch = { sb: null, rows: [], replyTo: null, timer: null, onlyMine: false, to: 'Claude', relay: null, lastTop: 0, open: false, tick: 0, pending: [], urls: {} };
+  const BUCKET = 'sonik-channel', MAXB = 20 * 1024 * 1024; // 첨부: 비공개 버킷, 파일당 20MB
+  // 마지막으로 본 글 번호(이 브라우저에만 저장). 저장이 막혀 있으면 배지만 덜 정확하다
+  const seen = { get() { try { return +localStorage.getItem('sonik.ch.seen') || 0; } catch (_) { return 0; } }, set(v) { try { localStorage.setItem('sonik.ch.seen', String(v)); } catch (_) { /* 무시 */ } } };
 
   async function load() {
     const { data, error } = await ch.sb.from('sk_channel').select('*').order('at', { ascending: false }).limit(150);
@@ -18,7 +22,22 @@
     const changed = sig(ch.rows) !== sig((data || []).slice().reverse());
     ch.rows = (data || []).reverse();
     if (changed) render(before !== (ch.rows.length && ch.rows[ch.rows.length - 1].id));
-    loadRelay();
+    if (ch.open) sign();
+    badge();
+    if (ch.open) loadRelay();
+  }
+  // 닫혀 있을 때: 내가 마지막으로 본 뒤 Codex·Claude 가 올린 글 수
+  function badge() {
+    const last = ch.rows.length ? ch.rows[ch.rows.length - 1].id : 0;
+    if (ch.open) { seen.set(last); $('chBadge').hidden = true; return; }
+    const n = ch.rows.filter((m) => m.sender !== ME && m.id > seen.get()).length;
+    $('chBadge').hidden = !n; $('chBadge').textContent = n > 99 ? '99+' : String(n);
+  }
+  function setOpen(v) {
+    ch.open = v;
+    $('chCard').hidden = !v;
+    $('chFab').classList.toggle('open', v);
+    if (v) { ch.lastTop = 0; load().then(() => { render(true); $('chBody').focus(); }); } else badge();
   }
 
   // PC 중계 상태: 마지막 신호가 90초 안이면 작동 중
@@ -48,17 +67,37 @@
       + '<div class="bub">'
       + (mine ? '<div class="to">→ ' + esc(m.recipient) + (m.topic ? ' · ' + esc(m.topic) : '') + '</div>' : m.topic ? '<div class="to">' + esc(m.topic) + '</div>' : '')
       + (re ? '<a class="quote" href="#ch' + re.id + '">' + esc(re.sender) + ': ' + esc(re.body.slice(0, 50)) + (re.body.length > 50 ? '…' : '') + '</a>' : '')
-      + '<div class="txt">' + esc(m.body) + '</div></div>'
+      + (m.body ? '<div class="txt">' + esc(m.body) + '</div>' : '') + atts(m) + '</div>'
       + '<div class="meta">' + (m.status !== '안내' ? '<span class="st st-' + esc(m.status) + '">' + esc(m.status) + '</span>' : '')
       + (m.run_state ? '<span class="run" title="' + esc(m.run_note || '') + '">' + RUN[m.run_state] + '</span>' : '')
       + '<span>' + esc(hm(m.at)) + '</span></div></div>'
       + '<div class="acts"><button data-re="' + m.id + '">답글</button>'
       + (m.status === '대기' || m.status === '답변' ? '<button data-done="' + m.id + '">완료</button>' : '') + '</div></div>';
   }
+  // 첨부: 이미지는 미리보기(누르면 원본), 나머지는 내려받기 링크. 주소는 1시간짜리 서명 주소
+  function atts(m) {
+    const fs = m.files || [];
+    if (!fs.length) return '';
+    return '<div class="atts">' + fs.map((f) => {
+      const u = ch.urls[f.path];
+      const kb = f.size ? ' (' + (f.size < 1048576 ? Math.ceil(f.size / 1024) + 'KB' : (f.size / 1048576).toFixed(1) + 'MB') + ')' : '';
+      if (/^image\//.test(f.type || '') && u) return '<a href="' + esc(u) + '" target="_blank" rel="noopener"><img src="' + esc(u) + '" alt="' + esc(f.name) + '" loading="lazy"></a>';
+      return u ? '<a href="' + esc(u) + '" target="_blank" rel="noopener" download="' + esc(f.name) + '">📄 ' + esc(f.name) + kb + '</a>' : '<span>📄 ' + esc(f.name) + kb + '</span>';
+    }).join('') + '</div>';
+  }
+  async function sign() {
+    if (Date.now() - (ch.signedAt || 0) > 50 * 60000) { ch.urls = {}; ch.signedAt = Date.now(); } // 1시간 만료 전에 새로 받는다
+    const need = [];
+    ch.rows.forEach((m) => (m.files || []).forEach((f) => { if (!ch.urls[f.path]) need.push(f.path); }));
+    if (!need.length) return;
+    const { data } = await ch.sb.storage.from(BUCKET).createSignedUrls(need, 3600);
+    (data || []).forEach((d) => { if (d.signedUrl) ch.urls[d.path] = d.signedUrl; });
+    render(false);
+  }
   function render(scroll) {
     const byId = new Map(ch.rows.map((m) => [m.id, m]));
     const waiting = ch.rows.filter((m) => MINE(m) && m.status === '대기').length;
-    $('chMine').textContent = '나에게 온 대기 ' + waiting;
+    $('chMine').textContent = '내 대기 ' + waiting;
     $('chMine').classList.toggle('on', ch.onlyMine);
     const list = ch.onlyMine ? ch.rows.filter((m) => MINE(m) && m.status === '대기') : ch.rows;
     let lastDay = '', html = '';
@@ -100,23 +139,46 @@
     if (error) { alertMsg('상태를 바꾸지 못했습니다: ' + error.message); return; }
     await load();
   }
+  function addFiles(list) {
+    for (const f of list) {
+      if (f.size > MAXB) { alertMsg(f.name + ' : 20MB 를 넘어 올릴 수 없습니다'); continue; }
+      ch.pending.push(f);
+    }
+    showPending();
+  }
+  function showPending() {
+    const box = $('chFiles');
+    box.hidden = !ch.pending.length;
+    box.innerHTML = ch.pending.map((f, i) => '<span><b>' + esc(f.name || '붙여넣은 이미지') + '</b><button data-x="' + i + '" title="빼기">×</button></span>').join('');
+    box.querySelectorAll('[data-x]').forEach((b) => { b.onclick = () => { ch.pending.splice(+b.getAttribute('data-x'), 1); showPending(); }; });
+  }
+  // 저장 이름은 영문·숫자만(한글 이름은 저장소 키로 쓸 수 없다). 원래 이름은 글의 files 에 남긴다
+  async function upload(f) {
+    const ext = ((f.name || '').match(/\.([A-Za-z0-9]{1,8})$/) || [, (f.type.split('/')[1] || 'bin').replace(/[^a-z0-9]/gi, '')])[1].toLowerCase();
+    const path = ME + '/' + new Date().toISOString().replace(/[-:.TZ]/g, '') + '_' + Math.random().toString(36).slice(2, 8) + '.' + ext;
+    const { error } = await ch.sb.storage.from(BUCKET).upload(path, f, { contentType: f.type || 'application/octet-stream' });
+    if (error) throw new Error((f.name || '이미지') + ' 올리기 실패: ' + error.message);
+    return { path, name: f.name || ('붙여넣은 이미지.' + ext), size: f.size, type: f.type || '' };
+  }
   function alertMsg(t) { $('chMsg').textContent = t; $('chMsg').hidden = !t; }
   function grow() { const t = $('chBody'); t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 160) + 'px'; }
   async function send() {
     const body = $('chBody').value.trim();
-    if (!body) return;
+    if (!body && !ch.pending.length) return;
     alertMsg('');
+    $('chSend').disabled = true;
+    let files = [];
+    try { for (const f of ch.pending) files.push(await upload(f)); } catch (e) { $('chSend').disabled = false; alertMsg(e.message); return; }
     const { data: s } = await ch.sb.auth.getSession();
     const re = ch.replyTo;
     const row = { sender: ME, recipient: ch.to, topic: re && re.topic ? re.topic : '', status: '대기',
-      reply_to: re ? re.id : null, body, author_email: (s.session.user.email || '').toLowerCase() };
-    $('chSend').disabled = true;
+      reply_to: re ? re.id : null, body, files, author_email: (s.session.user.email || '').toLowerCase() };
     const { error } = await ch.sb.from('sk_channel').insert(row);
     $('chSend').disabled = false;
     if (error) { alertMsg('보내지 못했습니다: ' + error.message); return; }
     // 나에게 온 대기 글에 답하면 원글은 「답변」
     if (re && MINE(re) && re.status === '대기') await setStatus(re.id, '답변');
-    $('chBody').value = ''; grow(); setReply(null);
+    $('chBody').value = ''; grow(); setReply(null); ch.pending = []; showPending();
     await load(); render(true);
   }
 
@@ -125,10 +187,12 @@
     mount(sb, me) {
       ch.sb = sb;
       const ok = me && me.role === 'admin';
-      $('chCard').hidden = !ok;
+      $('chFab').hidden = !ok;
       clearInterval(ch.timer);
-      if (!ok) return;
-      ch.lastTop = 0;
+      if (!ok) { $('chCard').hidden = true; return; }
+      $('chFab').onclick = () => setOpen(!ch.open);
+      $('chClose').onclick = () => setOpen(false);
+      if (!ch.keyed) { ch.keyed = true; document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ch.open && $('modal').hidden) setOpen(false); }); }
       $('chSend').onclick = send;
       $('chPause').onclick = togglePause;
       $('chMine').onclick = () => { ch.onlyMine = !ch.onlyMine; render(true); };
@@ -136,11 +200,19 @@
       document.querySelectorAll('#chTo button').forEach((b) => { b.onclick = () => setTo(b.getAttribute('data-to')); });
       setTo(ch.to);
       $('chBody').oninput = grow;
+      $('chAttach').onclick = () => $('chFile').click();
+      $('chFile').onchange = () => { addFiles($('chFile').files); $('chFile').value = ''; };
+      // 캡처 이미지 붙여넣기(Ctrl+V)와 끌어놓기
+      $('chBody').onpaste = (e) => { const fs = [...(e.clipboardData && e.clipboardData.files || [])]; if (fs.length) { e.preventDefault(); addFiles(fs); } };
+      const card = $('chCard');
+      card.ondragover = (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { e.preventDefault(); card.classList.add('drop'); } };
+      card.ondragleave = (e) => { if (e.target === card) card.classList.remove('drop'); };
+      card.ondrop = (e) => { e.preventDefault(); card.classList.remove('drop'); addFiles(e.dataTransfer.files); };
       // 한글 입력 중(조합 중) Enter 는 글자 확정이므로 보내지 않는다
       $('chBody').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); send(); } };
       load();
-      // 목록 화면이 보이는 동안 10초마다 새로 읽는다
-      ch.timer = setInterval(() => { if (!$('vList').hidden && !document.hidden) load(); }, 10000);
+      // 열려 있으면 10초마다, 닫혀 있으면 30초마다(배지용) 새로 읽는다
+      ch.timer = setInterval(() => { ch.tick++; if (!document.hidden && (ch.open || ch.tick % 3 === 0)) load(); }, 10000);
     },
   };
 })();

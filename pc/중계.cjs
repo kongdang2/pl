@@ -17,6 +17,7 @@ const LOGIN = process.env.SONIK_CODEX_LOGIN || path.join(os.homedir(), '.sonik-c
 const CONF_PATH = path.join(__dirname, '중계설정.json');
 const LOG_DIR = path.join(__dirname, '중계로그');
 const SESS_PATH = path.join(__dirname, '중계세션.json');
+const ATT_DIR = path.join(__dirname, '첨부'); // 웹에서 올린 이미지·파일을 글 번호별로 내려받는 곳
 // codex.exe 는 Codex 앱 안(%LOCALAPPDATA%\OpenAI\Codex\bin\<버전>\)에 있고 일반 PATH 에는 없다. 가장 최근 것을 쓴다.
 function findCodex() {
   const base = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'OpenAI', 'Codex', 'bin');
@@ -33,6 +34,7 @@ const DEF = {
   resume: true,        // 답글 사슬마다 같은 세션 이어 쓰기
   sessionTurns: 20,    // 한 세션에서 이만큼 답하면 새 세션
   sessionDays: 3,      // 마지막 사용 후 이만큼 지나면 새 세션
+  joinMin: 120,        // 답글이 아닌 새 글도 직전 글과 이 시간(분) 안이면 같은 대화(세션)로 이어 간다
   // 프롬프트는 표준입력으로 넘긴다(Windows 인자 길이·따옴표 문제 회피). 중계설정.json 으로 덮어쓸 수 있다.
   codex: { cmd: findCodex(), args: ['exec', '-C', '{ROOT}', '-s', 'workspace-write', '-'] },
   // claude 는 PATH 에 없어도 설치 위치(사용자 폴더 .local\bin)를 먼저 쓴다
@@ -96,7 +98,7 @@ function hopsSinceHong(ch) { let n = 0; for (let i = ch.length - 1; i >= 0 && ch
 function loadSess() { try { return JSON.parse(fs.readFileSync(SESS_PATH, 'utf8')); } catch (_) { return {}; } }
 function saveSess(all) {
   const old = Date.now() - 14 * 864e5;
-  for (const k of Object.keys(all)) if (new Date(all[k].at).getTime() < old) delete all[k];
+  for (const k of Object.keys(all)) if (all[k].at && new Date(all[k].at).getTime() < old) delete all[k];
   fs.writeFileSync(SESS_PATH, JSON.stringify(all, null, 1));
 }
 // 실행 출력에서 세션 번호를 찾는다: claude 는 --output-format json 의 session_id, codex 는 머리말의 "session id: …"
@@ -106,7 +108,32 @@ function sessionOf(agent, r) {
   return x ? x[1] : null;
 }
 
-const fmt = (m) => '#' + m.id + ' ' + m.sender + ' → ' + m.recipient + (m.topic ? ' · ' + m.topic : '') + ' · ' + m.status + '\n' + m.body;
+const fmt = (m) => '#' + m.id + ' ' + m.sender + ' → ' + m.recipient + (m.topic ? ' · ' + m.topic : '') + ' · ' + m.status + '\n' + m.body
+  + (m._local && m._local.length ? '\n[첨부 ' + m._local.length + '개 — 파일을 직접 열어 본다]\n' + m._local.map((f) => '  ' + f).join('\n') : '');
+
+// 글의 첨부(sk_channel.files, 비공개 버킷 sonik-channel)를 소통\첨부\<글번호>\ 에 내려받고 m._local 에 경로를 둔다
+async function fetchFiles(list) {
+  for (const m of list) {
+    if (m._local || !(m.files || []).length) continue;
+    m._local = [];
+    const dir = path.join(ATT_DIR, String(m.id));
+    fs.mkdirSync(dir, { recursive: true });
+    for (const f of m.files) {
+      const name = String(f.name || path.basename(f.path)).replace(/[\\/:*?"<>|]/g, '_');
+      const to = path.join(dir, name);
+      try {
+        if (!fs.existsSync(to)) {
+          if (!auth.tok || Date.now() > auth.exp) await login();
+          const r = await fetch(URL_ + '/storage/v1/object/sonik-channel/' + f.path.split('/').map(encodeURIComponent).join('/'), { headers: { apikey: KEY, Authorization: 'Bearer ' + auth.tok } });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          fs.writeFileSync(to, Buffer.from(await r.arrayBuffer()));
+        }
+        m._local.push(to);
+      } catch (e) { log('첨부 받기 실패 #' + m.id, f.name, e.message); m._local.push(to + ' (받기 실패: ' + e.message + ')'); }
+    }
+  }
+}
+const isImg = (p) => /\.(png|jpe?g|gif|webp|bmp)$/i.test(p);
 
 function prompt(agent, m, ch, group) {
   const other = agent === 'Codex' ? 'Claude' : 'Codex';
@@ -167,7 +194,7 @@ function parseReply(out, agent) {
 }
 
 // resumeId 가 있으면 그 세션에 이어서 실행한다
-function run(agent, input, resumeId) {
+function run(agent, input, resumeId, images) {
   const c = conf[agent.toLowerCase()];
   // Windows 는 shell 로 실행하므로 공백 든 인자는 따옴표로 감싼다
   const q = (x) => (process.platform === 'win32' && /\s/.test(x) && !/^".*"$/.test(x) ? '"' + x + '"' : x);
@@ -175,6 +202,11 @@ function run(agent, input, resumeId) {
   if (agent === 'Claude') {
     a = a.concat(['--output-format', 'json']);
     if (resumeId) a = a.concat(['--resume', resumeId]);
+  } else if (!resumeId && images && images.length) {
+    // codex exec -i 그림 … -   (새 세션에서만 이미지로 붙인다. 이어 쓰기에서는 경로만 알려 준다)
+    const tail = a[a.length - 1] === '-' ? a.pop() : null;
+    images.forEach((f) => a.push('-i', f));
+    if (tail) a.push(tail);
   } else if (resumeId) {
     // codex exec [옵션] resume <세션> -   (마지막 '-' = 표준입력 프롬프트)
     a = a[a.length - 1] === '-' ? a.slice(0, -1).concat(['resume', resumeId, '-']) : a.concat(['resume', resumeId]);
@@ -199,6 +231,7 @@ function run(agent, input, resumeId) {
       const out = text();
       res({ code, out, json, reply: json && typeof json.result === 'string' ? json.result : out });
     });
+    p.stdin.on('error', (e) => { note += '\n[중계] 입력 전달 실패: ' + e.message; }); // 프로그램이 입력을 읽기 전에 끝나도 중계는 계속
     p.stdin.end(input, 'utf8'); // 프롬프트(표준입력)
   });
 }
@@ -219,7 +252,7 @@ async function handle(m, ctl) {
   await setRelay({ busy_with: m.id });
   if (m.recipient !== '모두') {
     const ctx = ch.length > 1 ? ch : (await recent(m, [m.recipient], conf.recentMax || 10)).concat([m]);
-    const r = await runAgent(m.recipient, m, ch, ctx, false);
+    const r = await runAgent(m.recipient, m, ch, ctx, false, await rootOf(m, ch, ctx));
     if (!r.rep) await failed(m, m.recipient, r);
     else {
       await post({ sender: m.recipient, recipient: r.rep.to, topic: r.rep.topic || m.topic, status: r.rep.st, reply_to: m.id, body: r.rep.body });
@@ -230,8 +263,9 @@ async function handle(m, ctl) {
     // 「모두」: Claude 가 먼저 답하고, Codex 는 그 답까지 보고 이어서 답한다(둘 다 받는이 모두 · 안내)
     let ctx = ch.length > 1 ? ch : (await recent(m, ['Claude', 'Codex'], conf.recentMax || 10)).concat([m]);
     let cur = ch, last = m, ok = 0;
+    const root = await rootOf(m, ch, ctx);
     for (const agent of ['Claude', 'Codex']) {
-      const r = await runAgent(agent, m, cur, ctx, true);
+      const r = await runAgent(agent, m, cur, ctx, true, root);
       if (!r.rep) { await failed(m, agent, r, last.id); continue; }
       const [row] = await post({ sender: agent, recipient: '모두', topic: r.rep.topic || m.topic, status: '안내', reply_to: last.id, body: r.rep.body });
       cur = cur.concat([row]); ctx = ctx.concat([row]); last = row; ok++;
@@ -251,12 +285,34 @@ async function failed(m, agent, r, replyTo) {
 }
 
 // 한 담당을 실행한다. 같은 답글 사슬에서 쓰던 세션이 있으면 못 본 글만 넘겨 이어 쓰고, 안 되면 새 세션 + 글 흐름 전체
-async function runAgent(agent, m, ch, ctx, group) {
+// 이 글이 속한 대화의 첫 글 번호(세션 열쇠). 답글이면 사슬의 첫 글, 답글이 아니어도 직전 글과 joinMin 분 안이면 그 대화를 잇는다.
+// 이어 붙인 관계는 중계세션.json 의 roots 에 남긴다(나중 답글도 같은 세션으로 가도록)
+async function rootOf(m, ch, ctx) {
+  const all = loadSess(), roots = all.roots || (all.roots = {});
+  let root = m.id;
+  if (ch.length > 1) root = roots[ch[0].id] || ch[0].id;
+  else {
+    const prev = ctx.length > 1 ? ctx[ctx.length - 2] : null;
+    if (prev && new Date(m.at) - new Date(prev.at) < conf.joinMin * 60000) {
+      const pc = await chain(prev, conf.contextMax || 30);
+      root = roots[pc[0].id] || pc[0].id;
+    }
+  }
+  roots[m.id] = root;
+  saveSess(all);
+  return root;
+}
+
+async function runAgent(agent, m, ch, ctx, group, root) {
   await patchMsg(m.id, { run_state: '실행중', run_note: agent });
-  const all = loadSess(), key = agent + ':' + ch[0].id;
+  const all = loadSess(), key = agent + ':' + root;
   let s = conf.resume ? all[key] : null;
   if (s && (s.turns >= conf.sessionTurns || Date.now() - new Date(s.at).getTime() > conf.sessionDays * 864e5)) { log('새 세션(길이·기간 한도)', key); s = null; }
-  const fresh = s ? ch.filter((x) => x.id > s.lastId) : null;
+  // 세션이 아직 못 본 글: 이 사슬 + 앞 맥락(직전 대화) 중 마지막으로 본 글 뒤의 것
+  const seenIds = new Set();
+  const fresh = s ? ctx.concat(ch).filter((x) => x.id > s.lastId && !seenIds.has(x.id) && seenIds.add(x.id)).sort((a, b) => a.id - b.id) : null;
+  await fetchFiles(ctx.concat(fresh || []));
+  const imgs = (m._local || []).filter((f) => isImg(f) && fs.existsSync(f));
   let r, rep, resumed = false;
   if (s && fresh.length) {
     log('실행 #' + m.id, agent, '세션 이어 쓰기', s.id, '새 글', fresh.length);
@@ -267,13 +323,13 @@ async function runAgent(agent, m, ch, ctx, group) {
   }
   if (!resumed) {
     log('실행 #' + m.id, agent, '새 세션');
-    r = await run(agent, prompt(agent, m, ctx, group));
+    r = await run(agent, prompt(agent, m, ctx, group), null, imgs);
     rep = parseReply(r.reply, agent);
   }
   keepLog(m, agent, r.out);
   const sid = sessionOf(agent, r) || (resumed ? s.id : null);
   if (rep && sid && conf.resume) {
-    all[key] = { id: sid, turns: (resumed ? s.turns : 0) + 1, lastId: Math.max(...ch.map((x) => x.id)), at: new Date().toISOString() };
+    all[key] = { id: sid, turns: (resumed ? s.turns : 0) + 1, lastId: Math.max(...ctx.concat(ch).map((x) => x.id)), at: new Date().toISOString() };
     saveSess(all);
   }
   return Object.assign(r, { rep });

@@ -36,17 +36,6 @@
 </main>
 
 <main id="vList" class="page" hidden>
-  <section class="card chat" id="chCard" hidden>
-    <div class="chat-head"><b>💬 소통</b><span class="hint">hong · Claude · Codex</span><span class="grow"></span>
-      <span id="chRelay" class="ch-relay"></span><button id="chPause">⏸ 멈춤</button><button id="chMine">나에게 온 대기 0</button></div>
-    <div id="chRows" class="chat-rows"></div>
-    <div id="chReply" class="chat-reply" hidden><span id="chReplyTxt"></span><button id="chReplyX" title="답글 취소">×</button></div>
-    <div class="chat-input">
-      <div class="seg chat-to" id="chTo"><button data-to="Claude">Claude</button><button data-to="Codex">Codex</button><button data-to="모두">모두</button></div>
-      <div class="chat-box"><textarea id="chBody" rows="1"></textarea><button id="chSend" class="pri" title="보내기">➤</button></div>
-      <p id="chMsg" class="msg" hidden></p>
-    </div>
-  </section>
   <section class="card">
     <div class="row between"><h2>스냅샷</h2><div class="row">
       <label class="btn" id="lblUpSnap" hidden>PC 파일 올리기<input id="upSnap" type="file" accept=".json,application/json" hidden></label>
@@ -87,6 +76,20 @@
 <div id="rqView" class="modal" hidden><div class="modal-card wide"><div id="rvBody"></div><div class="row end"><button id="rvXlsx">엑셀로 받기</button><button id="rvClose" class="pri">닫기</button></div></div></div>
 
 <div id="modal" class="modal" hidden><div class="modal-card"><h3 id="mTitle"></h3><div id="mBody"></div><div class="row end"><button id="mCancel">취소</button><button id="mOk" class="pri">확인</button></div></div></div>
+<!-- 소통: 어느 화면에서나 오른쪽 아래 버튼으로 여닫는 채팅 팝업(관리자만) -->
+<button id="chFab" class="chat-fab" title="소통 (hong · Claude · Codex)" hidden>💬<span id="chBadge" class="chat-badge" hidden></span></button>
+<section class="card chat chat-pop" id="chCard" hidden>
+  <div class="chat-head"><b>💬 소통</b><span class="hint">hong · Claude · Codex</span><span class="grow"></span>
+    <span id="chRelay" class="ch-relay"></span><button id="chPause">⏸ 멈춤</button><button id="chMine" title="나에게 온 대기 글만 보기">내 대기 0</button><button id="chClose" title="닫기 (Esc)">✕</button></div>
+  <div id="chRows" class="chat-rows"></div>
+  <div id="chReply" class="chat-reply" hidden><span id="chReplyTxt"></span><button id="chReplyX" title="답글 취소">×</button></div>
+  <div class="chat-input">
+    <div class="seg chat-to" id="chTo"><button data-to="Claude">Claude</button><button data-to="Codex">Codex</button><button data-to="모두">모두</button></div>
+    <div id="chFiles" class="chat-files" hidden></div>
+    <div class="chat-box"><button id="chAttach" class="chat-clip" title="이미지·파일 첨부 (붙여넣기·끌어놓기도 됩니다)">📎</button><input id="chFile" type="file" multiple hidden><textarea id="chBody" rows="1"></textarea><button id="chSend" class="pri" title="보내기">➤</button></div>
+    <p id="chMsg" class="msg" hidden></p>
+  </div>
+</section>
 <div id="toast" class="toast" hidden></div>
 <div id="busy" class="busy" hidden><div class="spin"></div><div id="busyText"></div></div>
 

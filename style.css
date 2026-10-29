@@ -57,12 +57,18 @@ button:disabled{opacity:.5;cursor:default}
 .rq-log{padding-left:18px;font-size:13px}.rq-log li{margin:4px 0}.rq-log div{white-space:pre-wrap}
 .tag.st-접수{color:var(--pri2)}.tag.st-진행{color:var(--warn)}.tag.st-완료{color:var(--ok)}.tag.st-보류{color:var(--mut)}
 .card.chat{padding:0;overflow:hidden;display:flex;flex-direction:column}
+.chat-pop{position:fixed;right:20px;bottom:84px;width:min(440px,calc(100vw - 32px));height:min(680px,calc(100vh - 110px));margin:0;z-index:40;box-shadow:0 12px 36px rgba(0,0,0,.22)}
+.chat-fab{position:fixed;right:20px;bottom:20px;width:54px;height:54px;border-radius:50%;padding:0;font-size:24px;z-index:41;background:var(--pri);color:#fff;border:none;box-shadow:0 6px 18px rgba(0,0,0,.25);cursor:pointer}
+.chat-fab.open{background:var(--pri2)}
+.chat-pop .chat-head{flex-wrap:nowrap;white-space:nowrap}.chat-pop .chat-head>.hint{display:none}
+.chat-badge{position:absolute;top:-3px;right:-3px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:#D92D20;color:#fff;font-size:11.5px;line-height:20px;font-weight:600}
+@media (max-width:600px){.chat-pop{right:8px;left:8px;width:auto;bottom:76px;height:calc(100vh - 130px)}.chat-fab{right:12px;bottom:12px}}
 .chat-head{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .chat-head button{padding:3px 9px;font-size:12px}
 .ch-relay{font-size:12px;padding:2px 8px;border-radius:10px;border:1px solid var(--line)}
 .ch-relay.ok{color:var(--ok);border-color:var(--ok)}.ch-relay.warn{color:var(--warn);border-color:var(--warn)}.ch-relay.off{color:var(--mut)}
 #chMine.on{background:var(--warn);color:#fff;border-color:var(--warn)}
-.chat-rows{height:min(62vh,560px);overflow-y:auto;padding:10px 12px;background:rgba(127,127,127,.06)}
+.chat-rows{flex:1;min-height:0;overflow-y:auto;padding:10px 12px;background:rgba(127,127,127,.06)}
 .chat-rows .day{text-align:center;font-size:11.5px;color:var(--mut);margin:10px 0 6px}
 .chat-rows .center{text-align:center;margin-top:40px}
 .cm{display:flex;flex-direction:column;margin:6px 0;max-width:100%}
@@ -91,4 +97,13 @@ button:disabled{opacity:.5;cursor:default}
 .chat-box{display:flex;gap:6px;align-items:flex-end}
 .chat-box textarea{flex:1;resize:none;font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:18px;background:var(--card);color:var(--ink);max-height:160px}
 .chat-box button{border-radius:50%;width:38px;height:38px;padding:0;flex:none}
+.chat-box .chat-clip{background:none;border:1px solid var(--line);font-size:17px}
+.chat-files{display:flex;flex-wrap:wrap;gap:5px;margin:0 0 6px}
+.chat-files span{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:2px 4px 2px 9px;border:1px solid var(--line);border-radius:12px;max-width:100%}
+.chat-files span b{font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
+.chat-files button{padding:0 6px;border:none;background:none;font-size:13px}
+.cm .atts{display:flex;flex-direction:column;gap:4px;margin-top:6px}
+.cm .atts img{max-width:240px;max-height:200px;border-radius:8px;border:1px solid var(--line);cursor:zoom-in;display:block}
+.cm .atts a{font-size:12.5px;color:inherit;text-decoration:underline}
+.chat-pop.drop{outline:3px dashed var(--pri2);outline-offset:-6px}
 [hidden]{display:none!important}
