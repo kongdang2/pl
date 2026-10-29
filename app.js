@@ -1,6 +1,9 @@
 // 손익추정 웹 — 로그인 · 스냅샷 목록 · 엔진 열기/저장 · 관리자(빈 엔진 올리기, 명단)
 (function () {
   const C = window.SONIK_CONFIG, E = window.SonikEngine;
+  // 만료된 확인 메일 링크 등으로 주소 끝에 #error=… 가 남아 있으면, supabase-js 가 새로고침할 때마다
+  // 저장된 로그인을 지운다. 클라이언트를 만들기 전에 그런 주소 조각을 걷어낸다.
+  if (/(^#|&)error(_code)?=/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
   const sb = window.supabase.createClient(C.url, C.key);
   const $ = (id) => document.getElementById(id);
   const ROLE = { admin: '관리자', writer: '작성자', viewer: '열람자' };
@@ -32,6 +35,8 @@
   // ── 로그인 ─────────────────────────────────────────
   async function boot() {
     const { data } = await sb.auth.getSession();
+    // 확인 메일로 들어온 #access_token=… 은 한 번 쓰고 나면 주소에서 지운다(새로고침·공유 때 다시 쓰이지 않게)
+    if (/access_token=|refresh_token=/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
     st.user = data.session ? data.session.user : null;
     if (!st.user) { renderBar(); return show('vLogin'); }
     const email = (st.user.email || '').toLowerCase();
