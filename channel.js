@@ -1,29 +1,36 @@
-// 소통 채널 — hong · Codex · Claude 가 주고받는 글(sk_channel). 관리자(hong)와 에이전트 계정만 읽고 쓴다.
-// 상태: 대기(받는이가 답해야 함) → 답변 → 완료. 글 내용은 고치지 않고 상태만 바꾼다.
+// 소통 채널 — hong · Codex · Claude 가 주고받는 글(sk_channel)을 채팅 형태로 보여준다. 관리자(hong)와 에이전트 계정만 읽고 쓴다.
+// 상태: 대기(받는이가 답해야 함) → 답변 → 완료, 알림만이면 안내. 글 내용은 고치지 않고 상태만 바꾼다.
+// PC 중계(소통\중계.cjs)가 Codex·Claude 앞 「대기」 글을 실행하고 답을 올린다(sk_relay: 신호·멈춤).
 (function () {
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const fmtT = (s) => new Date(s).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const hm = (s) => new Date(s).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+  const day = (s) => new Date(s).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' });
   const ME = 'hong', MINE = (m) => m.recipient === ME || m.recipient === '모두';
-  const ch = { sb: null, rows: [], replyTo: null, timer: null, onlyMine: false };
+  const RUN = { 실행중: '⏳ 작업 중', 완료: '✓ 자동 처리', 실패: '✗ 자동 실패', 건너뜀: '⏸ 왕복 한도' };
+  const ch = { sb: null, rows: [], replyTo: null, timer: null, onlyMine: false, to: 'Claude', relay: null, lastTop: 0 };
 
   async function load() {
     const { data, error } = await ch.sb.from('sk_channel').select('*').order('at', { ascending: false }).limit(150);
     if (error) { $('chRows').innerHTML = '<p class="hint">채널을 읽지 못했습니다: ' + esc(error.message) + '</p>'; return; }
+    const before = ch.rows.length && ch.rows[ch.rows.length - 1].id;
+    const sig = (r) => r.map((m) => m.id + m.status + (m.run_state || '')).join();
+    const changed = sig(ch.rows) !== sig((data || []).slice().reverse());
     ch.rows = (data || []).reverse();
-    render();
+    if (changed) render(before !== (ch.rows.length && ch.rows[ch.rows.length - 1].id));
     loadRelay();
   }
-  // PC 중계 상태: 마지막 신호가 1분 안이면 작동 중
-  const RUN = { 실행중: '⏳ 실행중', 완료: '✓ 자동 처리', 실패: '✗ 자동 실패', 건너뜀: '⏸ 왕복 한도' };
+
+  // PC 중계 상태: 마지막 신호가 90초 안이면 작동 중
   async function loadRelay() {
     const { data: r } = await ch.sb.from('sk_relay').select('*').eq('id', 1).maybeSingle();
     ch.relay = r;
     if (!r) { $('chRelay').textContent = ''; return; }
     const alive = r.heartbeat && Date.now() - new Date(r.heartbeat).getTime() < 90000;
-    $('chRelay').innerHTML = 'PC 중계: ' + (r.paused ? '<b class="warn">멈춤</b>' : alive ? '<b class="ok">작동 중</b>' : '<b class="warn">꺼짐</b>')
-      + (r.busy_with ? ' · #' + r.busy_with + ' 실행 중' : '') + (r.heartbeat ? ' <span class="hint">마지막 신호 ' + esc(fmtT(r.heartbeat)) + '</span>' : '');
-    $('chPause').textContent = r.paused ? '▶ 다시 시작' : '⏸ 멈춤';
+    $('chRelay').className = 'ch-relay ' + (r.paused ? 'warn' : alive ? 'ok' : 'off');
+    $('chRelay').textContent = r.paused ? 'PC 중계 멈춤' : alive ? 'PC 중계 작동 중' : 'PC 중계 꺼짐';
+    $('chRelay').title = r.heartbeat ? '마지막 신호 ' + new Date(r.heartbeat).toLocaleString('ko-KR') : '';
+    $('chPause').textContent = r.paused ? '▶ 재개' : '⏸ 멈춤';
   }
   async function togglePause() {
     if (!ch.relay) return;
@@ -31,34 +38,58 @@
     if (error) { alertMsg('바꾸지 못했습니다: ' + error.message); return; }
     loadRelay();
   }
-  function render() {
+
+  function bubble(m, byId) {
+    const mine = m.sender === ME, re = m.reply_to && byId.get(m.reply_to);
+    const wait = MINE(m) && m.status === '대기';
+    return '<div class="cm ' + (mine ? 'me' : 'them s-' + esc(m.sender)) + (wait ? ' wait' : '') + '" id="ch' + m.id + '">'
+      + (mine ? '' : '<div class="who">' + esc(m.sender) + (m.recipient !== ME ? ' <span class="hint">→ ' + esc(m.recipient) + '</span>' : '') + '</div>')
+      + '<div class="line">'
+      + '<div class="bub">'
+      + (mine ? '<div class="to">→ ' + esc(m.recipient) + (m.topic ? ' · ' + esc(m.topic) : '') + '</div>' : m.topic ? '<div class="to">' + esc(m.topic) + '</div>' : '')
+      + (re ? '<a class="quote" href="#ch' + re.id + '">' + esc(re.sender) + ': ' + esc(re.body.slice(0, 50)) + (re.body.length > 50 ? '…' : '') + '</a>' : '')
+      + '<div class="txt">' + esc(m.body) + '</div></div>'
+      + '<div class="meta">' + (m.status !== '안내' ? '<span class="st st-' + esc(m.status) + '">' + esc(m.status) + '</span>' : '')
+      + (m.run_state ? '<span class="run" title="' + esc(m.run_note || '') + '">' + RUN[m.run_state] + '</span>' : '')
+      + '<span>' + esc(hm(m.at)) + '</span></div></div>'
+      + '<div class="acts"><button data-re="' + m.id + '">답글</button>'
+      + (m.status === '대기' || m.status === '답변' ? '<button data-done="' + m.id + '">완료</button>' : '') + '</div></div>';
+  }
+  function render(scroll) {
     const byId = new Map(ch.rows.map((m) => [m.id, m]));
     const waiting = ch.rows.filter((m) => MINE(m) && m.status === '대기').length;
     $('chMine').textContent = '나에게 온 대기 ' + waiting;
     $('chMine').classList.toggle('on', ch.onlyMine);
     const list = ch.onlyMine ? ch.rows.filter((m) => MINE(m) && m.status === '대기') : ch.rows;
-    $('chRows').innerHTML = list.length ? list.map((m) => {
-      const re = m.reply_to && byId.get(m.reply_to);
-      return '<div class="ch-msg s-' + esc(m.sender) + (MINE(m) && m.status === '대기' ? ' wait' : '') + '" id="ch' + m.id + '">'
-        + '<div class="ch-head"><b>' + esc(m.sender) + '</b> → ' + esc(m.recipient) + (m.topic ? ' · <span class="mono">' + esc(m.topic) + '</span>' : '')
-        + ' <span class="tag ch-' + esc(m.status) + '">' + esc(m.status) + '</span>' + (m.run_state ? ' <span class="tag run" title="' + esc(m.run_note || '') + '">' + RUN[m.run_state] + '</span>' : '') + ' <span class="hint">#' + m.id + ' · ' + esc(fmtT(m.at)) + '</span>'
-        + (m.reply_to ? ' <a class="hint" href="#ch' + m.reply_to + '">↩ #' + m.reply_to + (re ? ' ' + esc(re.sender) : '') + '</a>' : '') + '</div>'
-        + '<div class="ch-body">' + esc(m.body) + '</div>'
-        + '<div class="row ch-act"><button data-re="' + m.id + '">답글</button>'
-        + (m.status !== '완료' && m.status !== '안내' ? '<button data-done="' + m.id + '">완료로</button>' : '') + '</div></div>';
-    }).join('') : '<p class="hint">' + (ch.onlyMine ? '나에게 온 대기 글이 없습니다.' : '아직 글이 없습니다.') + '</p>';
-    $('chRows').querySelectorAll('[data-re]').forEach((b) => { b.onclick = () => setReply(+b.getAttribute('data-re')); });
-    $('chRows').querySelectorAll('[data-done]').forEach((b) => { b.onclick = () => setStatus(+b.getAttribute('data-done'), '완료'); });
-    if (!ch.onlyMine) $('chRows').scrollTop = $('chRows').scrollHeight;
+    let lastDay = '', html = '';
+    list.forEach((m) => {
+      const d = day(m.at);
+      if (d !== lastDay) { html += '<div class="day">' + esc(d) + '</div>'; lastDay = d; }
+      html += bubble(m, byId);
+    });
+    // 중계가 실행 중인 글이 있으면 받는이가 「작업 중」인 말풍선
+    ch.rows.filter((m) => m.run_state === '실행중').forEach((m) => {
+      html += '<div class="cm them s-' + esc(m.recipient) + '"><div class="who">' + esc(m.recipient) + '</div><div class="line"><div class="bub typing">작업 중<i>.</i><i>.</i><i>.</i></div></div></div>';
+    });
+    const box = $('chRows'), atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+    box.innerHTML = html || '<p class="hint center">' + (ch.onlyMine ? '나에게 온 대기 글이 없습니다.' : '아직 대화가 없습니다. 아래에서 첫 글을 보내 보세요.') + '</p>';
+    box.querySelectorAll('[data-re]').forEach((b) => { b.onclick = () => setReply(+b.getAttribute('data-re')); });
+    box.querySelectorAll('[data-done]').forEach((b) => { b.onclick = () => setStatus(+b.getAttribute('data-done'), '완료'); });
+    if (scroll || atBottom || !ch.lastTop) box.scrollTop = box.scrollHeight;
+    ch.lastTop = 1;
+  }
+  function setTo(to) {
+    ch.to = to;
+    document.querySelectorAll('#chTo button').forEach((b) => b.classList.toggle('on', b.getAttribute('data-to') === to));
+    $('chBody').placeholder = to === '모두' ? '모두에게 알림 (답이 필요 없는 글)' : to + '에게 보내기 (Shift+Enter 줄바꿈)';
   }
   function setReply(id) {
     const m = ch.rows.find((x) => x.id === id);
     ch.replyTo = m || null;
     $('chReply').hidden = !m;
     if (m) {
-      $('chReplyTxt').textContent = '↩ #' + m.id + ' ' + m.sender + ': ' + m.body.slice(0, 60);
-      if (m.sender !== ME) $('chTo').value = m.sender;
-      if (m.topic) $('chTopic').value = m.topic;
+      $('chReplyTxt').textContent = '↩ ' + m.sender + ': ' + m.body.slice(0, 60);
+      if (m.sender !== ME) setTo(m.sender);
       $('chBody').focus();
     }
   }
@@ -67,22 +98,24 @@
     if (error) { alertMsg('상태를 바꾸지 못했습니다: ' + error.message); return; }
     await load();
   }
-  function alertMsg(t) { $('chMsg').textContent = t; }
+  function alertMsg(t) { $('chMsg').textContent = t; $('chMsg').hidden = !t; }
+  function grow() { const t = $('chBody'); t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 160) + 'px'; }
   async function send() {
     const body = $('chBody').value.trim();
-    if (!body) { alertMsg('내용을 쓰세요.'); return; }
+    if (!body) return;
     alertMsg('');
     const { data: s } = await ch.sb.auth.getSession();
-    const row = { sender: ME, recipient: $('chTo').value, topic: $('chTopic').value.trim(), status: $('chKind').value,
-      reply_to: ch.replyTo ? ch.replyTo.id : null, body, author_email: (s.session.user.email || '').toLowerCase() };
+    const re = ch.replyTo;
+    const row = { sender: ME, recipient: ch.to, topic: re && re.topic ? re.topic : '', status: ch.to === '모두' ? '안내' : '대기',
+      reply_to: re ? re.id : null, body, author_email: (s.session.user.email || '').toLowerCase() };
     $('chSend').disabled = true;
     const { error } = await ch.sb.from('sk_channel').insert(row);
     $('chSend').disabled = false;
     if (error) { alertMsg('보내지 못했습니다: ' + error.message); return; }
     // 나에게 온 대기 글에 답하면 원글은 「답변」
-    if (ch.replyTo && MINE(ch.replyTo) && ch.replyTo.status === '대기') await setStatus(ch.replyTo.id, '답변');
-    $('chBody').value = ''; setReply(null);
-    await load();
+    if (re && MINE(re) && re.status === '대기') await setStatus(re.id, '답변');
+    $('chBody').value = ''; grow(); setReply(null);
+    await load(); render(true);
   }
 
   window.SonikChannel = {
@@ -93,15 +126,19 @@
       $('chCard').hidden = !ok;
       clearInterval(ch.timer);
       if (!ok) return;
+      ch.lastTop = 0;
       $('chSend').onclick = send;
-      $('chReload').onclick = load;
       $('chPause').onclick = togglePause;
-      $('chMine').onclick = () => { ch.onlyMine = !ch.onlyMine; render(); };
+      $('chMine').onclick = () => { ch.onlyMine = !ch.onlyMine; render(true); };
       $('chReplyX').onclick = () => setReply(null);
-      $('chBody').onkeydown = (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) send(); };
+      document.querySelectorAll('#chTo button').forEach((b) => { b.onclick = () => setTo(b.getAttribute('data-to')); });
+      setTo(ch.to);
+      $('chBody').oninput = grow;
+      // 한글 입력 중(조합 중) Enter 는 글자 확정이므로 보내지 않는다
+      $('chBody').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); send(); } };
       load();
-      // 목록 화면이 보이는 동안 20초마다 새로 읽는다
-      ch.timer = setInterval(() => { if (!$('vList').hidden && !document.hidden) load(); }, 20000);
+      // 목록 화면이 보이는 동안 10초마다 새로 읽는다
+      ch.timer = setInterval(() => { if (!$('vList').hidden && !document.hidden) load(); }, 10000);
     },
   };
 })();

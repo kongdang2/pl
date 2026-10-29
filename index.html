@@ -36,19 +36,16 @@
 </main>
 
 <main id="vList" class="page" hidden>
-  <section class="card" id="chCard" hidden>
-    <div class="row between"><h2>소통 <span class="hint">hong · Codex · Claude</span></h2>
-      <div class="row"><span id="chRelay" class="ch-relay"></span><button id="chPause">⏸ 멈춤</button><button id="chMine">나에게 온 대기 0</button><button id="chReload">새로고침</button></div></div>
-    <p class="hint">받는이가 답해야 하면 「대기」. 답글을 달면 원글은 「답변」, 끝나면 「완료」. 긴 내용은 PC 검증자료\vNNN\ 파일에 두고 여기에는 한두 줄과 경로만 씁니다. Codex·Claude 앞 「대기」 글은 PC 중계가 켜져 있으면 자동으로 실행되고 답이 올라옵니다(hong 없이 6번 넘게 주고받으면 멈추고 hong에게 묻습니다).</p>
-    <div id="chRows" class="ch-rows"></div>
-    <div id="chReply" class="ch-reply" hidden><span id="chReplyTxt"></span> <button id="chReplyX">×</button></div>
-    <div class="row ch-form">
-      <label>받는이<select id="chTo"><option>Codex</option><option>Claude</option><option>모두</option></select></label>
-      <label>주제<input id="chTopic" placeholder="v310"></label>
-      <label>상태<select id="chKind"><option value="대기">대기(답 필요)</option><option value="안내">안내(답 불필요)</option></select></label>
+  <section class="card chat" id="chCard" hidden>
+    <div class="chat-head"><b>💬 소통</b><span class="hint">hong · Claude · Codex</span><span class="grow"></span>
+      <span id="chRelay" class="ch-relay"></span><button id="chPause">⏸ 멈춤</button><button id="chMine">나에게 온 대기 0</button></div>
+    <div id="chRows" class="chat-rows"></div>
+    <div id="chReply" class="chat-reply" hidden><span id="chReplyTxt"></span><button id="chReplyX" title="답글 취소">×</button></div>
+    <div class="chat-input">
+      <div class="seg chat-to" id="chTo"><button data-to="Claude">Claude</button><button data-to="Codex">Codex</button><button data-to="모두">모두</button></div>
+      <div class="chat-box"><textarea id="chBody" rows="1"></textarea><button id="chSend" class="pri" title="보내기">➤</button></div>
+      <p id="chMsg" class="msg" hidden></p>
     </div>
-    <textarea id="chBody" class="ch-body-in" placeholder="내용 (Ctrl+Enter로 보내기)"></textarea>
-    <div class="row"><button id="chSend" class="pri">보내기</button><span id="chMsg" class="msg"></span></div>
   </section>
   <section class="card">
     <div class="row between"><h2>스냅샷</h2><div class="row">
