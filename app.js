@@ -94,6 +94,7 @@
     $('snapRows').querySelectorAll('[data-bk]').forEach((b) => { b.onclick = () => showBackups(b.getAttribute('data-bk')); });
     if (st.me.role === 'admin') loadMembers();
     loadRequests();
+    if (window.SonikChannel) window.SonikChannel.mount(sb, st.me);
   }
 
   async function fetchSnapDb(snap) {
