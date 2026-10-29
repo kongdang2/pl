@@ -26,6 +26,8 @@
     try { await sb.from('sk_log').insert({ email: st.me.email, action, snapshot_id: snapshotId || null, detail: detail || '' }); } catch (_) { /* 기록 실패는 무시 */ }
   }
   const canWrite = () => st.me && (st.me.role === 'admin' || st.me.role === 'writer');
+  // 덮어쓸 수 있는 스냅샷 = 내가 웹에서 저장한 것(PC 원본·남의 것·백업본은 첫 저장 때 새 스냅샷)
+  const isOwnWeb = (s) => s && !s.backupOf && s.source === 'web' && s.author_email === (st.me && st.me.email);
 
   // ── 로그인 ─────────────────────────────────────────
   async function boot() {
@@ -44,8 +46,8 @@
     $('btnLogout').hidden = !st.user;
     const inEngine = !$('vEngine').hidden;
     $('btnBack').hidden = !inEngine;
-    $('btnSave').hidden = !(inEngine && canWrite());
-    $('ctx').textContent = inEngine && st.open ? (st.open.base_ym + ' · ' + (st.open.engine_ver || '버전 미상') + ' · ' + (st.open.memo || '')) : '';
+    $('btnSave').hidden = $('btnSaveNew').hidden = !(inEngine && canWrite());
+    $('ctx').textContent = inEngine && st.open ? (st.open.base_ym + ' · ' + (st.open.engine_ver || '버전 미상') + ' · ' + (st.open.memo || '') + (st.open.backupOf ? ' · 백업본' : isOwnWeb(st.open) ? ' · 저장하면 이 스냅샷에 덮어씀' : ' · 첫 저장은 새 스냅샷')) : '';
   }
   $('btnLogin').onclick = async () => {
     $('loginMsg').textContent = '';
@@ -71,7 +73,7 @@
     $('adminCard').hidden = st.me.role !== 'admin';
     const [{ data: eng }, { data: snaps, error }] = await Promise.all([
       sb.from('sk_engines').select('*').eq('is_current', true).maybeSingle(),
-      sb.from('sk_snapshots').select('*').order('created_at', { ascending: false }).limit(200),
+      sb.from('sk_snapshots').select('*').order('updated_at', { ascending: false }).limit(200),
     ]);
     if (error) { toast('목록을 읽지 못했습니다: ' + error.message); return; }
     st.engine = eng; st.snaps = snaps || [];
@@ -82,12 +84,13 @@
       const old = eng && s.engine_ver && sameBase(s.engine_ver) !== sameBase(eng.ver);
       return '<tr><td><b>' + esc(s.base_ym) + '</b></td><td>' + esc(s.engine_ver || '—') + (old ? ' <span class="tag old">엔진과 다름</span>' : '') + '</td>'
         + '<td><span class="tag ' + s.source + '">' + (s.source === 'pc' ? 'PC 원본' : '웹 저장') + '</span></td>'
-        + '<td class="memo">' + esc(s.memo) + '</td><td>' + esc(s.author_name || s.author_email) + '</td><td>' + esc(fmtT(s.created_at)) + '</td>'
+        + '<td class="memo">' + esc(s.memo) + '</td><td>' + esc(s.author_name || s.author_email) + '</td><td>' + esc(fmtT(s.updated_at || s.created_at)) + (s.rev > 1 ? ' <span class="hint">(' + s.rev + '회 저장)</span>' : '') + '</td>'
         + '<td><button data-open="' + s.id + '"' + (eng ? '' : ' disabled') + '>열기</button>'
-        + ' <button data-dl="' + s.id + '">JSON</button></td></tr>';
+        + ' <button data-dl="' + s.id + '">JSON</button>' + (s.rev > 1 ? ' <button data-bk="' + s.id + '">이전 저장</button>' : '') + '</td></tr>';
     }).join('') : '<tr><td colspan="7" class="hint">아직 스냅샷이 없습니다.</td></tr>';
     $('snapRows').querySelectorAll('[data-open]').forEach((b) => { b.onclick = () => openSnap(b.getAttribute('data-open')); });
     $('snapRows').querySelectorAll('[data-dl]').forEach((b) => { b.onclick = () => downloadSnap(b.getAttribute('data-dl')); });
+    $('snapRows').querySelectorAll('[data-bk]').forEach((b) => { b.onclick = () => showBackups(b.getAttribute('data-bk')); });
     if (st.me.role === 'admin') loadMembers();
   }
 
@@ -103,7 +106,7 @@
       const db = await fetchSnapDb(s);
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob([JSON.stringify(db)], { type: 'application/json' }));
-      a.download = '손익추정DB_전체_' + s.base_ym + '_' + (s.source === 'pc' ? 'PC' : '웹') + '_' + s.created_at.slice(0, 16).replace(/[-:T]/g, '') + '.json';
+      a.download = '손익추정DB_전체_' + s.base_ym + '_' + (s.source === 'pc' ? 'PC' : '웹') + '_' + (s.updated_at || s.created_at).slice(0, 16).replace(/[-:T]/g, '') + '.json';
       a.click(); URL.revokeObjectURL(a.href);
       log('download', s.id);
     } catch (e) { toast(e.message, 6000); }
@@ -113,7 +116,8 @@
   // ── 스냅샷 올리기(PC 원본 .json) ──────────────────
   async function putSnapshot(db, meta) {
     const id = crypto.randomUUID();
-    const path = 'snapshots/' + id + '.json.gz';
+    // 웹 저장본은 snapshots/<id>/ 아래(덮어쓸 때 옛 백업을 작성자가 정리), PC 원본은 snapshots/<id>.json.gz(관리자만 삭제)
+    const path = meta.source === 'web' ? 'snapshots/' + id + '/r1.json.gz' : 'snapshots/' + id + '.json.gz';
     const gz = await E.gzip(JSON.stringify(db));
     const up = await sb.storage.from(C.bucket).upload(path, gz, { contentType: 'application/gzip', upsert: false });
     if (up.error) throw new Error('파일 올리기 실패: ' + up.error.message);
@@ -149,8 +153,9 @@
     return html;
   }
   function unmount() { if (st.mounted) { st.mounted.dispose(); st.mounted = null; } $('engineBox').innerHTML = ''; st.open = null; }
-  async function openSnap(id) {
-    const s = st.snaps.find((x) => x.id === id); if (!s || !st.engine) return;
+  async function openSnap(id, backup) {
+    const s0 = st.snaps.find((x) => x.id === id); if (!s0 || !st.engine) return;
+    const s = backup ? Object.assign({}, s0, { storage_path: backup.storage_path, backupOf: s0.id, memo: s0.memo + ' (' + backup.rev + '번째 저장)', updated_at: backup.saved_at }) : s0;
     if (s.engine_ver && sameBase(s.engine_ver) !== sameBase(st.engine.ver)) {
       const go = await ask('엔진 버전이 다릅니다', '<p>이 스냅샷은 <b>' + esc(s.engine_ver) + '</b>에서 만들었고 웹 엔진은 <b>' + esc(st.engine.ver) + '</b>입니다.</p><p class="hint">계산 로직이 바뀐 버전이면 재현검증에서 차이가 표시될 수 있습니다. 열까요?</p>');
       if (!go) return;
@@ -165,28 +170,68 @@
       await new Promise((r) => setTimeout(r, 50));
       const r = st.mounted.bridge.applyDb(db);
       const n = r.verify ? r.verify.diffs.length : null;
-      log('open', s.id, n == null ? 'verify 없음' : ('diffs=' + n));
+      log('open', s.id, (backup ? 'rev=' + backup.rev + ' ' : '') + (n == null ? 'verify 없음' : ('diffs=' + n)));
     } catch (e) { toast(e.message, 8000); await loadList(); }
     busy(null);
   }
-  function onEngineMsg(m) { if (m.type === 'sonik:save') saveFromEngine(); }
-  async function saveFromEngine() {
-    if (!st.mounted || !st.open) return;
+  function onEngineMsg(m) { if (m.type === 'sonik:save') saveFromEngine(false); }
+  // 저장: 내 웹 스냅샷이면 덮어쓰기(직전 3개는 숨은 백업으로 남음), 아니면 첫 저장만 새 스냅샷. asNew = 「새 버전으로 저장」
+  async function saveFromEngine(asNew) {
+    if (!st.mounted || !st.open || saveFromEngine.busy) return;
     if (!canWrite()) { toast('열람 권한이라 저장할 수 없습니다.'); return; }
-    const ok = await ask('스냅샷 저장', '<p class="hint">현재 화면의 작업을 새 스냅샷으로 저장합니다. 원래 스냅샷(' + esc(st.open.base_ym) + ', ' + esc(fmtT(st.open.created_at)) + ')은 그대로 남습니다.</p><label>메모<textarea id="memoIn" placeholder="무엇을 바꿨는지"></textarea></label>');
-    if (!ok) return;
-    const memo = ($('memoIn') || {}).value || '';
-    busy('저장하는 중…');
+    let memo = null;
+    if (asNew || !isOwnWeb(st.open)) {
+      const why = asNew ? '현재 작업을 새 스냅샷으로 따로 남깁니다.' : (st.open.backupOf ? '백업본을 열었으므로' : st.open.source === 'pc' ? 'PC 원본을 열었으므로' : '다른 사람의 스냅샷이므로') + ' 첫 저장은 새 스냅샷으로 만들고, 그다음 저장부터는 거기에 덮어씁니다.';
+      const ok = await ask(asNew ? '새 버전으로 저장' : '저장', '<p class="hint">' + esc(why) + ' 원래 스냅샷(' + esc(st.open.base_ym) + ', ' + esc(fmtT(st.open.updated_at || st.open.created_at)) + ')은 그대로 남습니다.</p><label>메모<textarea id="memoIn" placeholder="예: 10/29 가마감 반영"></textarea></label>');
+      if (!ok) return;
+      memo = ($('memoIn') || {}).value || '';
+    }
+    saveFromEngine.busy = true; busy('저장하는 중…');
     try {
       const db = st.mounted.bridge.buildDb();
-      const id = await putSnapshot(db, { source: 'web', memo, parent_id: st.open.id });
-      log('save_web', id, 'parent=' + st.open.id);
-      st.open = Object.assign({}, st.open, { id, memo, created_at: new Date().toISOString(), source: 'web', engine_ver: db.sysVer });
-      renderBar(); toast('새 스냅샷으로 저장했습니다.');
+      if (memo === null) {
+        const s = st.open, path = 'snapshots/' + s.id + '/r' + (s.rev + 1) + '_' + crypto.randomUUID().slice(0, 8) + '.json.gz';
+        const gz = await E.gzip(JSON.stringify(db));
+        const up = await sb.storage.from(C.bucket).upload(path, gz, { contentType: 'application/gzip', upsert: false });
+        if (up.error) throw new Error('파일 올리기 실패: ' + up.error.message);
+        const r = await sb.rpc('sk_overwrite_snapshot', { p_id: s.id, p_expected_rev: s.rev, p_path: path, p_size: gz.size, p_engine_ver: db.sysVer || null });
+        if (r.error) {
+          await sb.storage.from(C.bucket).remove([path]);
+          if (/CONFLICT/.test(r.error.message)) { toast('다른 창이나 다른 사람이 그사이 이 스냅샷을 저장했습니다. 덮어쓰지 않았으니 「새 버전으로 저장」을 쓰세요.', 9000); return; }
+          throw new Error('저장 실패: ' + r.error.message);
+        }
+        if (r.data && r.data.prune && r.data.prune.length) await sb.storage.from(C.bucket).remove(r.data.prune);
+        st.open = Object.assign({}, s, { rev: r.data.rev, storage_path: path, size_bytes: gz.size, updated_at: new Date().toISOString(), engine_ver: db.sysVer || s.engine_ver });
+        log('save_web', s.id, 'rev=' + r.data.rev);
+        toast('저장했습니다.');
+      } else {
+        const parent = st.open.backupOf || st.open.id;
+        const id = await putSnapshot(db, { source: 'web', memo, parent_id: parent });
+        log('save_web_new', id, 'parent=' + parent);
+        const now = new Date().toISOString();
+        st.open = Object.assign({}, st.open, { id, memo, rev: 1, created_at: now, updated_at: now, source: 'web', author_email: st.me.email, author_name: st.me.name || '', engine_ver: db.sysVer, backupOf: null });
+        toast('새 스냅샷으로 저장했습니다. 다음 저장부터는 여기에 덮어씁니다.', 5000);
+      }
+      renderBar();
     } catch (e) { toast(e.message, 8000); }
-    busy(null);
+    finally { saveFromEngine.busy = false; busy(null); }
   }
-  $('btnSave').onclick = saveFromEngine;
+  $('btnSave').onclick = () => saveFromEngine(false);
+  $('btnSaveNew').onclick = () => saveFromEngine(true);
+
+  // 이전 저장(숨은 백업 최대 3개) — 열면 백업본으로 열리고, 저장하면 새 스냅샷이 된다
+  async function showBackups(id) {
+    const s = st.snaps.find((x) => x.id === id); if (!s) return;
+    const { data, error } = await sb.from('sk_snapshot_revs').select('*').eq('snapshot_id', id).order('rev', { ascending: false });
+    if (error) { toast(error.message); return; }
+    if (!data || !data.length) { toast('남아 있는 이전 저장이 없습니다.'); return; }
+    const pick = await new Promise((res) => {
+      ask('이전 저장 — ' + s.base_ym + ' ' + (s.memo || ''), '<p class="hint">덮어쓰기 전 내용을 최근 3개까지 남겨 둡니다. 열어서 저장하면 새 스냅샷으로 저장됩니다.</p><table class="grid"><tbody>'
+        + data.map((b) => '<tr><td>' + b.rev + '번째 저장</td><td>' + esc(fmtT(b.saved_at)) + '</td><td><button data-rev="' + b.rev + '">열기</button></td></tr>').join('') + '</tbody></table>').then(() => res(null));
+      $('mBody').querySelectorAll('[data-rev]').forEach((btn) => { btn.onclick = () => { $('mOk').click(); res(data.find((b) => String(b.rev) === btn.getAttribute('data-rev'))); }; });
+    });
+    if (pick) openSnap(id, pick);
+  }
   $('btnBack').onclick = async () => {
     if (canWrite() && !(await ask('목록으로', '<p>저장하지 않은 작업은 사라집니다. 목록으로 갈까요?</p>'))) return;
     loadList();

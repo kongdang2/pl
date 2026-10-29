@@ -12,7 +12,8 @@
   <b class="brand">손익추정 웹</b>
   <span id="ctx" class="ctx"></span>
   <span class="grow"></span>
-  <button id="btnSave" class="pri" hidden>스냅샷 저장</button>
+  <button id="btnSave" class="pri" hidden title="Ctrl+S와 같음">저장</button>
+  <button id="btnSaveNew" hidden>새 버전으로 저장</button>
   <button id="btnBack" hidden>목록으로</button>
   <span id="who" class="who"></span>
   <button id="btnLogout" hidden>로그아웃</button>
@@ -40,7 +41,7 @@
     </div></div>
     <p class="hint">PC 원본에서 관리자 도구 ▸ DB 내보내기 ▸ 전체 (확정 + 추정)로 받은 .json 파일을 올립니다. 웹에서 저장한 작업도 새 스냅샷으로 쌓입니다(덮어쓰지 않음).</p>
     <div id="engineLine" class="engine-line"></div>
-    <table class="grid"><thead><tr><th>기준월</th><th>시스템 버전</th><th>출처</th><th>메모</th><th>올린 사람</th><th>시각</th><th></th></tr></thead><tbody id="snapRows"></tbody></table>
+    <table class="grid"><thead><tr><th>기준월</th><th>시스템 버전</th><th>출처</th><th>메모</th><th>작성자</th><th>마지막 저장</th><th></th></tr></thead><tbody id="snapRows"></tbody></table>
   </section>
   <section class="card" id="adminCard" hidden>
     <h2>관리자</h2>
