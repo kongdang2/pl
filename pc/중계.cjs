@@ -77,6 +77,12 @@ async function chain(m, max) {
   while (cur.reply_to && out.length < max) { cur = await getMsg(cur.reply_to); if (!cur) break; out.unshift(cur); }
   return out;
 }
+// 답글이 아닌 새 글이면, 그 전에 hong 과 이 담당이 나눈 최근 글을 앞 맥락으로 붙인다
+async function recent(m, agent, n) {
+  const who = '(hong,' + agent + ')';
+  const q = '?select=*&id=lt.' + m.id + '&sender=in.' + who + '&recipient=in.' + encodeURIComponent('(hong,' + agent + ',모두)') + '&order=id.desc&limit=' + n;
+  return (await api('GET', 'sk_channel', q)).reverse();
+}
 // 마지막 hong 글 이후 Codex·Claude 끼리 이어진 글 수
 function hopsSinceHong(ch) { let n = 0; for (let i = ch.length - 1; i >= 0 && ch[i].sender !== 'hong'; i--) n++; return n; }
 
@@ -141,7 +147,8 @@ function run(agent, text) {
 
 async function handle(m, ctl) {
   const agent = m.recipient;
-  const ch = await chain(m, 12);
+  const ch = await chain(m, conf.contextMax || 30);
+  const ctx = ch.length > 1 ? ch : (await recent(m, agent, conf.recentMax || 10)).concat([m]);
   const hops = hopsSinceHong(ch);
   if (hops >= ctl.max_hops) {
     await patchMsg(m.id, { run_state: '건너뜀', run_note: 'hong 없이 자동 왕복 ' + hops + '회' });
@@ -153,7 +160,7 @@ async function handle(m, ctl) {
   await patchMsg(m.id, { run_state: '실행중', run_note: '' });
   await setRelay({ busy_with: m.id });
   log('실행 #' + m.id, agent);
-  const r = await run(agent, prompt(agent, m, ch));
+  const r = await run(agent, prompt(agent, m, ctx));
   fs.writeFileSync(path.join(LOG_DIR, stamp().replace(/[-:T]/g, '') + '_' + m.id + '_' + agent + '.txt'), r.out);
   const rep = parseReply(r.out, agent);
   if (!rep) {
