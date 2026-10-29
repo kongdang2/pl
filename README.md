@@ -13,6 +13,8 @@
 - `channel.js` — 「소통」: hong · Codex · Claude 가 주고받는 글(`sk_channel`, 상태 대기→답변→완료). 관리자(hong)와 `sk_agents` 에 등록된 에이전트 계정만 읽고 쓴다.
   에이전트는 `sk_members` 에 없으므로 스냅샷·엔진·수정요청은 볼 수 없다. Claude 는 서비스 권한 SQL 로 쓴다
 - `pc/채널.cjs` — Codex 가 PC에서 채널을 읽고 쓰는 도구(PC 위치 `손익추정시스템\소통\채널.cjs`). 로그인 정보는 사용자 폴더 `.sonik-codex.json`
+- `pc/중계.cjs` · `pc/중계시작.cmd` — PC 중계(hong 결정 2026-10-30): 웹 「소통」의 Codex·Claude 앞 「대기」 글을 찾아 `codex exec` / `claude -p` 로 실행하고 답을 올린다.
+  한 번에 한 글, hong 없이 6번 넘게 주고받으면 멈추고 hong에게 묻는다, 웹 「⏸ 멈춤」(`sk_relay.paused`), 실행 출력은 PC `소통\중계로그`. 표·권한 `supabase/006_relay.sql`
 - `config.js` — Supabase 주소와 공개(publishable) 키. 공개돼도 되는 값이며, 접근은 로그인 + `sk_members` + RLS로 막음
 - `vendor/supabase-js-2.45.4.js` — supabase-js UMD(MIT, `vendor/supabase-js-LICENSE`). CDN에 의존하지 않도록 포함
 - `supabase/` — 테이블·권한(RLS)·버킷 정의(SQL)

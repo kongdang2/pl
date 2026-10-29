@@ -12,6 +12,24 @@
     if (error) { $('chRows').innerHTML = '<p class="hint">채널을 읽지 못했습니다: ' + esc(error.message) + '</p>'; return; }
     ch.rows = (data || []).reverse();
     render();
+    loadRelay();
+  }
+  // PC 중계 상태: 마지막 신호가 1분 안이면 작동 중
+  const RUN = { 실행중: '⏳ 실행중', 완료: '✓ 자동 처리', 실패: '✗ 자동 실패', 건너뜀: '⏸ 왕복 한도' };
+  async function loadRelay() {
+    const { data: r } = await ch.sb.from('sk_relay').select('*').eq('id', 1).maybeSingle();
+    ch.relay = r;
+    if (!r) { $('chRelay').textContent = ''; return; }
+    const alive = r.heartbeat && Date.now() - new Date(r.heartbeat).getTime() < 90000;
+    $('chRelay').innerHTML = 'PC 중계: ' + (r.paused ? '<b class="warn">멈춤</b>' : alive ? '<b class="ok">작동 중</b>' : '<b class="warn">꺼짐</b>')
+      + (r.busy_with ? ' · #' + r.busy_with + ' 실행 중' : '') + (r.heartbeat ? ' <span class="hint">마지막 신호 ' + esc(fmtT(r.heartbeat)) + '</span>' : '');
+    $('chPause').textContent = r.paused ? '▶ 다시 시작' : '⏸ 멈춤';
+  }
+  async function togglePause() {
+    if (!ch.relay) return;
+    const { error } = await ch.sb.from('sk_relay').update({ paused: !ch.relay.paused, updated_at: new Date().toISOString() }).eq('id', 1);
+    if (error) { alertMsg('바꾸지 못했습니다: ' + error.message); return; }
+    loadRelay();
   }
   function render() {
     const byId = new Map(ch.rows.map((m) => [m.id, m]));
@@ -23,7 +41,7 @@
       const re = m.reply_to && byId.get(m.reply_to);
       return '<div class="ch-msg s-' + esc(m.sender) + (MINE(m) && m.status === '대기' ? ' wait' : '') + '" id="ch' + m.id + '">'
         + '<div class="ch-head"><b>' + esc(m.sender) + '</b> → ' + esc(m.recipient) + (m.topic ? ' · <span class="mono">' + esc(m.topic) + '</span>' : '')
-        + ' <span class="tag ch-' + esc(m.status) + '">' + esc(m.status) + '</span> <span class="hint">#' + m.id + ' · ' + esc(fmtT(m.at)) + '</span>'
+        + ' <span class="tag ch-' + esc(m.status) + '">' + esc(m.status) + '</span>' + (m.run_state ? ' <span class="tag run" title="' + esc(m.run_note || '') + '">' + RUN[m.run_state] + '</span>' : '') + ' <span class="hint">#' + m.id + ' · ' + esc(fmtT(m.at)) + '</span>'
         + (m.reply_to ? ' <a class="hint" href="#ch' + m.reply_to + '">↩ #' + m.reply_to + (re ? ' ' + esc(re.sender) : '') + '</a>' : '') + '</div>'
         + '<div class="ch-body">' + esc(m.body) + '</div>'
         + '<div class="row ch-act"><button data-re="' + m.id + '">답글</button>'
@@ -77,12 +95,13 @@
       if (!ok) return;
       $('chSend').onclick = send;
       $('chReload').onclick = load;
+      $('chPause').onclick = togglePause;
       $('chMine').onclick = () => { ch.onlyMine = !ch.onlyMine; render(); };
       $('chReplyX').onclick = () => setReply(null);
       $('chBody').onkeydown = (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) send(); };
       load();
-      // 목록 화면이 보이는 동안 1분마다 새로 읽는다
-      ch.timer = setInterval(() => { if (!$('vList').hidden && !document.hidden) load(); }, 60000);
+      // 목록 화면이 보이는 동안 20초마다 새로 읽는다
+      ch.timer = setInterval(() => { if (!$('vList').hidden && !document.hidden) load(); }, 20000);
     },
   };
 })();
