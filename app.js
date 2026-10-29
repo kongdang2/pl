@@ -347,10 +347,19 @@
   };
 
   // 요청 목록·보기
+  // 진행 단계는 사람이 고르지 않는다: Claude가 처리하면서 stage·progress(답변 기록)를 갱신한다
+  const STAGES = ['접수', '검토', '수정', '검증', '반영'];
+  function stageBar(r, withText) {
+    const held = r.status === '보류', n = held ? -1 : Math.max(0, Math.min(4, r.stage || 0));
+    const last = (r.progress || [])[(r.progress || []).length - 1];
+    return '<div class="stg' + (held ? ' held' : '') + (n === 4 ? ' done' : '') + '" title="' + esc(held ? '보류' : STAGES[n]) + '">'
+      + '<div class="bar">' + STAGES.map((s, i) => '<span class="' + (i <= n ? 'on' : '') + (i === n ? ' cur' : '') + '">' + s + '</span>').join('') + '</div>'
+      + (withText && last ? '<div class="say">' + esc(last.text).slice(0, 80) + '</div>' : held ? '<div class="say">보류</div>' : '') + '</div>';
+  }
   async function loadRequests() {
-    const { data, error } = await sb.from('sk_requests').select('id,title,kind,status,author_name,author_email,created_at').order('created_at', { ascending: false }).limit(100);
+    const { data, error } = await sb.from('sk_requests').select('id,title,kind,status,stage,progress,author_name,author_email,created_at').order('created_at', { ascending: false }).limit(100);
     if (error) { $('rqRows').innerHTML = '<tr><td colspan="7" class="hint">요청 목록을 읽지 못했습니다: ' + esc(error.message) + '</td></tr>'; return; }
-    $('rqRows').innerHTML = (data || []).length ? data.map((r) => '<tr><td>#' + r.id + '</td><td class="memo">' + esc(r.title) + '</td><td>' + esc(r.kind) + '</td><td><span class="tag st-' + esc(r.status) + '">' + esc(r.status) + '</span></td><td>'
+    $('rqRows').innerHTML = (data || []).length ? data.map((r) => '<tr><td>#' + r.id + '</td><td class="memo">' + esc(r.title) + '</td><td>' + esc(r.kind) + '</td><td>' + stageBar(r, true) + '</td><td>'
       + esc(r.author_name || r.author_email) + '</td><td>' + esc(fmtT(r.created_at)) + '</td><td><button data-rv="' + r.id + '">보기</button></td></tr>').join('')
       : '<tr><td colspan="7" class="hint">아직 접수된 요청이 없습니다.</td></tr>';
     $('rqRows').querySelectorAll('[data-rv]').forEach((b) => { b.onclick = () => viewRequest(+b.getAttribute('data-rv')); });
@@ -365,21 +374,18 @@
     const { data: r, error } = await sb.from('sk_requests').select('*').eq('id', id).single();
     busy(null);
     if (error) { toast(error.message); return; }
-    const admin = st.me.role === 'admin';
     $('rvBody').innerHTML = '<h3>수정요청 #' + r.id + ' · ' + esc(r.title) + '</h3>'
       + '<p class="hint">' + esc(r.kind) + ' · ' + esc(r.author_name || r.author_email) + ' · ' + esc(fmtT(r.created_at)) + ' · 스냅샷 ' + esc(r.base_ym || '') + ' / 엔진 ' + esc(r.engine_ver || '') + '</p>'
       + (r.body ? '<p style="white-space:pre-wrap">' + esc(r.body) + '</p>' : '')
-      + (r.items || []).map((it, i) => itemHtml(it, i, false) + excerptHtml(it.excerpt)).join('')
-      + '<div class="row" style="margin-top:10px">상태 ' + (admin
-        ? '<select id="rvStatus">' + ['접수', '진행', '완료', '보류'].map((s) => '<option' + (s === r.status ? ' selected' : '') + '>' + s + '</option>').join('') + '</select><input id="rvNote" placeholder="처리 메모(예: v308에 반영)" value="' + esc(r.status_note) + '"><button id="rvSaveSt">상태 저장</button>'
-        : '<span class="tag st-' + esc(r.status) + '">' + esc(r.status) + '</span> ' + esc(r.status_note)) + '</div>';
+      + stageBar(r, false)
+      + '<h4>Claude 답변</h4>' + ((r.progress || []).length
+        ? '<ol class="rq-log">' + r.progress.map((p) => '<li><span class="hint">' + esc(fmtT(p.at)) + ' · ' + esc(STAGES[p.stage] || p.stage) + '</span><div>' + esc(p.text) + '</div></li>').join('') + '</ol>'
+        : '<p class="hint">아직 답변이 없습니다. 대화창에서 「#' + r.id + ' 처리해 줘」라고 요청하면 Claude가 읽고 여기에 진행 상황을 적습니다.</p>')
+      + '<h4>요청 내용</h4>'
+      + (r.items || []).map((it, i) => itemHtml(it, i, false) + excerptHtml(it.excerpt)).join('');
     $('rqView').hidden = false;
     $('rvClose').onclick = () => { $('rqView').hidden = true; };
     $('rvXlsx').onclick = () => downloadXlsx(r);
-    if (admin) $('rvSaveSt').onclick = async () => {
-      const u = await sb.from('sk_requests').update({ status: $('rvStatus').value, status_note: $('rvNote').value.trim(), updated_at: new Date().toISOString() }).eq('id', r.id);
-      toast(u.error ? u.error.message : '상태를 바꿨습니다.'); if (!u.error) loadRequests();
-    };
   }
 
   // ── 관리자: 빈 엔진 올리기 ─────────────────────────
