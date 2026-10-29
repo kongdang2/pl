@@ -34,6 +34,7 @@ const DEF = {
   resume: true,        // 답글 사슬마다 같은 세션 이어 쓰기
   sessionTurns: 20,    // 한 세션에서 이만큼 답하면 새 세션
   sessionDays: 3,      // 마지막 사용 후 이만큼 지나면 새 세션
+  joinMin: 120,        // 답글이 아닌 새 글도 직전 글과 이 시간(분) 안이면 같은 대화(세션)로 이어 간다
   // 프롬프트는 표준입력으로 넘긴다(Windows 인자 길이·따옴표 문제 회피). 중계설정.json 으로 덮어쓸 수 있다.
   codex: { cmd: findCodex(), args: ['exec', '-C', '{ROOT}', '-s', 'workspace-write', '-'] },
   // claude 는 PATH 에 없어도 설치 위치(사용자 폴더 .local\bin)를 먼저 쓴다
@@ -97,7 +98,7 @@ function hopsSinceHong(ch) { let n = 0; for (let i = ch.length - 1; i >= 0 && ch
 function loadSess() { try { return JSON.parse(fs.readFileSync(SESS_PATH, 'utf8')); } catch (_) { return {}; } }
 function saveSess(all) {
   const old = Date.now() - 14 * 864e5;
-  for (const k of Object.keys(all)) if (new Date(all[k].at).getTime() < old) delete all[k];
+  for (const k of Object.keys(all)) if (all[k].at && new Date(all[k].at).getTime() < old) delete all[k];
   fs.writeFileSync(SESS_PATH, JSON.stringify(all, null, 1));
 }
 // 실행 출력에서 세션 번호를 찾는다: claude 는 --output-format json 의 session_id, codex 는 머리말의 "session id: …"
@@ -251,7 +252,7 @@ async function handle(m, ctl) {
   await setRelay({ busy_with: m.id });
   if (m.recipient !== '모두') {
     const ctx = ch.length > 1 ? ch : (await recent(m, [m.recipient], conf.recentMax || 10)).concat([m]);
-    const r = await runAgent(m.recipient, m, ch, ctx, false);
+    const r = await runAgent(m.recipient, m, ch, ctx, false, await rootOf(m, ch, ctx));
     if (!r.rep) await failed(m, m.recipient, r);
     else {
       await post({ sender: m.recipient, recipient: r.rep.to, topic: r.rep.topic || m.topic, status: r.rep.st, reply_to: m.id, body: r.rep.body });
@@ -262,8 +263,9 @@ async function handle(m, ctl) {
     // 「모두」: Claude 가 먼저 답하고, Codex 는 그 답까지 보고 이어서 답한다(둘 다 받는이 모두 · 안내)
     let ctx = ch.length > 1 ? ch : (await recent(m, ['Claude', 'Codex'], conf.recentMax || 10)).concat([m]);
     let cur = ch, last = m, ok = 0;
+    const root = await rootOf(m, ch, ctx);
     for (const agent of ['Claude', 'Codex']) {
-      const r = await runAgent(agent, m, cur, ctx, true);
+      const r = await runAgent(agent, m, cur, ctx, true, root);
       if (!r.rep) { await failed(m, agent, r, last.id); continue; }
       const [row] = await post({ sender: agent, recipient: '모두', topic: r.rep.topic || m.topic, status: '안내', reply_to: last.id, body: r.rep.body });
       cur = cur.concat([row]); ctx = ctx.concat([row]); last = row; ok++;
@@ -283,12 +285,32 @@ async function failed(m, agent, r, replyTo) {
 }
 
 // 한 담당을 실행한다. 같은 답글 사슬에서 쓰던 세션이 있으면 못 본 글만 넘겨 이어 쓰고, 안 되면 새 세션 + 글 흐름 전체
-async function runAgent(agent, m, ch, ctx, group) {
+// 이 글이 속한 대화의 첫 글 번호(세션 열쇠). 답글이면 사슬의 첫 글, 답글이 아니어도 직전 글과 joinMin 분 안이면 그 대화를 잇는다.
+// 이어 붙인 관계는 중계세션.json 의 roots 에 남긴다(나중 답글도 같은 세션으로 가도록)
+async function rootOf(m, ch, ctx) {
+  const all = loadSess(), roots = all.roots || (all.roots = {});
+  let root = m.id;
+  if (ch.length > 1) root = roots[ch[0].id] || ch[0].id;
+  else {
+    const prev = ctx.length > 1 ? ctx[ctx.length - 2] : null;
+    if (prev && new Date(m.at) - new Date(prev.at) < conf.joinMin * 60000) {
+      const pc = await chain(prev, conf.contextMax || 30);
+      root = roots[pc[0].id] || pc[0].id;
+    }
+  }
+  roots[m.id] = root;
+  saveSess(all);
+  return root;
+}
+
+async function runAgent(agent, m, ch, ctx, group, root) {
   await patchMsg(m.id, { run_state: '실행중', run_note: agent });
-  const all = loadSess(), key = agent + ':' + ch[0].id;
+  const all = loadSess(), key = agent + ':' + root;
   let s = conf.resume ? all[key] : null;
   if (s && (s.turns >= conf.sessionTurns || Date.now() - new Date(s.at).getTime() > conf.sessionDays * 864e5)) { log('새 세션(길이·기간 한도)', key); s = null; }
-  const fresh = s ? ch.filter((x) => x.id > s.lastId) : null;
+  // 세션이 아직 못 본 글: 이 사슬 + 앞 맥락(직전 대화) 중 마지막으로 본 글 뒤의 것
+  const seenIds = new Set();
+  const fresh = s ? ctx.concat(ch).filter((x) => x.id > s.lastId && !seenIds.has(x.id) && seenIds.add(x.id)).sort((a, b) => a.id - b.id) : null;
   await fetchFiles(ctx.concat(fresh || []));
   const imgs = (m._local || []).filter((f) => isImg(f) && fs.existsSync(f));
   let r, rep, resumed = false;
@@ -307,7 +329,7 @@ async function runAgent(agent, m, ch, ctx, group) {
   keepLog(m, agent, r.out);
   const sid = sessionOf(agent, r) || (resumed ? s.id : null);
   if (rep && sid && conf.resume) {
-    all[key] = { id: sid, turns: (resumed ? s.turns : 0) + 1, lastId: Math.max(...ch.map((x) => x.id)), at: new Date().toISOString() };
+    all[key] = { id: sid, turns: (resumed ? s.turns : 0) + 1, lastId: Math.max(...ctx.concat(ch).map((x) => x.id)), at: new Date().toISOString() };
     saveSess(all);
   }
   return Object.assign(r, { rep });
