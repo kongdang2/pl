@@ -16,7 +16,7 @@ const LOGIN = process.env.SONIK_CODEX_LOGIN || path.join(os.homedir(), '.sonik-c
 
 async function token() {
   if (!fs.existsSync(LOGIN)) throw new Error('로그인 파일이 없습니다: ' + LOGIN + ' ({"email":"…","password":"…"})');
-  const { email, password } = JSON.parse(fs.readFileSync(LOGIN, 'utf8'));
+  const { email, password } = JSON.parse(fs.readFileSync(LOGIN, 'utf8').replace(/^\uFEFF/, '')); // 메모장 BOM 허용
   const r = await fetch(URL_ + '/auth/v1/token?grant_type=password', { method: 'POST', headers: { apikey: KEY, 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
   const j = await r.json();
   if (!r.ok) throw new Error('로그인 실패: ' + (j.error_description || j.msg || r.status));
