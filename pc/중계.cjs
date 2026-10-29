@@ -36,7 +36,9 @@ const DEF = {
   resume: true,        // 답글 사슬마다 같은 세션 이어 쓰기
   sessionTurns: 20,    // 한 세션에서 이만큼 답하면 새 세션
   sessionDays: 3,      // 마지막 사용 후 이만큼 지나면 새 세션
-  joinMin: 120,        // 답글이 아닌 새 글도 직전 글과 이 시간(분) 안이면 같은 대화(세션)로 이어 간다
+  joinMin: 120,
+  // 모델 고정(비우면 각 CLI 기본값: claude 는 Claude Code 설정, codex 는 %USERPROFILE%\.codex\config.toml). 예: "claudeModel": "opus", "codexEffort": "high"
+  claudeModel: '', codexModel: '', codexEffort: '',        // 답글이 아닌 새 글도 직전 글과 이 시간(분) 안이면 같은 대화(세션)로 이어 간다
   // 프롬프트는 표준입력으로 넘긴다(Windows 인자 길이·따옴표 문제 회피). 중계설정.json 으로 덮어쓸 수 있다.
   codex: { cmd: findCodex(), args: ['exec', '-C', '{ROOT}', '-s', 'workspace-write', '-'] },
   // claude 는 PATH 에 없어도 설치 위치(사용자 폴더 .local\bin)를 먼저 쓴다
@@ -266,6 +268,12 @@ function run(agent, input, resumeId, images) {
   // Windows 는 shell 로 실행하므로 공백 든 인자는 따옴표로 감싼다
   const q = (x) => (process.platform === 'win32' && /\s/.test(x) && !/^".*"$/.test(x) ? '"' + x + '"' : x);
   let a = c.args.map((x) => x.replace('{ROOT}', ROOT));
+  if (agent === 'Claude' && conf.claudeModel) a = a.concat(['--model', conf.claudeModel]);
+  if (agent === 'Codex') {
+    // 옵션은 exec 바로 뒤에 넣는다(resume 앞)
+    const extra = [].concat(conf.codexModel ? ['-m', conf.codexModel] : [], conf.codexEffort ? ['-c', 'model_reasoning_effort=' + conf.codexEffort] : []);
+    if (extra.length) a = a.slice(0, 1).concat(extra, a.slice(1));
+  }
   if (agent === 'Claude') {
     a = a.concat(['--output-format', 'json']);
     if (resumeId) a = a.concat(['--resume', resumeId]);
