@@ -1,4 +1,4 @@
-// 엔진 HTML(빈 엔진)을 같은 출처의 iframe으로 띄우고 v308 웹 연결 통로(__sonikWebBridge)로 스냅샷을 주고받는다.
+// 엔진 HTML(빈 엔진)을 같은 출처의 iframe으로 띄우고 웹 연결 통로(__sonikWebBridge, 웹 시험판 vNNN-n)로 스냅샷을 주고받는다.
 // Supabase와 무관한 부분만 둔다(로컬 시험에서도 그대로 쓴다).
 (function () {
   // 엔진이 열리기 전에 실행: 웹 모드 표시 + 브라우저 저장소를 메모리로 대체(같은 github.io 주소를 쓰는
@@ -18,8 +18,8 @@
     for (const id of ['__SAVED_DATA__', '__SAVED_CONFIRMED__', '__SAVED_PLAN__', '__SAVED_VERSIONS__', '__LINK_STAMP__']) {
       if (new RegExp('<script[^>]*id=["\']' + id + '["\']').test(html)) errs.push('데이터 블록 ' + id + ' 이 들어 있습니다');
     }
-    if (html.indexOf('__sonikWebBridge') < 0) errs.push('웹 연결(v308 이후) 엔진이 아닙니다');
-    const m = /window\.SYS_CHANGELOG\s*=\s*\[\s*\{date:'[^']*',title:'(v\d+)/.exec(html);
+    if (html.indexOf('__sonikWebBridge') < 0) errs.push('웹 연결 엔진(웹 시험판 v307-1 이후)이 아닙니다');
+    const m = /window\.SYS_CHANGELOG\s*=\s*\[\s*\{date:'[^']*',title:'(v\d+(?:-\d+)?)/.exec(html);
     return { ok: errs.length === 0, errs, ver: m ? m[1] : null };
   }
 

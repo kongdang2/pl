@@ -12,6 +12,8 @@
   function toast(t, ms) { const el = $('toast'); el.textContent = t; el.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => { el.hidden = true; }, ms || 3500); }
   function busy(t) { $('busy').hidden = !t; $('busyText').textContent = t || ''; }
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  // 웹 시험판(vNNN-n)과 오프라인(vNNN)은 같은 계산이므로 -n을 떼고 비교
+  const sameBase = (v) => String(v || '').replace(/-\d+$/, '');
   const fmtT = (s) => { const d = new Date(s); return d.toLocaleString('ko-KR', { year: '2-digit', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }); };
   function ask(title, bodyHtml) {
     return new Promise((res) => {
@@ -77,7 +79,7 @@
       ? '웹 엔진: <b>' + esc(eng.ver) + '</b> · ' + esc(fmtT(eng.uploaded_at)) + ' 올림'
       : '<span class="tag old">웹 엔진이 아직 없습니다</span> 관리자가 빈 엔진을 올려야 열 수 있습니다.';
     $('snapRows').innerHTML = st.snaps.length ? st.snaps.map((s) => {
-      const old = eng && s.engine_ver && s.engine_ver !== eng.ver;
+      const old = eng && s.engine_ver && sameBase(s.engine_ver) !== sameBase(eng.ver);
       return '<tr><td><b>' + esc(s.base_ym) + '</b></td><td>' + esc(s.engine_ver || '—') + (old ? ' <span class="tag old">엔진과 다름</span>' : '') + '</td>'
         + '<td><span class="tag ' + s.source + '">' + (s.source === 'pc' ? 'PC 원본' : '웹 저장') + '</span></td>'
         + '<td class="memo">' + esc(s.memo) + '</td><td>' + esc(s.author_name || s.author_email) + '</td><td>' + esc(fmtT(s.created_at)) + '</td>'
@@ -126,7 +128,7 @@
     let db;
     try { db = JSON.parse(await f.text()); } catch (e) { toast('JSON을 읽지 못했습니다: ' + e.message); return; }
     const bad = E.checkSnapshot(db); if (bad) { toast(bad, 6000); return; }
-    const ok = await ask('PC 파일 올리기', '<p>' + esc(f.name) + '</p><p class="hint">기준월 ' + esc(db.baseYm) + ' · ' + esc(db.author || '') + ' · 시스템 ' + esc(db.sysVer || '버전 표기 없음(v307 이전 내보내기)') + '</p><label>메모<textarea id="memoIn" placeholder="예: 10/29 가마감 반영"></textarea></label>');
+    const ok = await ask('PC 파일 올리기', '<p>' + esc(f.name) + '</p><p class="hint">기준월 ' + esc(db.baseYm) + ' · ' + esc(db.author || '') + ' · 시스템 ' + esc(db.sysVer || '버전 표기 없음(오프라인 v307 이하 내보내기)') + '</p><label>메모<textarea id="memoIn" placeholder="예: 10/29 가마감 반영"></textarea></label>');
     if (!ok) return;
     const memo = ($('memoIn') || {}).value || '';
     busy('올리는 중…');
@@ -149,7 +151,7 @@
   function unmount() { if (st.mounted) { st.mounted.dispose(); st.mounted = null; } $('engineBox').innerHTML = ''; st.open = null; }
   async function openSnap(id) {
     const s = st.snaps.find((x) => x.id === id); if (!s || !st.engine) return;
-    if (s.engine_ver && s.engine_ver !== st.engine.ver) {
+    if (s.engine_ver && sameBase(s.engine_ver) !== sameBase(st.engine.ver)) {
       const go = await ask('엔진 버전이 다릅니다', '<p>이 스냅샷은 <b>' + esc(s.engine_ver) + '</b>에서 만들었고 웹 엔진은 <b>' + esc(st.engine.ver) + '</b>입니다.</p><p class="hint">계산 로직이 바뀐 버전이면 재현검증에서 차이가 표시될 수 있습니다. 열까요?</p>');
       if (!go) return;
     }
