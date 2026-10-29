@@ -34,4 +34,18 @@ button:disabled{opacity:.5;cursor:default}
 .busy{position:fixed;inset:0;background:rgba(255,255,255,.75);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;z-index:55;color:#1F2A36}
 .spin{width:30px;height:30px;border:3px solid #C9D3DD;border-top-color:#244A70;border-radius:50%;animation:s 1s linear infinite}
 @keyframes s{to{transform:rotate(360deg)}}
+.eng-wrap{display:flex;height:100%}.eng-wrap .engine-box{flex:1;min-width:0}
+.rq-panel{width:380px;flex:none;overflow-y:auto;border-left:1px solid var(--line);background:var(--card);padding:12px 14px}
+.rq-panel textarea,.rq-cur textarea{width:100%;min-height:56px;font:inherit;padding:7px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink)}
+.rq-panel label input,.rq-panel label select{width:100%}
+.rq-cur{border:1px dashed #D92D20;border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12.5px}
+.rq-cur .loc,.rq-item .loc{color:var(--mut);font-size:12px;margin-bottom:4px}
+.rq-cells{width:100%;border-collapse:collapse;font-size:12px}.rq-cells td{border-bottom:1px solid var(--line);padding:3px 4px;vertical-align:top}
+.rq-cells input{width:100%;padding:3px 5px;font-size:12px}.rq-cells .v{font-family:ui-monospace,Consolas,monospace;white-space:nowrap}
+.rq-item{border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin:6px 0;font-size:12.5px}
+.rq-item img{max-width:100%;border:1px solid var(--line);margin-top:4px;display:block}
+.modal-card.wide{width:min(1100px,96vw);max-height:92vh;overflow-y:auto}
+.ex{border-collapse:collapse;font-size:12px;margin:6px 0}.ex td{border:1px solid var(--line);padding:2px 6px;white-space:nowrap}.ex tr.h td{background:rgba(127,127,127,.12);font-weight:600}
+.ex td.sel{background:#FFF2CC;color:#1F2A36;outline:2px solid #D92D20;outline-offset:-2px}
+.tag.st-접수{color:var(--pri2)}.tag.st-진행{color:var(--warn)}.tag.st-완료{color:var(--ok)}.tag.st-보류{color:var(--mut)}
 [hidden]{display:none!important}

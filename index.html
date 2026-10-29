@@ -12,6 +12,7 @@
   <b class="brand">손익추정 웹</b>
   <span id="ctx" class="ctx"></span>
   <span class="grow"></span>
+  <button id="btnReq" hidden title="셀을 골라 메모를 달고 수정요청서로 묶습니다">✏️ 수정요청</button>
   <button id="btnSave" class="pri" hidden title="Ctrl+S와 같음">저장</button>
   <button id="btnSaveNew" hidden>새 버전으로 저장</button>
   <button id="btnBack" hidden>목록으로</button>
@@ -39,9 +40,13 @@
     <div class="row between"><h2>스냅샷</h2><div class="row">
       <label class="btn" id="lblUpSnap" hidden>PC 파일 올리기<input id="upSnap" type="file" accept=".json,application/json" hidden></label>
     </div></div>
-    <p class="hint">PC 원본에서 관리자 도구 ▸ DB 내보내기 ▸ 전체 (확정 + 추정)로 받은 .json 파일을 올립니다. 웹에서 저장한 작업도 새 스냅샷으로 쌓입니다(덮어쓰지 않음).</p>
+    <p class="hint">PC 원본에서 관리자 도구 ▸ DB 내보내기 ▸ 전체 (확정 + 추정)로 받은 .json 파일을 올립니다. 웹에서 저장하면 내가 웹에서 만든 스냅샷에 덮어쓰고(이전 저장 3개 보관), 「새 버전으로 저장」은 따로 남깁니다.</p>
     <div id="engineLine" class="engine-line"></div>
     <table class="grid"><thead><tr><th>기준월</th><th>시스템 버전</th><th>출처</th><th>메모</th><th>작성자</th><th>마지막 저장</th><th></th></tr></thead><tbody id="snapRows"></tbody></table>
+  </section>
+  <section class="card">
+    <div class="row between"><h2>수정요청</h2><span class="hint">스냅샷을 연 뒤 위쪽 「✏️ 수정요청」으로 셀을 골라 접수합니다.</span></div>
+    <table class="grid"><thead><tr><th>번호</th><th>제목</th><th>구분</th><th>상태</th><th>작성자</th><th>접수</th><th></th></tr></thead><tbody id="rqRows"></tbody></table>
   </section>
   <section class="card" id="adminCard" hidden>
     <h2>관리자</h2>
@@ -55,7 +60,19 @@
   </section>
 </main>
 
-<main id="vEngine" class="page full" hidden><div id="engineBox" class="engine-box"></div></main>
+<main id="vEngine" class="page full" hidden><div class="eng-wrap"><div id="engineBox" class="engine-box"></div>
+  <aside id="rqPanel" class="rq-panel" hidden>
+    <div class="row between"><b>✏️ 수정요청</b><button id="rqClose">닫기</button></div>
+    <p class="hint">표의 셀을 <b>클릭</b>하거나 <b>끌어서</b> 고르세요. Shift+클릭 범위, Ctrl+클릭 추가·빼기, Esc 선택 해제. 메뉴·탭은 그대로 옮겨 다닐 수 있습니다.</p>
+    <div id="rqCur" class="rq-cur"></div>
+    <h3>담은 항목 <span id="rqCount" class="hint"></span></h3>
+    <div id="rqItems"></div>
+    <label>제목<input id="rqTitle" placeholder="예: 10월 온산 운반비 단가가 9월 기준으로 계산됨"></label>
+    <label>구분<select id="rqKind"><option>계산</option><option>표시·서식</option><option>기능 추가</option><option selected>기타</option></select></label>
+    <label>설명<textarea id="rqBody" placeholder="무엇이 어떻게 되어야 하는지, 언제부터 그런지 등"></textarea></label>
+    <div class="row"><button id="rqSubmit" class="pri">요청 접수</button><button id="rqXlsx">엑셀로 받기</button></div>
+  </aside></div></main>
+<div id="rqView" class="modal" hidden><div class="modal-card wide"><div id="rvBody"></div><div class="row end"><button id="rvXlsx">엑셀로 받기</button><button id="rvClose" class="pri">닫기</button></div></div></div>
 
 <div id="modal" class="modal" hidden><div class="modal-card"><h3 id="mTitle"></h3><div id="mBody"></div><div class="row end"><button id="mCancel">취소</button><button id="mOk" class="pri">확인</button></div></div></div>
 <div id="toast" class="toast" hidden></div>
@@ -64,6 +81,7 @@
 <script src="vendor/supabase-js-2.45.4.js"></script>
 <script src="config.js"></script>
 <script src="engine-loader.js"></script>
+<script src="request-mode.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

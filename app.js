@@ -47,6 +47,7 @@
     const inEngine = !$('vEngine').hidden;
     $('btnBack').hidden = !inEngine;
     $('btnSave').hidden = $('btnSaveNew').hidden = !(inEngine && canWrite());
+    $('btnReq').hidden = !inEngine;
     $('ctx').textContent = inEngine && st.open ? (st.open.base_ym + ' · ' + (st.open.engine_ver || '버전 미상') + ' · ' + (st.open.memo || '') + (st.open.backupOf ? ' · 백업본' : isOwnWeb(st.open) ? ' · 저장하면 이 스냅샷에 덮어씀' : ' · 첫 저장은 새 스냅샷')) : '';
   }
   $('btnLogin').onclick = async () => {
@@ -92,6 +93,7 @@
     $('snapRows').querySelectorAll('[data-dl]').forEach((b) => { b.onclick = () => downloadSnap(b.getAttribute('data-dl')); });
     $('snapRows').querySelectorAll('[data-bk]').forEach((b) => { b.onclick = () => showBackups(b.getAttribute('data-bk')); });
     if (st.me.role === 'admin') loadMembers();
+    loadRequests();
   }
 
   async function fetchSnapDb(snap) {
@@ -152,7 +154,7 @@
     getEngineHtml.cache = { key, html };
     return html;
   }
-  function unmount() { if (st.mounted) { st.mounted.dispose(); st.mounted = null; } $('engineBox').innerHTML = ''; st.open = null; }
+  function unmount() { rqClose(true); if (st.mounted) { st.mounted.dispose(); st.mounted = null; } $('engineBox').innerHTML = ''; st.open = null; }
   async function openSnap(id, backup) {
     const s0 = st.snaps.find((x) => x.id === id); if (!s0 || !st.engine) return;
     const s = backup ? Object.assign({}, s0, { storage_path: backup.storage_path, backupOf: s0.id, memo: s0.memo + ' (' + backup.rev + '번째 저장)', updated_at: backup.saved_at }) : s0;
@@ -233,10 +235,126 @@
     if (pick) openSnap(id, pick);
   }
   $('btnBack').onclick = async () => {
-    if (canWrite() && !(await ask('목록으로', '<p>저장하지 않은 작업은 사라집니다. 목록으로 갈까요?</p>'))) return;
+    const draft = RQ.items.length ? ' 접수하지 않은 수정요청 항목 ' + RQ.items.length + '개도 사라집니다.' : '';
+    if ((canWrite() || draft) && !(await ask('목록으로', '<p>저장하지 않은 작업은 사라집니다.' + draft + ' 목록으로 갈까요?</p>'))) return;
     loadList();
   };
   window.addEventListener('beforeunload', (e) => { if (!$('vEngine').hidden && canWrite()) { e.preventDefault(); e.returnValue = ''; } });
+
+  // ── 수정요청 모드 ─────────────────────────────────
+  const RQ = window.SonikRequest.create({ onChange: () => renderRqCur() });
+  const RQK = window.SonikRequest;
+  function rqOpen() {
+    if (!st.mounted) return;
+    $('rqPanel').hidden = false; RQ.start(st.mounted.win); renderRqCur(); renderRqItems();
+  }
+  function rqClose(discard) {
+    if (RQ.on) RQ.stop();
+    $('rqPanel').hidden = true;
+    if (discard) { RQ.reset(); $('rqTitle').value = $('rqBody').value = ''; $('rqKind').value = '기타'; renderRqItems(); }
+  }
+  $('btnReq').onclick = () => { if ($('rqPanel').hidden) rqOpen(); else rqClose(false); };
+  $('rqClose').onclick = () => rqClose(false);
+  function renderRqCur() {
+    const cur = RQ.on ? RQ.current() : null, box = $('rqCur');
+    if (!cur) { box.innerHTML = '<span class="hint">고른 셀이 없습니다.</span>'; return; }
+    const many = cur.cells.length > 20;
+    box.innerHTML = '<div class="loc">' + esc(RQK.locText(cur.loc)) + '</div>'
+      + (many ? '<p>' + cur.cells.length + '개 셀 (' + esc(cur.cells[0].row) + ' ~ ' + esc(cur.cells[cur.cells.length - 1].row) + ')</p>'
+        : '<table class="rq-cells">' + cur.cells.map((c, i) => '<tr><td>' + esc(c.row || ('행 ' + (c.r + 1))) + '<br><span class="hint">' + esc(c.col || ('열 ' + (c.c + 1))) + '</span></td><td class="v">' + esc(c.value) + '</td><td><input data-note="' + i + '" placeholder="기대값·메모"></td></tr>').join('') + '</table>')
+      + '<textarea id="rqItemNote" placeholder="이 부분에 대한 설명(선택)"></textarea>'
+      + '<div class="row"><button id="rqTake" class="pri">이 부분 담기</button><button id="rqClear">선택 해제</button></div>';
+    $('rqTake').onclick = rqTake; $('rqClear').onclick = () => RQ.clearSel();
+  }
+  async function rqTake() {
+    const notes = Array.from($('rqCur').querySelectorAll('[data-note]')).map((x) => x.value.trim());
+    const itemNote = ($('rqItemNote') || {}).value || '';
+    busy('화면 캡처 중…');
+    try { const it = await RQ.take(notes, itemNote.trim()); if (it.imageError) toast('캡처는 실패했고 표 내용만 담았습니다: ' + it.imageError, 6000); }
+    catch (e) { toast(e.message, 6000); }
+    busy(null); renderRqItems();
+    if (!$('rqTitle').value && RQ.items[0]) { const L = RQ.items[0].loc; $('rqTitle').value = [L.menu, L.table].filter(Boolean).join(' · ').slice(0, 60); }
+  }
+  function itemHtml(it, i, removable) {
+    const notes = (it.cells || []).filter((c) => c.note).map((c) => '<li>' + esc(c.row) + ' / ' + esc(c.col) + ': <b>' + esc(c.value) + '</b> → ' + esc(c.note) + '</li>').join('');
+    return '<div class="rq-item"><div class="row between"><b>항목 ' + (i + 1) + '</b>' + (removable ? '<button data-rm="' + i + '">빼기</button>' : '') + '</div>'
+      + '<div class="loc">' + esc(RQK.locText(it.loc || {})) + ' · 셀 ' + (it.cells || []).length + '개</div>'
+      + (notes ? '<ul>' + notes + '</ul>' : '') + (it.note ? '<p>' + esc(it.note) + '</p>' : '')
+      + (it.image ? '<img src="' + it.image + '" alt="화면 캡처">' : '') + '</div>';
+  }
+  function renderRqItems() {
+    $('rqCount').textContent = RQ.items.length ? RQ.items.length + '개' : '';
+    $('rqItems').innerHTML = RQ.items.length ? RQ.items.map((it, i) => itemHtml(it, i, true)).join('') : '<p class="hint">셀을 고르고 「이 부분 담기」를 누르면 여기에 쌓입니다. 여러 메뉴에서 담을 수 있습니다.</p>';
+    $('rqItems').querySelectorAll('[data-rm]').forEach((b) => { b.onclick = () => { RQ.remove(+b.getAttribute('data-rm')); renderRqItems(); }; });
+  }
+  function rqDraft() {
+    const s = st.open || {};
+    return { title: $('rqTitle').value.trim(), kind: $('rqKind').value, body: $('rqBody').value.trim(), items: RQ.items,
+      snapshot_id: s.backupOf || s.id || null, base_ym: s.base_ym || null, engine_ver: st.engine ? st.engine.ver : null,
+      author_email: st.me.email, author_name: st.me.name || '', created_at: new Date().toISOString() };
+  }
+  async function downloadXlsx(req) {
+    busy('엑셀 만드는 중…');
+    try {
+      const blob = await RQK.toXlsx(req);
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+      a.download = '수정요청_' + (req.id ? '#' + req.id + '_' : '') + (req.title || '').replace(/[\\/:*?"<>|]/g, '').slice(0, 40) + '.xlsx';
+      a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    } catch (e) { toast('엑셀을 만들지 못했습니다: ' + e.message, 7000); }
+    busy(null);
+  }
+  $('rqXlsx').onclick = () => { if (!RQ.items.length) { toast('담은 항목이 없습니다.'); return; } downloadXlsx(rqDraft()); };
+  $('rqSubmit').onclick = async () => {
+    const d = rqDraft();
+    if (!d.items.length && !d.body) { toast('셀을 하나 이상 담거나 설명을 적어 주세요.'); return; }
+    if (!d.title) { toast('제목을 적어 주세요.'); $('rqTitle').focus(); return; }
+    busy('접수하는 중…');
+    try {
+      const { data, error } = await sb.from('sk_requests').insert({ title: d.title, kind: d.kind, body: d.body, items: d.items, snapshot_id: d.snapshot_id,
+        base_ym: d.base_ym, engine_ver: d.engine_ver, author_email: d.author_email, author_name: d.author_name }).select('id').single();
+      if (error) throw new Error(error.message);
+      log('request', d.snapshot_id, '#' + data.id);
+      RQ.reset(); $('rqTitle').value = $('rqBody').value = ''; $('rqKind').value = '기타'; renderRqItems();
+      toast('수정요청 #' + data.id + '을(를) 접수했습니다.', 5000);
+    } catch (e) { toast('접수 실패: ' + e.message, 8000); }
+    busy(null);
+  };
+
+  // 요청 목록·보기
+  async function loadRequests() {
+    const { data, error } = await sb.from('sk_requests').select('id,title,kind,status,author_name,author_email,created_at').order('created_at', { ascending: false }).limit(100);
+    if (error) { $('rqRows').innerHTML = '<tr><td colspan="7" class="hint">요청 목록을 읽지 못했습니다: ' + esc(error.message) + '</td></tr>'; return; }
+    $('rqRows').innerHTML = (data || []).length ? data.map((r) => '<tr><td>#' + r.id + '</td><td class="memo">' + esc(r.title) + '</td><td>' + esc(r.kind) + '</td><td><span class="tag st-' + esc(r.status) + '">' + esc(r.status) + '</span></td><td>'
+      + esc(r.author_name || r.author_email) + '</td><td>' + esc(fmtT(r.created_at)) + '</td><td><button data-rv="' + r.id + '">보기</button></td></tr>').join('')
+      : '<tr><td colspan="7" class="hint">아직 접수된 요청이 없습니다.</td></tr>';
+    $('rqRows').querySelectorAll('[data-rv]').forEach((b) => { b.onclick = () => viewRequest(+b.getAttribute('data-rv')); });
+  }
+  function excerptHtml(ex) {
+    if (!ex || !ex.rows || !ex.rows.length) return '';
+    const sel = new Set((ex.sel || []).map((x) => x[0] + ',' + x[1]));
+    return '<div style="overflow-x:auto"><table class="ex">' + ex.rows.map((row, i) => '<tr' + (i < (ex.head || 0) ? ' class="h"' : '') + '>' + row.map((v, j) => '<td' + (sel.has(i + ',' + j) ? ' class="sel"' : '') + '>' + esc(v) + '</td>').join('') + '</tr>').join('') + '</table></div>';
+  }
+  async function viewRequest(id) {
+    busy('요청 읽는 중…');
+    const { data: r, error } = await sb.from('sk_requests').select('*').eq('id', id).single();
+    busy(null);
+    if (error) { toast(error.message); return; }
+    const admin = st.me.role === 'admin';
+    $('rvBody').innerHTML = '<h3>수정요청 #' + r.id + ' · ' + esc(r.title) + '</h3>'
+      + '<p class="hint">' + esc(r.kind) + ' · ' + esc(r.author_name || r.author_email) + ' · ' + esc(fmtT(r.created_at)) + ' · 스냅샷 ' + esc(r.base_ym || '') + ' / 엔진 ' + esc(r.engine_ver || '') + '</p>'
+      + (r.body ? '<p style="white-space:pre-wrap">' + esc(r.body) + '</p>' : '')
+      + (r.items || []).map((it, i) => itemHtml(it, i, false) + excerptHtml(it.excerpt)).join('')
+      + '<div class="row" style="margin-top:10px">상태 ' + (admin
+        ? '<select id="rvStatus">' + ['접수', '진행', '완료', '보류'].map((s) => '<option' + (s === r.status ? ' selected' : '') + '>' + s + '</option>').join('') + '</select><input id="rvNote" placeholder="처리 메모(예: v308에 반영)" value="' + esc(r.status_note) + '"><button id="rvSaveSt">상태 저장</button>'
+        : '<span class="tag st-' + esc(r.status) + '">' + esc(r.status) + '</span> ' + esc(r.status_note)) + '</div>';
+    $('rqView').hidden = false;
+    $('rvClose').onclick = () => { $('rqView').hidden = true; };
+    $('rvXlsx').onclick = () => downloadXlsx(r);
+    if (admin) $('rvSaveSt').onclick = async () => {
+      const u = await sb.from('sk_requests').update({ status: $('rvStatus').value, status_note: $('rvNote').value.trim(), updated_at: new Date().toISOString() }).eq('id', r.id);
+      toast(u.error ? u.error.message : '상태를 바꿨습니다.'); if (!u.error) loadRequests();
+    };
+  }
 
   // ── 관리자: 빈 엔진 올리기 ─────────────────────────
   $('upEngine').onchange = async (ev) => {
