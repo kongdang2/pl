@@ -246,7 +246,7 @@
   const RQK = window.SonikRequest;
   function rqOpen() {
     if (!st.mounted) return;
-    $('rqPanel').hidden = false; RQ.start(st.mounted.win); renderRqCur(); renderRqItems();
+    $('rqPanel').hidden = false; RQ.start(st.mounted.win); setRqMode('cell'); renderRqItems();
   }
   function rqClose(discard) {
     if (RQ.on) RQ.stop();
@@ -255,8 +255,33 @@
   }
   $('btnReq').onclick = () => { if ($('rqPanel').hidden) rqOpen(); else rqClose(false); };
   $('rqClose').onclick = () => rqClose(false);
+  const RQ_HINT = {
+    cell: '표의 셀을 <b>클릭</b>하거나 <b>끌어서</b> 고르세요. Shift+클릭 범위, Ctrl+클릭 추가·빼기, Esc 선택 해제. 메뉴·탭은 그대로 옮겨 다닐 수 있습니다.',
+    area: '셀로 고를 수 없는 곳(그래프·카드·안내문 등)은 화면을 <b>끌어서 사각형</b>으로 지정하세요. 이 동안에는 메뉴가 눌리지 않으니, 메뉴를 옮기려면 「셀 고르기」로 돌아가세요.',
+  };
+  function setRqMode(m) {
+    RQ.setMode(m);
+    $('rqMode').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.getAttribute('data-m') === RQ.mode));
+    $('rqHint').innerHTML = RQ_HINT[RQ.mode]; renderRqCur();
+  }
+  $('rqMode').querySelectorAll('button').forEach((b) => { b.onclick = () => setRqMode(b.getAttribute('data-m')); });
+  const textsHtml = (t) => (t && t.length ? '<ul class="rq-texts">' + t.map((x) => '<li>' + esc(x) + '</li>').join('') + '</ul>' : '');
   function renderRqCur() {
-    const cur = RQ.on ? RQ.current() : null, box = $('rqCur');
+    const box = $('rqCur');
+    if (RQ.on && RQ.mode === 'area') {
+      const a = RQ.currentArea();
+      if (!a) { box.innerHTML = '<span class="hint">지정한 영역이 없습니다. 화면에서 끌어 사각형을 그리세요.</span>'; return; }
+      const note = ($('rqItemNote') || {}).value || '';
+      box.innerHTML = '<div class="loc">' + esc(RQK.locText(a.loc)) + '</div>'
+        + (a.busy ? '<p class="hint">캡처 중…</p>' : a.image ? '<img src="' + a.image + '" alt="영역 캡처">' : '<p class="hint">캡처 실패: ' + esc(a.imageError || '') + '</p>')
+        + (a.texts.length ? '<div class="hint">영역 안 글자 ' + a.texts.length + '줄</div>' + textsHtml(a.texts) : '')
+        + '<textarea id="rqItemNote" placeholder="이 영역에 대한 설명(무엇이 어떻게 되어야 하는지)"></textarea>'
+        + '<div class="row"><button id="rqTake" class="pri"' + (a.busy ? ' disabled' : '') + '>이 영역 담기</button><button id="rqClear">다시 지정</button></div>';
+      $('rqItemNote').value = note;
+      $('rqTake').onclick = rqTake; $('rqClear').onclick = () => RQ.clearSel();
+      return;
+    }
+    const cur = RQ.on ? RQ.current() : null;
     if (!cur) { box.innerHTML = '<span class="hint">고른 셀이 없습니다.</span>'; return; }
     const many = cur.cells.length > 20;
     box.innerHTML = '<div class="loc">' + esc(RQK.locText(cur.loc)) + '</div>'
@@ -278,13 +303,14 @@
   function itemHtml(it, i, removable) {
     const notes = (it.cells || []).filter((c) => c.note).map((c) => '<li>' + esc(c.row) + ' / ' + esc(c.col) + ': <b>' + esc(c.value) + '</b> → ' + esc(c.note) + '</li>').join('');
     return '<div class="rq-item"><div class="row between"><b>항목 ' + (i + 1) + '</b>' + (removable ? '<button data-rm="' + i + '">빼기</button>' : '') + '</div>'
-      + '<div class="loc">' + esc(RQK.locText(it.loc || {})) + ' · 셀 ' + (it.cells || []).length + '개</div>'
+      + '<div class="loc">' + esc(RQK.locText(it.loc || {})) + (it.kind === 'area' ? ' · 영역 지정' : ' · 셀 ' + (it.cells || []).length + '개') + '</div>'
       + (notes ? '<ul>' + notes + '</ul>' : '') + (it.note ? '<p>' + esc(it.note) + '</p>' : '')
+      + (!removable && it.kind === 'area' ? textsHtml(it.texts) : '')
       + (it.image ? '<img src="' + it.image + '" alt="화면 캡처">' : '') + '</div>';
   }
   function renderRqItems() {
     $('rqCount').textContent = RQ.items.length ? RQ.items.length + '개' : '';
-    $('rqItems').innerHTML = RQ.items.length ? RQ.items.map((it, i) => itemHtml(it, i, true)).join('') : '<p class="hint">셀을 고르고 「이 부분 담기」를 누르면 여기에 쌓입니다. 여러 메뉴에서 담을 수 있습니다.</p>';
+    $('rqItems').innerHTML = RQ.items.length ? RQ.items.map((it, i) => itemHtml(it, i, true)).join('') : '<p class="hint">셀을 고르거나 영역을 끌어 지정한 뒤 「담기」를 누르면 여기에 쌓입니다. 여러 메뉴에서 담을 수 있습니다.</p>';
     $('rqItems').querySelectorAll('[data-rm]').forEach((b) => { b.onclick = () => { RQ.remove(+b.getAttribute('data-rm')); renderRqItems(); }; });
   }
   function rqDraft() {

@@ -63,7 +63,8 @@
 <main id="vEngine" class="page full" hidden><div class="eng-wrap"><div id="engineBox" class="engine-box"></div>
   <aside id="rqPanel" class="rq-panel" hidden>
     <div class="row between"><b>✏️ 수정요청</b><button id="rqClose">닫기</button></div>
-    <p class="hint">표의 셀을 <b>클릭</b>하거나 <b>끌어서</b> 고르세요. Shift+클릭 범위, Ctrl+클릭 추가·빼기, Esc 선택 해제. 메뉴·탭은 그대로 옮겨 다닐 수 있습니다.</p>
+    <div class="seg" id="rqMode"><button data-m="cell" class="on">▦ 셀 고르기</button><button data-m="area">⬚ 영역 끌기</button></div>
+    <p class="hint" id="rqHint"></p>
     <div id="rqCur" class="rq-cur"></div>
     <h3>담은 항목 <span id="rqCount" class="hint"></span></h3>
     <div id="rqItems"></div>

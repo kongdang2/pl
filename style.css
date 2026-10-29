@@ -38,6 +38,9 @@ button:disabled{opacity:.5;cursor:default}
 .rq-panel{width:380px;flex:none;overflow-y:auto;border-left:1px solid var(--line);background:var(--card);padding:12px 14px}
 .rq-panel textarea,.rq-cur textarea{width:100%;min-height:56px;font:inherit;padding:7px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink)}
 .rq-panel label input,.rq-panel label select{width:100%}
+.seg{display:flex;margin:8px 0 4px}.seg button{flex:1;border-radius:0}.seg button:first-child{border-radius:6px 0 0 6px}.seg button:last-child{border-radius:0 6px 6px 0;border-left:0}.seg button.on{background:#D92D20;color:#fff;border-color:#D92D20}
+.rq-texts{margin:4px 0;padding-left:16px;max-height:140px;overflow-y:auto;font-size:12px}
+.rq-cur img{max-width:100%;border:1px solid var(--line);display:block;margin:4px 0}
 .rq-cur{border:1px dashed #D92D20;border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12.5px}
 .rq-cur .loc,.rq-item .loc{color:var(--mut);font-size:12px;margin-bottom:4px}
 .rq-cells{width:100%;border-collapse:collapse;font-size:12px}.rq-cells td{border-bottom:1px solid var(--line);padding:3px 4px;vertical-align:top}

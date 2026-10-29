@@ -128,6 +128,59 @@
     return url;
   }
 
+  // ── 영역(드래그 사각형) — 셀로 고를 수 없는 곳(그래프·카드·안내문 등)
+  const BOX_ID = '__SK_RQ_BOX__';
+  async function snapArea(win, r) {
+    await ensureH2C(win);
+    const d = win.document, de = d.documentElement;
+    // 둘레 40px까지 함께 떠서 맥락이 보이게 하고, 지정 영역은 빨간 상자로 그린다
+    const pad = 40, vw = de.clientWidth, vh = de.clientHeight;
+    const L = Math.max(0, r.left - pad), T = Math.max(0, r.top - pad);
+    const R = Math.min(vw, r.right + pad), B = Math.min(vh, r.bottom + pad);
+    const canvas = await win.html2canvas(d.body, { backgroundColor: '#ffffff', scale: 1, logging: false, useCORS: false,
+      x: L + win.scrollX, y: T + win.scrollY, width: R - L, height: B - T, windowWidth: vw, windowHeight: vh,
+      ignoreElements: (el) => el.id === BOX_ID });
+    const w = Math.max(1, Math.round(R - L)), h = Math.max(1, Math.round(B - T));
+    const k = Math.min(1, MAX_IMG_W / w);
+    const out = document.createElement('canvas'); out.width = Math.round(w * k); out.height = Math.round(h * k);
+    const g = out.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, out.width, out.height);
+    g.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, out.width, out.height);
+    g.strokeStyle = '#D92D20'; g.lineWidth = 2;
+    g.strokeRect((r.left - L) * k + 1, (r.top - T) * k + 1, r.width * k - 2, r.height * k - 2);
+    let url = out.toDataURL('image/png');
+    if (url.length > 900000) url = out.toDataURL('image/jpeg', 0.85);
+    return url;
+  }
+  // 영역 안 글자: 가운데가 영역 안에 든 말단 요소(셀·버튼·입력칸·글자)를 줄(같은 높이) 단위로 묶는다
+  function areaTexts(win, r) {
+    const d = win.document, bits = [];
+    let table = null;
+    const tw = d.createTreeWalker(d.body, 1);
+    for (let el = tw.nextNode(); el && bits.length < 600; el = tw.nextNode()) {
+      if (el.id === BOX_ID || /^(SCRIPT|STYLE|NOSCRIPT)$/.test(el.tagName)) continue;
+      const cell = el.closest('td,th');
+      if (cell && cell !== el) continue; // 셀 안 요소는 셀이 대신 읽는다
+      const field = /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName);
+      if (!cell && !field && el.children.length && !/^(BUTTON|LABEL)$/.test(el.tagName)) continue;
+      const b = el.getBoundingClientRect(); if (!b.width || !b.height) continue;
+      const cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+      if (cx < r.left || cx > r.right || cy < r.top || cy > r.bottom) continue;
+      let t = cell ? cellValue(el) : field ? (el.tagName === 'SELECT' ? ((el.options[el.selectedIndex] || {}).text || el.value) : (el.type === 'checkbox' || el.type === 'radio') ? (el.checked ? '✔' : '') : el.value) : txt(el);
+      t = String(t || '').replace(/\s+/g, ' ').trim(); if (!t) continue;
+      if (cell && !table) table = cell.closest('table');
+      bits.push({ t: t.slice(0, 120), y: b.top, x: b.left, h: b.height });
+    }
+    bits.sort((a, b) => a.y - b.y || a.x - b.x);
+    const lines = [];
+    bits.forEach((p) => {
+      const last = lines[lines.length - 1];
+      if (last && Math.abs(p.y - last.y) < Math.max(6, Math.min(p.h, last.h) / 2)) last.items.push(p);
+      else lines.push({ y: p.y, h: p.h, items: [p] });
+    });
+    const texts = lines.slice(0, 60).map((l) => l.items.sort((a, b) => a.x - b.x).map((p) => p.t).join(' | '));
+    return { texts, table };
+  }
+
   function excerpt(G, sel) {
     const rs = sel.map((x) => x[0]), cs = sel.map((x) => x[1]);
     const r0 = Math.max(G.head, Math.min(...rs) - 2), r1 = Math.min(G.grid.length - 1, Math.max(...rs) + 2);
@@ -156,11 +209,13 @@
   const STYLE_ID = '__SK_RQ_STYLE__';
   // 캡처(html2canvas)는 outline을 그리지 않으므로 안쪽 box-shadow로 표시한다
   const CSS = '.sk-rq-on td,.sk-rq-on th{cursor:cell!important}.sk-rq-sel{box-shadow:inset 0 0 0 2px #D92D20!important;background-image:linear-gradient(rgba(217,45,32,.12),rgba(217,45,32,.12))!important}'
-    + '.sk-rq-done{box-shadow:inset 0 0 0 2px #F79009!important}';
+    + '.sk-rq-done{box-shadow:inset 0 0 0 2px #F79009!important}'
+    + '.sk-rq-area,.sk-rq-area *{cursor:crosshair!important;user-select:none!important}'
+    + '#' + BOX_ID + '{position:fixed;z-index:2147483647;border:2px solid #D92D20;background:rgba(217,45,32,.08);pointer-events:none}';
 
   function create(opts) {
     // opts: {getWin, onChange(state)}
-    const st = { on: false, win: null, table: null, G: null, sel: new Map(), anchor: null, dragging: false, items: [] };
+    const st = { on: false, win: null, table: null, G: null, sel: new Map(), anchor: null, dragging: false, items: [], mode: 'cell', area: null, prev: null, a0: null, box: null };
     let handlers = null;
 
     function clearMarks(cls) { if (!st.win) return; st.win.document.querySelectorAll('.' + cls).forEach((e) => e.classList.remove(cls)); }
@@ -181,7 +236,44 @@
       for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) { const td = st.G.grid[r] && st.G.grid[r][c]; if (td) { const p = st.G.pos.get(td); m.set(p[0] + ',' + p[1], td); } }
       return m;
     }
+    function boxEl() {
+      if (!st.box || !st.box.isConnected) { st.box = st.win.document.createElement('div'); st.box.id = BOX_ID; st.win.document.body.appendChild(st.box); }
+      return st.box;
+    }
+    function drawBox(r) {
+      if (!r) { if (st.box) st.box.remove(); st.box = null; return; }
+      const b = boxEl(); b.style.left = r.left + 'px'; b.style.top = r.top + 'px'; b.style.width = r.width + 'px'; b.style.height = r.height + 'px';
+    }
+    function rectOf(a, ev) {
+      const vw = st.win.document.documentElement.clientWidth, vh = st.win.document.documentElement.clientHeight;
+      const x = Math.max(0, Math.min(vw, ev.clientX)), y = Math.max(0, Math.min(vh, ev.clientY));
+      const left = Math.min(a[0], x), top = Math.min(a[1], y), right = Math.max(a[0], x), bottom = Math.max(a[1], y);
+      return { left, top, right, bottom, width: right - left, height: bottom - top };
+    }
+    function areaDown(ev) {
+      if (ev.button !== 0) return;
+      ev.preventDefault(); ev.stopPropagation();
+      st.a0 = [ev.clientX, ev.clientY]; st.prev = st.area; st.dragging = true;
+      drawBox(rectOf(st.a0, ev));
+    }
+    function areaMove(ev) { if (st.dragging && st.mode === 'area') drawBox(rectOf(st.a0, ev)); }
+    async function areaUp(ev) {
+      if (!st.dragging) return;
+      st.dragging = false;
+      const r = rectOf(st.a0, ev);
+      // 그냥 클릭(아주 작은 사각형)은 무시하고 앞서 지정한 영역을 그대로 둔다
+      if (r.width < 8 || r.height < 8) { st.area = st.prev; drawBox(st.area ? st.area.rect : null); return; }
+      drawBox(r);
+      const tx = areaTexts(st.win, r);
+      // 그림은 끌기를 마친 그 자리에서 바로 뜬다(그 뒤 스크롤해도 어긋나지 않게)
+      const area = st.area = { rect: r, texts: tx.texts, loc: location(st.win, tx.table), image: null, busy: true };
+      opts.onChange && opts.onChange(api);
+      try { area.image = await snapArea(st.win, r); } catch (e) { area.imageError = String(e && e.message || e); }
+      area.busy = false;
+      if (st.area === area) opts.onChange && opts.onChange(api);
+    }
     function down(ev) {
+      if (st.mode === 'area') return areaDown(ev);
       if (ev.button !== 0) return;
       const hit = cellFrom(ev); if (!hit) return;
       ev.preventDefault(); ev.stopPropagation();
@@ -195,14 +287,14 @@
       paint();
     }
     function over(ev) {
-      if (!st.dragging) return;
+      if (!st.dragging || st.mode === 'area') return;
       const hit = cellFrom(ev); if (!hit || hit.table !== st.table) return;
       const p = st.G.pos.get(hit.td); if (!p) return;
       st.sel = rect(st.anchor, p); paint();
     }
-    function up() { st.dragging = false; }
-    function block(ev) { if (cellFrom(ev)) { ev.preventDefault(); ev.stopPropagation(); } }
-    function key(ev) { if (ev.key === 'Escape') { if (st.sel.size) { st.sel = new Map(); paint(); } else api.stop(); } }
+    function up(ev) { if (st.mode === 'area') return areaUp(ev); st.dragging = false; }
+    function block(ev) { if (st.mode === 'area' || cellFrom(ev)) { ev.preventDefault(); ev.stopPropagation(); } }
+    function key(ev) { if (ev.key === 'Escape') { if (st.area || st.sel.size) api.clearSel(); else api.stop(); } }
 
     const api = {
       get on() { return st.on; },
@@ -213,7 +305,7 @@
         const d = win.document;
         if (!d.getElementById(STYLE_ID)) { const s = d.createElement('style'); s.id = STYLE_ID; s.textContent = CSS; d.head.appendChild(s); }
         d.body.classList.add('sk-rq-on');
-        handlers = { mousedown: down, mouseover: over, mouseup: up, click: block, dblclick: block, focusin: block, keydown: key };
+        handlers = { mousedown: down, mouseover: over, mousemove: areaMove, mouseup: up, click: block, dblclick: block, focusin: block, keydown: key };
         Object.entries(handlers).forEach(([k, f]) => d.addEventListener(k, f, true));
         paint();
       },
@@ -221,13 +313,20 @@
         if (!st.on) return;
         const d = st.win.document;
         Object.entries(handlers || {}).forEach(([k, f]) => d.removeEventListener(k, f, true));
-        d.body.classList.remove('sk-rq-on');
+        d.body.classList.remove('sk-rq-on', 'sk-rq-area'); drawBox(null); st.area = null; st.mode = 'cell';
         clearMarks('sk-rq-sel'); clearMarks('sk-rq-done');
         st.on = false; st.sel = new Map(); st.table = null;
         opts.onChange && opts.onChange(api);
       },
       reset() { st.items = []; st.sel = new Map(); st.table = null; if (st.on) paint(); else opts.onChange && opts.onChange(api); },
-      clearSel() { st.sel = new Map(); paint(); },
+      clearSel() { st.sel = new Map(); st.area = null; drawBox(null); paint(); },
+      get mode() { return st.mode; },
+      // 'cell' = 표 셀 고르기, 'area' = 화면을 끌어 사각형 지정(그동안 메뉴 클릭은 막힌다)
+      setMode(m) {
+        st.mode = m === 'area' ? 'area' : 'cell'; st.sel = new Map(); st.area = null; st.dragging = false;
+        if (st.on) { drawBox(null); st.win.document.body.classList.toggle('sk-rq-area', st.mode === 'area'); paint(); }
+      },
+      currentArea() { return st.area; },
       // 지금 고른 셀 정보(패널 표시용)
       current() {
         if (!st.sel.size || !st.table) return null;
@@ -238,6 +337,14 @@
       },
       // 지금 고른 셀을 항목으로 담는다(그림·표 발췌는 이때 뜬다)
       async take(notes, itemNote) {
+        if (st.mode === 'area') {
+          const a = st.area; if (!a) throw new Error('먼저 화면을 끌어 영역을 지정하세요');
+          if (a.busy) throw new Error('캡처가 끝날 때까지 잠깐 기다려 주세요');
+          const item = { kind: 'area', loc: a.loc, cells: [], texts: a.texts, image: a.image, note: itemNote || '', at: new Date().toISOString() };
+          if (a.imageError) item.imageError = a.imageError;
+          st.items.push(item); st.area = null; drawBox(null); paint();
+          return item;
+        }
         const cur = api.current(); if (!cur) throw new Error('먼저 셀을 고르세요');
         const tds = Array.from(st.sel.values());
         cur.cells.forEach((c, i) => { c.note = (notes && notes[i]) || ''; });
@@ -280,6 +387,10 @@
         r.eachCell((x) => { x.border = box; x.alignment = { wrapText: true, vertical: 'top' }; });
         if (c.note) r.getCell(5).fill = yellow;
       });
+      if (it.kind === 'area') {
+        const r = ws.addRow(['항목 ' + (i + 1), locText(it.loc || {}), '(영역 지정)', '', (it.texts || []).slice(0, 3).join(' / ')]);
+        r.eachCell((x) => { x.border = box; x.alignment = { wrapText: true, vertical: 'top' }; });
+      }
       if (it.note) { const r = ws.addRow(['', '항목 메모', it.note]); ws.mergeCells(r.number, 3, r.number, 5); r.getCell(3).alignment = { wrapText: true }; }
     });
     for (let i = 0; i < (req.items || []).length; i++) {
@@ -287,6 +398,7 @@
       const s = wb.addWorksheet('항목' + (i + 1));
       s.addRow([locText(it.loc || {})]).font = { bold: true };
       if (it.note) s.addRow(['메모: ' + it.note]);
+      if (it.texts && it.texts.length) { s.addRow(['영역 안 글자']).font = { bold: true }; it.texts.forEach((t) => s.addRow([t])); }
       const base = s.rowCount + 1;
       const ex = it.excerpt || { rows: [], sel: [] };
       ex.rows.forEach((row, ri) => {
