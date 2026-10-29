@@ -54,6 +54,7 @@
     $('btnSave').hidden = $('btnSaveNew').hidden = !(inEngine && canWrite());
     $('btnReq').hidden = !inEngine;
     $('btnOffline').hidden = !inEngine;
+    $('btnZoom').hidden = !inEngine;
     $('ctx').textContent = inEngine && st.open ? (st.open.base_ym + ' · ' + (st.open.engine_ver || '버전 미상') + ' · ' + (st.open.memo || '') + (st.open.backupOf ? ' · 백업본' : isOwnWeb(st.open) ? ' · 저장하면 이 스냅샷에 덮어씀' : ' · 첫 저장은 새 스냅샷')) : '';
   }
   $('btnLogin').onclick = async () => {
@@ -235,7 +236,7 @@
     busy('엔진과 스냅샷을 받는 중…');
     try {
       const [html, db] = await Promise.all([getEngineHtml(), fetchSnapDb(s)]);
-      show('vEngine'); st.open = s; renderBar();
+      show('vEngine'); st.open = s; renderBar(); fitEngine();
       busy('엔진 여는 중… (10~30초)');
       st.mounted = await E.mount($('engineBox'), html, onEngineMsg);
       busy('스냅샷 불러오는 중…');
@@ -246,6 +247,33 @@
     } catch (e) { toast(e.message, 8000); await loadList(); }
     busy(null);
   }
+  // ── 휴대폰 보기 ─────────────────────────────────
+  // 엔진은 PC 화면 폭(1280px)으로 그린다. 좁은 화면에서는 폭에 맞춰 줄여 보거나(맞춤), 더 크게 키워 옆으로 밀어 본다(확대 60%·100%).
+  const ENGINE_W = 1280, ZOOMS = [0, 0.6, 1]; // 0 = 화면 폭 맞춤
+  st.zoom = 0;
+  function fitEngine() {
+    document.documentElement.style.setProperty('--barh', $('bar').offsetHeight + 'px');
+    const box = $('engineBox'), f = box.querySelector('iframe');
+    const narrow = window.innerWidth < 900, z = ZOOMS[st.zoom];
+    box.classList.toggle('mob', narrow); box.classList.toggle('z1', narrow && z > 0);
+    $('btnZoom').textContent = st.zoom === ZOOMS.length - 1 ? '🔍 맞춤' : st.zoom ? '🔍 더 확대' : '🔍 확대';
+    if (!f) return;
+    if (!narrow) { f.removeAttribute('style'); return; }
+    const k = z || box.clientWidth / ENGINE_W;
+    f.style.cssText = 'width:' + ENGINE_W + 'px;height:' + Math.floor(box.clientHeight / k) + 'px;zoom:' + k; // zoom은 배치 크기도 줄여 옆 스크롤이 실제 폭만큼만 생긴다
+  }
+  $('btnZoom').onclick = () => { st.zoom = (st.zoom + 1) % ZOOMS.length; fitEngine(); };
+  new MutationObserver(fitEngine).observe($('engineBox'), { childList: true });
+  window.addEventListener('resize', fitEngine);
+  new MutationObserver(fitEngine).observe($('rqPanel'), { attributes: true, attributeFilter: ['hidden'] });
+  // 좁은 화면에서 표는 줄마다 카드처럼 쌓는다: 칸마다 머리글 이름(data-l)을 달아 둔다
+  function labelGrid(tb) {
+    const heads = Array.from(tb.closest('table').querySelectorAll('thead th')).map((th) => th.textContent.trim());
+    Array.from(tb.rows).forEach((tr) => Array.from(tr.cells).forEach((td, i) => { if (td.colSpan === 1 && heads[i]) td.setAttribute('data-l', heads[i]); }));
+  }
+  document.querySelectorAll('table.grid tbody').forEach((tb) => { new MutationObserver(() => labelGrid(tb)).observe(tb, { childList: true }); labelGrid(tb); });
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+
   function onEngineMsg(m) { if (m.type === 'sonik:save') saveFromEngine(false); }
   // 저장: 내 웹 스냅샷이면 덮어쓰기(직전 3개는 숨은 백업으로 남음), 아니면 첫 저장만 새 스냅샷. asNew = 「새 버전으로 저장」
   async function saveFromEngine(asNew) {
