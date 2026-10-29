@@ -19,6 +19,7 @@
   hong 이 「모두」로 보내면 Claude → Codex 순서로 둘 다 답한다(둘의 답은 받는이 모두 · 안내, Codex 는 Claude 의 답까지 본다). 「모두」 대화에 답글을 달면 셋이 이어 간다.
   첨부는 PC `소통\첨부\<글번호>\` 에 내려받아 경로를 프롬프트에 넣는다(Codex 새 세션은 이미지를 `-i` 로도 붙인다).
   웹 제어: ⚙ 모델(`sk_relay.claude_model·codex_model·codex_effort`), 작업 중 말풍선의 ■ 중지(`stop_id`, 5초 안에 프로세스 나무째 종료), ⚡ 빠른 질문(`sk_channel.quick`, 본 작업과 따로 읽기 전용 실행). `supabase/009_relay_controls.sql`
+  작업 과정: claude `--output-format stream-json --verbose`, codex `exec --json` 의 진행 이벤트를 한 줄 요약(읽기·고침·명령·찾기·말·생각)으로 바꿔 실행 중인 글의 `live` 에 2.5초마다 올린다(`supabase/010_channel_live.sql`). 웹은 작업 중 말풍선에 최근 5줄, 끝난 뒤 「작업 과정 N단계」로 펼쳐 본다. 에이전트 답은 문단·목록·굵게·코드 서식으로 보인다.
 - `config.js` — Supabase 주소와 공개(publishable) 키. 공개돼도 되는 값이며, 접근은 로그인 + `sk_members` + RLS로 막음
 - `vendor/supabase-js-2.45.4.js` — supabase-js UMD(MIT, `vendor/supabase-js-LICENSE`). CDN에 의존하지 않도록 포함
 - `supabase/` — 테이블·권한(RLS)·버킷 정의(SQL)

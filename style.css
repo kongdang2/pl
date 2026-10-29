@@ -57,7 +57,7 @@ button:disabled{opacity:.5;cursor:default}
 .rq-log{padding-left:18px;font-size:13px}.rq-log li{margin:4px 0}.rq-log div{white-space:pre-wrap}
 .tag.st-접수{color:var(--pri2)}.tag.st-진행{color:var(--warn)}.tag.st-완료{color:var(--ok)}.tag.st-보류{color:var(--mut)}
 .card.chat{padding:0;overflow:hidden;display:flex;flex-direction:column}
-.chat-pop{position:fixed;right:20px;bottom:84px;width:min(440px,calc(100vw - 32px));height:min(680px,calc(100vh - 110px));margin:0;z-index:40;box-shadow:0 12px 36px rgba(0,0,0,.22)}
+.chat-pop{position:fixed;right:20px;bottom:84px;width:min(520px,calc(100vw - 32px));height:min(680px,calc(100vh - 110px));margin:0;z-index:40;box-shadow:0 12px 36px rgba(0,0,0,.22)}
 .chat-fab{position:fixed;right:20px;bottom:20px;width:54px;height:54px;border-radius:50%;padding:0;font-size:24px;z-index:41;background:var(--pri);color:#fff;border:none;box-shadow:0 6px 18px rgba(0,0,0,.25);cursor:pointer}
 .chat-fab.open{background:var(--pri2)}
 .chat-pop .chat-head{flex-wrap:nowrap;white-space:nowrap}.chat-pop .chat-head>.hint{display:none}
@@ -80,7 +80,27 @@ button:disabled{opacity:.5;cursor:default}
 .cm.me .bub{background:var(--pri);color:#fff;border-bottom-right-radius:4px}
 .cm.them .bub{background:var(--card);border:1px solid var(--line);border-bottom-left-radius:4px}
 .cm.wait .bub{box-shadow:0 0 0 2px rgba(247,144,9,.55)}
-.bub .txt{white-space:pre-wrap}
+.cm.me .bub .txt{white-space:pre-wrap}
+.cm.them .bub{padding:9px 13px;line-height:1.6}
+.bub .txt p{margin:0 0 7px}.bub .txt p:last-child{margin-bottom:0}
+.bub .txt ul,.bub .txt ol{margin:2px 0 8px;padding-left:20px}.bub .txt li{margin:2px 0}
+.bub .txt ol li.cn{list-style:none;position:relative;padding-left:4px}.bub .txt ol li.cn::before{content:attr(data-n);position:absolute;left:-19px;width:16px;text-align:center}
+.bub .txt h5{font-size:13.5px;margin:8px 0 4px}
+.bub .txt b.lb{color:var(--pri2)}
+.bub .txt code{font:12px/1.4 Consolas,"D2Coding",monospace;background:rgba(127,127,127,.13);padding:1px 4px;border-radius:4px;word-break:break-all}
+.bub .txt pre{font:12px/1.45 Consolas,"D2Coding",monospace;background:rgba(127,127,127,.12);padding:7px 9px;border-radius:6px;overflow-x:auto;margin:4px 0 8px;white-space:pre}
+.bub .txt a{color:var(--pri2)}
+.bub.typing{min-width:240px}.typing-head{display:flex;align-items:center}
+.live-box{margin-top:6px;border-top:1px dashed var(--line);padding-top:5px}
+.live-box.all{max-height:260px;overflow-y:auto}
+.live-list{list-style:none;margin:0;padding:0;font-size:12px;color:var(--mut)}
+.live-list li{display:flex;gap:5px;align-items:baseline;padding:1px 0;min-width:0}
+.live-list .ic{flex:none;width:16px;text-align:center}.live-list .la{flex:none;font-weight:600;font-size:11px}
+.live-list .ls{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.live-list li.k-text .ls,.live-list li.k-think .ls{white-space:normal;color:var(--ink)}.live-list li.k-think .ls{color:var(--mut);font-style:italic}
+.live-list li.k-edit .ls{color:#B54708}
+.live-tg{border:none;background:none;padding:2px 0;font-size:11.5px;color:var(--pri2);cursor:pointer}
+.cm.live-done{margin-top:-2px}.cm.live-done .live-box{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 10px;max-width:86%;max-height:300px;overflow-y:auto}
 .bub .to{font-size:11px;opacity:.75;margin-bottom:2px}
 .bub .quote{display:block;font-size:11.5px;opacity:.8;border-left:2px solid currentColor;padding-left:6px;margin:2px 0 4px;color:inherit;text-decoration:none}
 .bub.typing{color:var(--mut)}.bub.typing i{font-style:normal;animation:blink 1.2s infinite}.bub.typing i:nth-child(2){animation-delay:.2s}.bub.typing i:nth-child(3){animation-delay:.4s}
