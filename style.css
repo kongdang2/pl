@@ -56,4 +56,15 @@ button:disabled{opacity:.5;cursor:default}
 .stg.held .bar span{opacity:.5}.stg .say{font-size:11.5px;color:var(--mut);margin-top:2px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rq-log{padding-left:18px;font-size:13px}.rq-log li{margin:4px 0}.rq-log div{white-space:pre-wrap}
 .tag.st-접수{color:var(--pri2)}.tag.st-진행{color:var(--warn)}.tag.st-완료{color:var(--ok)}.tag.st-보류{color:var(--mut)}
+.ch-rows{max-height:420px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin:8px 0}
+.ch-msg{border-left:3px solid var(--line);padding:5px 9px;margin:6px 0;font-size:13px}
+.ch-msg.s-hong{border-left-color:var(--pri2)}.ch-msg.s-Codex{border-left-color:#7A5AF8}.ch-msg.s-Claude{border-left-color:#D97706}
+.ch-msg.wait{background:rgba(247,144,9,.08)}
+.ch-head{font-size:12.5px}.ch-body{white-space:pre-wrap;margin:3px 0;word-break:break-word}
+.ch-act button{padding:2px 8px;font-size:12px}
+.tag.ch-대기{color:var(--warn);border-color:var(--warn)}.tag.ch-답변{color:var(--pri2)}.tag.ch-완료{color:var(--ok)}.tag.ch-안내{color:var(--mut)}
+.ch-reply{font-size:12.5px;color:var(--mut);margin:4px 0}.ch-reply button{padding:0 7px}
+.ch-form label{margin:4px 0}.ch-form input{width:110px}
+.ch-body-in{width:100%;min-height:70px;font:inherit;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink);margin:6px 0}
+#chMine.on{background:var(--warn);color:#fff;border-color:var(--warn)}
 [hidden]{display:none!important}
