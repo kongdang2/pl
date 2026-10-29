@@ -80,11 +80,17 @@
 <button id="chFab" class="chat-fab" title="소통 (hong · Claude · Codex)" hidden>💬<span id="chBadge" class="chat-badge" hidden></span></button>
 <section class="card chat chat-pop" id="chCard" hidden>
   <div class="chat-head"><b>💬 소통</b><span class="hint">hong · Claude · Codex</span><span class="grow"></span>
-    <span id="chRelay" class="ch-relay"></span><button id="chPause">⏸ 멈춤</button><button id="chMine" title="나에게 온 대기 글만 보기">내 대기 0</button><button id="chClose" title="닫기 (Esc)">✕</button></div>
+    <span id="chRelay" class="ch-relay"></span><button id="chSet" title="모델 설정">⚙</button><button id="chPause">⏸ 멈춤</button><button id="chMine" title="나에게 온 대기 글만 보기">내 대기 0</button><button id="chClose" title="닫기 (Esc)">✕</button></div>
+  <div id="chSetBox" class="chat-set" hidden>
+    <label>Claude 모델<select id="chClaudeModel"><option value="">기본 (PC 설정)</option><option value="claude-opus-5-5">Opus 5.5</option><option value="claude-sonnet-5-5">Sonnet 5.5</option><option value="claude-fable-5-1">Fable 5.1</option><option value="claude-haiku-5-5">Haiku 5.5</option></select></label>
+    <label>Codex 모델<input id="chCodexModel" list="chCodexModels" placeholder="기본 (PC 설정)"><datalist id="chCodexModels"><option value="gpt-6.1-sol"></option></datalist></label>
+    <label>Codex 추론<select id="chCodexEffort"><option value="">기본 (PC 설정)</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></label>
+    <p class="hint">다음 작업부터 적용됩니다. 비워 두면 PC의 각 프로그램 기본값을 씁니다.</p>
+  </div>
   <div id="chRows" class="chat-rows"></div>
   <div id="chReply" class="chat-reply" hidden><span id="chReplyTxt"></span><button id="chReplyX" title="답글 취소">×</button></div>
   <div class="chat-input">
-    <div class="seg chat-to" id="chTo"><button data-to="Claude">Claude</button><button data-to="Codex">Codex</button><button data-to="모두">모두</button></div>
+    <div class="seg chat-to" id="chTo"><button data-to="Claude">Claude</button><button data-to="Codex">Codex</button><button data-to="모두">모두</button></div><button id="chQuick" class="chat-quick" title="진행 중인 작업과 따로, 파일을 고치지 않고 바로 답합니다">⚡ 빠른 질문</button>
     <div id="chFiles" class="chat-files" hidden></div>
     <div class="chat-box"><button id="chAttach" class="chat-clip" title="이미지·파일 첨부 (붙여넣기·끌어놓기도 됩니다)">📎</button><input id="chFile" type="file" multiple hidden><textarea id="chBody" rows="1"></textarea><button id="chSend" class="pri" title="보내기">➤</button></div>
     <p id="chMsg" class="msg" hidden></p>
