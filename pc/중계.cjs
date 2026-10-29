@@ -3,6 +3,8 @@
 // hong 이 무인 자동 방식을 직접 골랐다(2026-10-30, 프로젝트 대화방 결정 카드). 웹 「멈춤」으로 언제든 세운다.
 // PC 위치: 손익추정시스템\소통\중계.cjs  (실행: node 소통\중계.cjs  · 한 번만: node 소통\중계.cjs --once)
 // 로그인: 사용자 폴더 .sonik-codex.json (채널.cjs 와 같은 Codex 에이전트 계정, sk_agents.can_relay = true)
+// 세션 이어 쓰기: 답글 사슬(첫 글 기준)마다 담당별 세션 번호를 소통\중계세션.json 에 두고, 다음 답글은 claude -p --resume / codex exec resume 으로
+//           같은 세션에 이어서 실행한다(앞에서 읽은 파일·판단 기억). 이어 쓰기가 실패하거나 너무 길어지면 새 세션 + 글 흐름 전체로 실행한다.
 // 안전장치: 한 번에 한 글만 · 실행 시간 한도 · hong 없이 이어지는 자동 왕복 한도(sk_relay.max_hops) · 웹 「멈춤」(sk_relay.paused)
 //           · 되돌리기 어려운 일(운영본 교체·보관 이동·삭제·외부 전송)은 하지 말고 hong 에게 묻도록 지시 · 모든 실행 출력은 소통\중계로그 에 남김
 'use strict';
@@ -14,6 +16,7 @@ const ROOT = path.resolve(__dirname, '..'); // 손익추정시스템
 const LOGIN = process.env.SONIK_CODEX_LOGIN || path.join(os.homedir(), '.sonik-codex.json');
 const CONF_PATH = path.join(__dirname, '중계설정.json');
 const LOG_DIR = path.join(__dirname, '중계로그');
+const SESS_PATH = path.join(__dirname, '중계세션.json');
 // codex.exe 는 Codex 앱 안(%LOCALAPPDATA%\OpenAI\Codex\bin\<버전>\)에 있고 일반 PATH 에는 없다. 가장 최근 것을 쓴다.
 function findCodex() {
   const base = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'OpenAI', 'Codex', 'bin');
@@ -27,6 +30,9 @@ function findCodex() {
 const DEF = {
   pollSec: 20,
   timeoutMin: 90,
+  resume: true,        // 답글 사슬마다 같은 세션 이어 쓰기
+  sessionTurns: 20,    // 한 세션에서 이만큼 답하면 새 세션
+  sessionDays: 3,      // 마지막 사용 후 이만큼 지나면 새 세션
   // 프롬프트는 표준입력으로 넘긴다(Windows 인자 길이·따옴표 문제 회피). 중계설정.json 으로 덮어쓸 수 있다.
   codex: { cmd: findCodex(), args: ['exec', '-C', '{ROOT}', '-s', 'workspace-write', '-'] },
   // claude 는 PATH 에 없어도 설치 위치(사용자 폴더 .local\bin)를 먼저 쓴다
@@ -86,6 +92,20 @@ async function recent(m, agent, n) {
 // 마지막 hong 글 이후 Codex·Claude 끼리 이어진 글 수
 function hopsSinceHong(ch) { let n = 0; for (let i = ch.length - 1; i >= 0 && ch[i].sender !== 'hong'; i--) n++; return n; }
 
+// ── 세션 기록: { "Claude:12": { id, turns, lastId, at } } (12 = 답글 사슬의 첫 글) ──
+function loadSess() { try { return JSON.parse(fs.readFileSync(SESS_PATH, 'utf8')); } catch (_) { return {}; } }
+function saveSess(all) {
+  const old = Date.now() - 14 * 864e5;
+  for (const k of Object.keys(all)) if (new Date(all[k].at).getTime() < old) delete all[k];
+  fs.writeFileSync(SESS_PATH, JSON.stringify(all, null, 1));
+}
+// 실행 출력에서 세션 번호를 찾는다: claude 는 --output-format json 의 session_id, codex 는 머리말의 "session id: …"
+function sessionOf(agent, r) {
+  if (agent === 'Claude') return r.json && r.json.session_id || null;
+  const x = r.out.match(/session id:\s*([0-9a-f-]{36})/i);
+  return x ? x[1] : null;
+}
+
 const fmt = (m) => '#' + m.id + ' ' + m.sender + ' → ' + m.recipient + (m.topic ? ' · ' + m.topic : '') + ' · ' + m.status + '\n' + m.body;
 
 function prompt(agent, m, ch) {
@@ -114,6 +134,25 @@ function prompt(agent, m, ch) {
   ].join('\n');
 }
 
+// 이어 쓰는 세션에는 그 세션이 아직 못 본 글만 넘긴다
+function followUp(agent, m, fresh) {
+  const other = agent === 'Codex' ? 'Claude' : 'Codex';
+  return [
+    '웹 「소통」 채널에 이 대화의 새 글이 올라왔다(마지막 글이 너에게 온 요청).',
+    '',
+    fresh.map(fmt).join('\n\n'),
+    '',
+    '할 일: 마지막 글(#' + m.id + ')의 요청을 처리한다. 앞에서와 같은 규칙(AGENTS.md, 되돌리기 어려운 일은 hong 확인)을 따른다.',
+    '마지막에 채널에 올릴 답을 앞에서와 같은 형식으로 출력한다:',
+    '<<<채널',
+    '받는이: hong 또는 ' + other,
+    '상태: 대기 또는 안내',
+    '주제: ' + (m.topic || '짧은 제목'),
+    '(본문 15줄 이내)',
+    '채널>>>',
+  ].join('\n');
+}
+
 function parseReply(out, agent) {
   const all = [...String(out).matchAll(/<<<채널\s*\r?\n([\s\S]*?)\r?\n\s*채널>>>/g)];
   if (!all.length) return null;
@@ -125,25 +164,44 @@ function parseReply(out, agent) {
   return { to, st, topic: get('주제'), body };
 }
 
-function run(agent, text) {
+// resumeId 가 있으면 그 세션에 이어서 실행한다
+function run(agent, text, resumeId) {
   const c = conf[agent.toLowerCase()];
   // Windows 는 shell 로 실행하므로 공백 든 인자는 따옴표로 감싼다
   const q = (x) => (process.platform === 'win32' && /\s/.test(x) && !/^".*"$/.test(x) ? '"' + x + '"' : x);
-  const args = c.args.map((a) => q(a.replace('{ROOT}', ROOT)));
+  let a = c.args.map((x) => x.replace('{ROOT}', ROOT));
+  if (agent === 'Claude') {
+    a = a.concat(['--output-format', 'json']);
+    if (resumeId) a = a.concat(['--resume', resumeId]);
+  } else if (resumeId) {
+    // codex exec [옵션] resume <세션> -   (마지막 '-' = 표준입력 프롬프트)
+    a = a[a.length - 1] === '-' ? a.slice(0, -1).concat(['resume', resumeId, '-']) : a.concat(['resume', resumeId]);
+  }
+  const args = a.map(q);
   return new Promise((res) => {
-    const bufs = [];
+    const bufs = [], obufs = [];
     let note = '', done = false;
     // Windows 명령창 오류는 CP949 로 나온다: UTF-8 로 깨지면 EUC-KR 로 다시 읽는다
-    const text = () => { const b = Buffer.concat(bufs); let t = b.toString('utf8'); if (t.includes('\uFFFD')) { try { t = new TextDecoder('euc-kr').decode(b); } catch (_) { /* ICU 없음 */ } } return t + note; };
+    const dec = (bs) => { const b = Buffer.concat(bs); let t = b.toString('utf8'); if (t.includes('\uFFFD')) { try { t = new TextDecoder('euc-kr').decode(b); } catch (_) { /* ICU 없음 */ } } return t; };
+    const text = () => dec(bufs) + note;
     const p = cp.spawn(c.cmd, args, { cwd: ROOT, shell: process.platform === 'win32', windowsHide: true });
     const timer = setTimeout(() => { if (!done) { note += '\n[중계] 시간 초과로 중단'; p.kill(); } }, conf.timeoutMin * 60000);
-    p.stdout.on('data', (d) => { bufs.push(d); });
+    p.stdout.on('data', (d) => { bufs.push(d); obufs.push(d); });
     p.stderr.on('data', (d) => { bufs.push(d); });
     p.on('error', (e) => { note += '\n[중계] 실행 실패: ' + e.message; });
-    p.on('close', (code) => { done = true; clearTimeout(timer); res({ code, out: text() }); });
+    p.on('close', (code) => {
+      done = true; clearTimeout(timer);
+      // claude --output-format json: 표준출력 마지막 JSON 의 result 가 답, session_id 가 세션 번호
+      let json = null;
+      if (agent === 'Claude') { const so = dec(obufs).trim(); try { json = JSON.parse(so.slice(so.lastIndexOf('\n{') + 1)); } catch (_) { try { json = JSON.parse(so); } catch (_) { /* 형식 밖 출력 */ } } }
+      const out = text();
+      res({ code, out, json, reply: json && typeof json.result === 'string' ? json.result : out });
+    });
     p.stdin.end(text);
   });
 }
+
+function keepLog(m, tag, out) { fs.writeFileSync(path.join(LOG_DIR, stamp().replace(/[-:T]/g, '') + '_' + m.id + '_' + tag + '.txt'), out); }
 
 async function handle(m, ctl) {
   const agent = m.recipient;
@@ -159,10 +217,30 @@ async function handle(m, ctl) {
   }
   await patchMsg(m.id, { run_state: '실행중', run_note: '' });
   await setRelay({ busy_with: m.id });
-  log('실행 #' + m.id, agent);
-  const r = await run(agent, prompt(agent, m, ctx));
-  fs.writeFileSync(path.join(LOG_DIR, stamp().replace(/[-:T]/g, '') + '_' + m.id + '_' + agent + '.txt'), r.out);
-  const rep = parseReply(r.out, agent);
+  // 같은 답글 사슬에서 이 담당이 쓰던 세션이 있으면 못 본 글만 넘겨 이어 쓴다
+  const all = loadSess(), key = agent + ':' + ch[0].id;
+  let s = conf.resume ? all[key] : null;
+  if (s && (s.turns >= conf.sessionTurns || Date.now() - new Date(s.at).getTime() > conf.sessionDays * 864e5)) { log('새 세션(길이·기간 한도)', key); s = null; }
+  const fresh = s ? ch.filter((x) => x.id > s.lastId) : null;
+  let r, rep, resumed = false;
+  if (s && fresh.length) {
+    log('실행 #' + m.id, agent, '세션 이어 쓰기', s.id, '새 글', fresh.length);
+    r = await run(agent, followUp(agent, m, fresh), s.id);
+    rep = parseReply(r.reply, agent);
+    resumed = !!rep;
+    if (!rep) { log('이어 쓰기 실패 #' + m.id, 'code', r.code, '→ 새 세션으로 다시'); keepLog(m, agent + '_이어쓰기실패', r.out); }
+  }
+  if (!resumed) {
+    log('실행 #' + m.id, agent, '새 세션');
+    r = await run(agent, prompt(agent, m, ctx));
+    rep = parseReply(r.reply, agent);
+  }
+  keepLog(m, agent, r.out);
+  const sid = sessionOf(agent, r) || (resumed ? s.id : null);
+  if (rep && sid && conf.resume) {
+    all[key] = { id: sid, turns: (resumed ? s.turns : 0) + 1, lastId: m.id, at: new Date().toISOString() };
+    saveSess(all);
+  }
   if (!rep) {
     const tail = r.out.trim().split(/\r?\n/).slice(-12).join('\n');
     await post({ sender: agent, recipient: 'hong', topic: m.topic, status: '대기', reply_to: m.id,
