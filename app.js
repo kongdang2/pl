@@ -347,7 +347,7 @@
       if (error) throw new Error(error.message);
       log('request', d.snapshot_id, '#' + data.id);
       RQ.reset(); $('rqTitle').value = $('rqBody').value = ''; $('rqKind').value = '기타'; renderRqItems();
-      toast('수정요청 #' + data.id + '을(를) 접수했습니다.', 5000);
+      toast('수정요청 #' + data.id + '을(를) 접수했습니다. 💬 소통으로 Claude에게 넘겼습니다.', 6000);
     } catch (e) { toast('접수 실패: ' + e.message, 8000); }
     busy(null);
   };
@@ -384,9 +384,9 @@
       + '<p class="hint">' + esc(r.kind) + ' · ' + esc(r.author_name || r.author_email) + ' · ' + esc(fmtT(r.created_at)) + ' · 스냅샷 ' + esc(r.base_ym || '') + ' / 엔진 ' + esc(r.engine_ver || '') + '</p>'
       + (r.body ? '<p style="white-space:pre-wrap">' + esc(r.body) + '</p>' : '')
       + stageBar(r, false)
-      + '<h4>Claude 답변</h4>' + ((r.progress || []).length
+      + '<h4>진행 기록</h4>' + ((r.progress || []).length
         ? '<ol class="rq-log">' + r.progress.map((p) => '<li><span class="hint">' + esc(fmtT(p.at)) + ' · ' + esc(STAGES[p.stage] || p.stage) + '</span><div>' + esc(p.text) + '</div></li>').join('') + '</ol>'
-        : '<p class="hint">아직 답변이 없습니다. 대화창에서 「#' + r.id + ' 처리해 줘」라고 요청하면 Claude가 읽고 여기에 진행 상황을 적습니다.</p>')
+        : '<p class="hint">아직 답변이 없습니다. 접수 글이 💬 소통으로 Claude에게 넘어갔고, PC 중계가 돌고 있으면 곧 여기에 진행 상황이 적힙니다.</p>')
       + '<h4>요청 내용</h4>'
       + (r.items || []).map((it, i) => itemHtml(it, i, false) + excerptHtml(it.excerpt)).join('');
     $('rqView').hidden = false;

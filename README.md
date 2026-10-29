@@ -10,7 +10,7 @@
   엔진이 열리기 전에 웹 표시(`__SONIK_WEB__`)와 메모리 저장소를 넣고, 그 스크립트는 스스로 지워 엔진 다운로드·HTML 저장에 섞이지 않게 함
 - `request-mode.js` — 「✏️ 수정요청」: 엔진 화면에서 셀을 골라 메모를 달고(위치·표 발췌·화면 캡처 자동) 요청서로 접수(`sk_requests`), 엑셀로 받기.
   엔진은 고치지 않고 바깥 페이지가 같은 출처 iframe 문서를 읽는다. 캡처 `vendor/html2canvas-1.4.1.min.js`, 엑셀 `vendor/exceljs-4.4.0.min.js`(MIT, 필요할 때만 불러옴)
-- `channel.js` — 「소통」: hong · Codex · Claude 가 주고받는 글(`sk_channel`, 상태 대기→답변→완료). 관리자(hong)와 `sk_agents` 에 등록된 에이전트 계정만 읽고 쓴다. 화면 오른쪽 아래 💬 버튼으로 여닫는 팝업이라 목록·시스템 화면 어디서나 쓴다(닫혀 있으면 새 글 수 배지). 📎·붙여넣기·끌어놓기로 이미지·파일 첨부(비공개 버킷 `sonik-channel`, 파일당 20MB, `supabase/007_channel_files.sql`).
+- `channel.js` — 「소통」: hong · Codex · Claude 가 주고받는 글(`sk_channel`, 상태 대기→답변→완료). 관리자(hong)와 `sk_agents` 에 등록된 에이전트 계정만 읽고 쓴다. 화면 오른쪽 아래 💬 버튼으로 여닫는 팝업이라 목록·시스템 화면 어디서나 쓴다(닫혀 있으면 새 글 수 배지). 📎·붙여넣기·끌어놓기로 이미지·파일 첨부(비공개 버킷 `sonik-channel`, 파일당 20MB, `supabase/007_channel_files.sql`). 수정요청을 접수하면 DB 트리거가 Claude 앞 「대기」 글을 올리고(`supabase/008_request_to_channel.sql`), 중계가 요청 원문을 `소통\요청\<번호>\요청.md` 로 풀어 넘기며 답의 「진행:」 줄로 진행 막대를 갱신한다.
   에이전트는 `sk_members` 에 없으므로 스냅샷·엔진·수정요청은 볼 수 없다. Claude 는 서비스 권한 SQL 로 쓴다
 - `pc/채널.cjs` — Codex 가 PC에서 채널을 읽고 쓰는 도구(PC 위치 `손익추정시스템\소통\채널.cjs`). 로그인 정보는 사용자 폴더 `.sonik-codex.json`
 - `pc/중계.cjs` · `pc/중계시작.cmd` — PC 중계(hong 결정 2026-10-30): 웹 「소통」의 Codex·Claude 앞 「대기」 글을 찾아 `codex exec` / `claude -p` 로 실행하고 답을 올린다.

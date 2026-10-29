@@ -17,7 +17,9 @@ const LOGIN = process.env.SONIK_CODEX_LOGIN || path.join(os.homedir(), '.sonik-c
 const CONF_PATH = path.join(__dirname, '중계설정.json');
 const LOG_DIR = path.join(__dirname, '중계로그');
 const SESS_PATH = path.join(__dirname, '중계세션.json');
-const ATT_DIR = path.join(__dirname, '첨부'); // 웹에서 올린 이미지·파일을 글 번호별로 내려받는 곳
+const ATT_DIR = path.join(__dirname, '첨부');
+const REQ_DIR = path.join(__dirname, '요청'); // 수정요청 원문(항목·셀·메모·화면 캡처)을 요청 번호별로 풀어 두는 곳
+const STAGES = ['접수', '검토', '수정', '검증', '반영']; // 웹에서 올린 이미지·파일을 글 번호별로 내려받는 곳
 // codex.exe 는 Codex 앱 안(%LOCALAPPDATA%\OpenAI\Codex\bin\<버전>\)에 있고 일반 PATH 에는 없다. 가장 최근 것을 쓴다.
 function findCodex() {
   const base = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'OpenAI', 'Codex', 'bin');
@@ -133,6 +135,56 @@ async function fetchFiles(list) {
     }
   }
 }
+// 대화가 어느 수정요청에 관한 것인지: 글의 request_id(접수 때 자동으로 올라온 글) 또는 주제 「수정요청 #N」
+function reqIdOf(list) {
+  for (const x of list.slice().reverse()) {
+    if (x.request_id) return x.request_id;
+    const t = /수정요청\s*#(\d+)/.exec(x.topic || '');
+    if (t) return +t[1];
+  }
+  return null;
+}
+// 요청 원문을 소통\요청\<번호>\요청.md(+ 캡처 그림)로 풀어 두고 m._req 에 요약을 단다
+async function loadRequest(m, list) {
+  const id = reqIdOf(list);
+  if (!id) return;
+  try {
+    const [r] = await api('GET', 'sk_requests', '?select=*&id=eq.' + id);
+    if (!r) return;
+    const dir = path.join(REQ_DIR, String(id));
+    fs.mkdirSync(dir, { recursive: true });
+    const L = ['# 수정요청 #' + r.id + ' · ' + r.title, '', '- 구분: ' + r.kind + ' · 작성: ' + (r.author_name || r.author_email) + ' · 접수: ' + r.created_at,
+      '- 스냅샷 기준월 ' + (r.base_ym || '-') + ' · 엔진 ' + (r.engine_ver || '-') + ' · 지금 단계: ' + (r.status === '보류' ? '보류' : STAGES[r.stage || 0]), ''];
+    if (r.body) L.push('## 설명', '', r.body, '');
+    (r.items || []).forEach((it, i) => {
+      const loc = it.loc || {};
+      L.push('## 항목 ' + (i + 1), '', '- 위치: ' + [loc.zone, loc.site, loc.menu, (loc.subs || []).join(' > '), loc.ym, loc.table].filter(Boolean).join(' · ') + (it.kind === 'area' ? ' (영역 지정)' : ''));
+      (it.cells || []).forEach((c) => L.push('- 셀 ' + (c.row || '') + ' / ' + (c.col || '') + ' = ' + (c.value == null ? '' : c.value) + (c.note ? '  → 메모: ' + c.note : '')));
+      if (it.note) L.push('- 메모: ' + it.note);
+      if (it.texts && it.texts.length) L.push('- 영역 글자: ' + it.texts.slice(0, 80).join(' | '));
+      if (it.excerpt && it.excerpt.rows) L.push('', '표 발췌:', '', ...it.excerpt.rows.slice(0, 40).map((row) => '| ' + row.map((v) => String(v == null ? '' : v).replace(/\|/g, '/')).join(' | ') + ' |'));
+      const im = /^data:image\/(png|jpeg);base64,(.+)$/.exec(it.image || '');
+      if (im) { const f = path.join(dir, '항목' + (i + 1) + '.' + (im[1] === 'jpeg' ? 'jpg' : 'png')); fs.writeFileSync(f, Buffer.from(im[2], 'base64')); L.push('', '화면 캡처: ' + f); }
+      L.push('');
+    });
+    const file = path.join(dir, '요청.md');
+    fs.writeFileSync(file, L.join('\n'));
+    m._req = { id, title: r.title, stage: r.stage, status: r.status, file };
+  } catch (e) { log('요청 읽기 실패 #' + id, e.message); }
+}
+// 답의 「진행:」 줄을 요청의 단계·설명(progress)에 적는다
+async function applyProgress(m, agent, pg) {
+  if (!m._req || !pg) return;
+  try {
+    const [r] = await api('GET', 'sk_requests', '?select=stage,status,progress&id=eq.' + m._req.id);
+    const stage = pg.step === '보류' ? (r.stage || 0) : STAGES.indexOf(pg.step);
+    const status = pg.step === '보류' ? '보류' : stage === 4 ? '완료' : '진행';
+    const progress = (r.progress || []).concat([{ at: new Date().toISOString(), stage, text: '[' + agent + '] ' + pg.text }]);
+    await api('PATCH', 'sk_requests', '?id=eq.' + m._req.id, { stage, status, progress, updated_at: new Date().toISOString() });
+    m._req.stage = stage; m._req.status = status;
+    log('요청 #' + m._req.id, pg.step, pg.text);
+  } catch (e) { log('요청 진행 기록 실패 #' + m._req.id, e.message); }
+}
 const isImg = (p) => /\.(png|jpe?g|gif|webp|bmp)$/i.test(p);
 
 function prompt(agent, m, ch, group) {
@@ -150,6 +202,7 @@ function prompt(agent, m, ch, group) {
     group ? '이 대화는 hong·Claude·Codex 셋이 함께 하는 대화(받는이 모두)다. Claude 가 먼저 답하고 Codex 가 Claude 의 답까지 보고 이어서 답한다. 상대 답에 덧붙이거나 다른 의견을 내되 같은 말은 되풀이하지 않는다.' : '',
     '할 일: ' + (group ? 'hong 의 글(#' + m.id + ')' : '마지막 글(#' + m.id + ')') + '의 요청을 처리한다. 긴 결과는 지금처럼 검증자료\\vNNN\\ 등 파일에 쓰고 채널에는 요약과 경로만 남긴다.',
     '되돌리기 어려운 일(운영본 교체·보관 이동·파일 삭제·외부 전송)은 하지 말고 받는이를 hong 으로 해서 확인을 요청한다.',
+    ...reqLines(m),
     '다른 담당에게 넘길 일이 있으면 받는이를 ' + other + ' 로, hong 이 결정할 일이면 hong 으로 한다.',
     '',
     '마지막에 채널에 올릴 답을 정확히 아래 형식으로 출력한다(이 블록만 채널에 올라간다):',
@@ -162,6 +215,18 @@ function prompt(agent, m, ch, group) {
   ].join('\n');
 }
 
+// 수정요청에 관한 대화면: 요청 원문 위치, 진행 단계를 적는 「진행:」 줄 안내
+function reqLines(m) {
+  const q = m._req;
+  if (!q) return [];
+  return ['',
+    '이 대화는 웹 수정요청 #' + q.id + ' 에 관한 것이다(제목: ' + q.title + ' · 지금 단계: ' + (q.status === '보류' ? '보류' : STAGES[q.stage || 0]) + ').',
+    '요청 원문(항목 위치·고른 셀과 값·메모·화면 캡처 그림): ' + q.file + '  — 먼저 읽는다. 그림 파일은 같은 폴더에 있다.',
+    '엔진 수정은 AGENTS.md 의 버전 흐름(새 번호, 10초본·일반본, 검증자료, Codex 교차검증 통과)을 따르고, 「반영」은 통과 뒤에만 쓴다.',
+    '답 블록 안에 진행 줄을 하나 넣으면 웹 요청 목록의 진행 막대와 설명이 바뀐다(hong 이 읽는 쉬운 한 문장):',
+    '진행: 검토|수정|검증|반영|보류 - 설명'];
+}
+
 // 이어 쓰는 세션에는 그 세션이 아직 못 본 글만 넘긴다
 function followUp(agent, m, fresh, group) {
   const other = agent === 'Codex' ? 'Claude' : 'Codex';
@@ -172,6 +237,7 @@ function followUp(agent, m, fresh, group) {
     '',
     group ? '이 글은 셋이 함께 하는 대화(받는이 모두)다. Claude 가 먼저, Codex 가 이어서 답한다. 같은 말은 되풀이하지 않는다.' : '',
     '할 일: ' + (group ? 'hong 의 글(#' + m.id + ')' : '마지막 글(#' + m.id + ')') + '의 요청을 처리한다. 앞에서와 같은 규칙(AGENTS.md, 되돌리기 어려운 일은 hong 확인)을 따른다.',
+    ...reqLines(m),
     '마지막에 채널에 올릴 답을 앞에서와 같은 형식으로 출력한다:',
     '<<<채널',
     group ? '받는이: 모두' : '받는이: hong 또는 ' + other,
@@ -189,8 +255,9 @@ function parseReply(out, agent) {
   const get = (k) => { const x = blk.match(new RegExp('^\\s*' + k + '\\s*:\\s*(.+)$', 'm')); return x ? x[1].trim() : ''; };
   let to = get('받는이'); if (!['hong', 'Codex', 'Claude'].includes(to) || to === agent) to = 'hong';
   let st = get('상태').split(/\s/)[0]; if (!['대기', '안내'].includes(st)) st = '대기';
-  const body = blk.split(/\r?\n/).filter((l) => !/^\s*(받는이|상태|주제)\s*:/.test(l)).join('\n').trim();
-  return { to, st, topic: get('주제'), body };
+  const body = blk.split(/\r?\n/).filter((l) => !/^\s*(받는이|상태|주제|진행)\s*:/.test(l)).join('\n').trim();
+  const pg = get('진행').match(/^(검토|수정|검증|반영|보류)\s*[-–—:·]?\s*(.*)$/);
+  return { to, st, topic: get('주제'), body, progress: pg ? { step: pg[1], text: pg[2].trim() || body.split('\n')[0] } : null };
 }
 
 // resumeId 가 있으면 그 세션에 이어서 실행한다
@@ -250,12 +317,14 @@ async function handle(m, ctl) {
     return;
   }
   await setRelay({ busy_with: m.id });
+  await loadRequest(m, ch);
   if (m.recipient !== '모두') {
     const ctx = ch.length > 1 ? ch : (await recent(m, [m.recipient], conf.recentMax || 10)).concat([m]);
     const r = await runAgent(m.recipient, m, ch, ctx, false, await rootOf(m, ch, ctx));
     if (!r.rep) await failed(m, m.recipient, r);
     else {
-      await post({ sender: m.recipient, recipient: r.rep.to, topic: r.rep.topic || m.topic, status: r.rep.st, reply_to: m.id, body: r.rep.body });
+      await applyProgress(m, m.recipient, r.rep.progress);
+      await post({ sender: m.recipient, recipient: r.rep.to, topic: r.rep.topic || m.topic, status: r.rep.st, reply_to: m.id, body: r.rep.body, request_id: m._req ? m._req.id : null });
       await patchMsg(m.id, { status: '답변', run_state: '완료', run_note: '' });
       log('완료 #' + m.id, '→', r.rep.to, r.rep.st);
     }
@@ -267,7 +336,8 @@ async function handle(m, ctl) {
     for (const agent of ['Claude', 'Codex']) {
       const r = await runAgent(agent, m, cur, ctx, true, root);
       if (!r.rep) { await failed(m, agent, r, last.id); continue; }
-      const [row] = await post({ sender: agent, recipient: '모두', topic: r.rep.topic || m.topic, status: '안내', reply_to: last.id, body: r.rep.body });
+      await applyProgress(m, agent, r.rep.progress);
+      const [row] = await post({ sender: agent, recipient: '모두', topic: r.rep.topic || m.topic, status: '안내', reply_to: last.id, body: r.rep.body, request_id: m._req ? m._req.id : null });
       cur = cur.concat([row]); ctx = ctx.concat([row]); last = row; ok++;
       log('완료 #' + m.id, agent, '→ 모두');
     }
