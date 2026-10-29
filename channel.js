@@ -33,7 +33,7 @@
     const n = ch.rows.filter((m) => m.sender !== ME && m.id > seen.get()).length;
     $('chBadge').hidden = !n; $('chBadge').textContent = n > 99 ? '99+' : String(n);
   }
-  // 팝업 크기·위치: 가장자리 4곳과 모서리 4곳을 끌어 바꾼다. 내 브라우저에 기억(sonik.ch.box), 손잡이 두 번 누르면 처음 크기로
+  // 팝업 크기·위치: 가장자리 4곳과 모서리 4곳을 끌어 크기를, 머리줄을 끌어 위치를 바꾼다. 내 브라우저에 기억(sonik.ch.box), 손잡이 두 번 누르면 처음 크기로
   const box = {
     get() { try { return JSON.parse(localStorage.getItem('sonik.ch.box') || 'null'); } catch (_) { return null; } },
     set(v) { try { if (v) localStorage.setItem('sonik.ch.box', JSON.stringify(v)); else localStorage.removeItem('sonik.ch.box'); } catch (_) { /* 무시 */ } },
@@ -78,6 +78,24 @@
       card.appendChild(g);
     }
     window.addEventListener('resize', () => { if (ch.open) place(box.get()); });
+    // 머리줄을 잡고 끌면 창 전체를 옮긴다(버튼·입력칸 위에서는 끌지 않음). 위치는 크기와 함께 기억
+    const head = card.querySelector('.chat-head');
+    head.classList.add('ch-drag');
+    head.ondblclick = (e) => { if (!e.target.closest('button,select,input,textarea,a,label')) { box.set(null); place(null); } };
+    head.onpointerdown = (e) => {
+      if (e.button !== 0 || !wide() || e.target.closest('button,select,input,textarea,a,label')) return;
+      e.preventDefault(); head.setPointerCapture(e.pointerId);
+      const r = card.getBoundingClientRect(), x0 = e.clientX, y0 = e.clientY;
+      document.body.classList.add('ch-resizing'); document.body.style.cursor = 'move';
+      const mv = (ev) => place({ l: r.left + ev.clientX - x0, t: r.top + ev.clientY - y0, w: r.width, h: r.height });
+      const up = () => {
+        head.removeEventListener('pointermove', mv); head.removeEventListener('pointerup', up); head.removeEventListener('pointercancel', up);
+        document.body.classList.remove('ch-resizing'); document.body.style.cursor = '';
+        const q = card.getBoundingClientRect();
+        box.set({ l: Math.round(q.left), t: Math.round(q.top), w: Math.round(q.width), h: Math.round(q.height) });
+      };
+      head.addEventListener('pointermove', mv); head.addEventListener('pointerup', up); head.addEventListener('pointercancel', up);
+    };
   }
   function setOpen(v) {
     ch.open = v;
