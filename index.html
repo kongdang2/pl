@@ -85,7 +85,8 @@
   <div id="chReply" class="chat-reply" hidden><span id="chReplyTxt"></span><button id="chReplyX" title="답글 취소">×</button></div>
   <div class="chat-input">
     <div class="seg chat-to" id="chTo"><button data-to="Claude">Claude</button><button data-to="Codex">Codex</button><button data-to="모두">모두</button></div>
-    <div class="chat-box"><textarea id="chBody" rows="1"></textarea><button id="chSend" class="pri" title="보내기">➤</button></div>
+    <div id="chFiles" class="chat-files" hidden></div>
+    <div class="chat-box"><button id="chAttach" class="chat-clip" title="이미지·파일 첨부 (붙여넣기·끌어놓기도 됩니다)">📎</button><input id="chFile" type="file" multiple hidden><textarea id="chBody" rows="1"></textarea><button id="chSend" class="pri" title="보내기">➤</button></div>
     <p id="chMsg" class="msg" hidden></p>
   </div>
 </section>

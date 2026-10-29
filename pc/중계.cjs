@@ -17,6 +17,7 @@ const LOGIN = process.env.SONIK_CODEX_LOGIN || path.join(os.homedir(), '.sonik-c
 const CONF_PATH = path.join(__dirname, '중계설정.json');
 const LOG_DIR = path.join(__dirname, '중계로그');
 const SESS_PATH = path.join(__dirname, '중계세션.json');
+const ATT_DIR = path.join(__dirname, '첨부'); // 웹에서 올린 이미지·파일을 글 번호별로 내려받는 곳
 // codex.exe 는 Codex 앱 안(%LOCALAPPDATA%\OpenAI\Codex\bin\<버전>\)에 있고 일반 PATH 에는 없다. 가장 최근 것을 쓴다.
 function findCodex() {
   const base = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'OpenAI', 'Codex', 'bin');
@@ -106,7 +107,32 @@ function sessionOf(agent, r) {
   return x ? x[1] : null;
 }
 
-const fmt = (m) => '#' + m.id + ' ' + m.sender + ' → ' + m.recipient + (m.topic ? ' · ' + m.topic : '') + ' · ' + m.status + '\n' + m.body;
+const fmt = (m) => '#' + m.id + ' ' + m.sender + ' → ' + m.recipient + (m.topic ? ' · ' + m.topic : '') + ' · ' + m.status + '\n' + m.body
+  + (m._local && m._local.length ? '\n[첨부 ' + m._local.length + '개 — 파일을 직접 열어 본다]\n' + m._local.map((f) => '  ' + f).join('\n') : '');
+
+// 글의 첨부(sk_channel.files, 비공개 버킷 sonik-channel)를 소통\첨부\<글번호>\ 에 내려받고 m._local 에 경로를 둔다
+async function fetchFiles(list) {
+  for (const m of list) {
+    if (m._local || !(m.files || []).length) continue;
+    m._local = [];
+    const dir = path.join(ATT_DIR, String(m.id));
+    fs.mkdirSync(dir, { recursive: true });
+    for (const f of m.files) {
+      const name = String(f.name || path.basename(f.path)).replace(/[\\/:*?"<>|]/g, '_');
+      const to = path.join(dir, name);
+      try {
+        if (!fs.existsSync(to)) {
+          if (!auth.tok || Date.now() > auth.exp) await login();
+          const r = await fetch(URL_ + '/storage/v1/object/sonik-channel/' + f.path.split('/').map(encodeURIComponent).join('/'), { headers: { apikey: KEY, Authorization: 'Bearer ' + auth.tok } });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          fs.writeFileSync(to, Buffer.from(await r.arrayBuffer()));
+        }
+        m._local.push(to);
+      } catch (e) { log('첨부 받기 실패 #' + m.id, f.name, e.message); m._local.push(to + ' (받기 실패: ' + e.message + ')'); }
+    }
+  }
+}
+const isImg = (p) => /\.(png|jpe?g|gif|webp|bmp)$/i.test(p);
 
 function prompt(agent, m, ch, group) {
   const other = agent === 'Codex' ? 'Claude' : 'Codex';
@@ -167,7 +193,7 @@ function parseReply(out, agent) {
 }
 
 // resumeId 가 있으면 그 세션에 이어서 실행한다
-function run(agent, input, resumeId) {
+function run(agent, input, resumeId, images) {
   const c = conf[agent.toLowerCase()];
   // Windows 는 shell 로 실행하므로 공백 든 인자는 따옴표로 감싼다
   const q = (x) => (process.platform === 'win32' && /\s/.test(x) && !/^".*"$/.test(x) ? '"' + x + '"' : x);
@@ -175,6 +201,11 @@ function run(agent, input, resumeId) {
   if (agent === 'Claude') {
     a = a.concat(['--output-format', 'json']);
     if (resumeId) a = a.concat(['--resume', resumeId]);
+  } else if (!resumeId && images && images.length) {
+    // codex exec -i 그림 … -   (새 세션에서만 이미지로 붙인다. 이어 쓰기에서는 경로만 알려 준다)
+    const tail = a[a.length - 1] === '-' ? a.pop() : null;
+    images.forEach((f) => a.push('-i', f));
+    if (tail) a.push(tail);
   } else if (resumeId) {
     // codex exec [옵션] resume <세션> -   (마지막 '-' = 표준입력 프롬프트)
     a = a[a.length - 1] === '-' ? a.slice(0, -1).concat(['resume', resumeId, '-']) : a.concat(['resume', resumeId]);
@@ -199,6 +230,7 @@ function run(agent, input, resumeId) {
       const out = text();
       res({ code, out, json, reply: json && typeof json.result === 'string' ? json.result : out });
     });
+    p.stdin.on('error', (e) => { note += '\n[중계] 입력 전달 실패: ' + e.message; }); // 프로그램이 입력을 읽기 전에 끝나도 중계는 계속
     p.stdin.end(input, 'utf8'); // 프롬프트(표준입력)
   });
 }
@@ -257,6 +289,8 @@ async function runAgent(agent, m, ch, ctx, group) {
   let s = conf.resume ? all[key] : null;
   if (s && (s.turns >= conf.sessionTurns || Date.now() - new Date(s.at).getTime() > conf.sessionDays * 864e5)) { log('새 세션(길이·기간 한도)', key); s = null; }
   const fresh = s ? ch.filter((x) => x.id > s.lastId) : null;
+  await fetchFiles(ctx.concat(fresh || []));
+  const imgs = (m._local || []).filter((f) => isImg(f) && fs.existsSync(f));
   let r, rep, resumed = false;
   if (s && fresh.length) {
     log('실행 #' + m.id, agent, '세션 이어 쓰기', s.id, '새 글', fresh.length);
@@ -267,7 +301,7 @@ async function runAgent(agent, m, ch, ctx, group) {
   }
   if (!resumed) {
     log('실행 #' + m.id, agent, '새 세션');
-    r = await run(agent, prompt(agent, m, ctx, group));
+    r = await run(agent, prompt(agent, m, ctx, group), null, imgs);
     rep = parseReply(r.reply, agent);
   }
   keepLog(m, agent, r.out);
