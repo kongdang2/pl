@@ -1,0 +1,7 @@
+# 실데이터·엔진 파일은 이 저장소에 올리지 않는다(공개 저장소)
+*.json
+!package.json
+손익추정*.html
+사업계획*.html
+*.html.gz
+*.json.gz
