@@ -108,11 +108,58 @@ function saveSess(all) {
   for (const k of Object.keys(all)) if (all[k].at && new Date(all[k].at).getTime() < old) delete all[k];
   fs.writeFileSync(SESS_PATH, JSON.stringify(all, null, 1));
 }
-// 실행 출력에서 세션 번호를 찾는다: claude 는 --output-format json 의 session_id, codex 는 머리말의 "session id: …"
+// 실행 출력에서 세션 번호를 찾는다: claude 는 stream-json 마지막 result 의 session_id, codex 는 --json 의 thread_id(없으면 머리말 "session id: …")
 function sessionOf(agent, r) {
   if (agent === 'Claude') return r.json && r.json.session_id || null;
+  if (r.thread) return r.thread;
   const x = r.out.match(/session id:\s*([0-9a-f-]{36})/i);
   return x ? x[1] : null;
+}
+
+// ── 실시간 진행: CLI 가 줄마다 내보내는 JSON 이벤트를 한 줄 요약으로 바꾼다 ──
+// k: read 읽기 · edit 고침 · run 명령 · search 찾기 · text 말 · think 생각 · tool 기타
+const cut = (t, n) => { t = String(t == null ? '' : t).replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; };
+const rel = (f) => { f = String(f || ''); return f.startsWith(ROOT) ? f.slice(ROOT.length + 1) : f; };
+function eventLines(agent, e) {
+  const out = [];
+  if (agent === 'Claude' && e.type === 'assistant' && e.message && Array.isArray(e.message.content)) {
+    for (const c of e.message.content) {
+      if (c.type === 'text' && c.text && c.text.trim()) out.push({ k: 'text', s: cut(c.text.replace(/<<<채널[\s\S]*$/, '(답 정리)'), 300) });
+      else if (c.type === 'thinking' && c.thinking) out.push({ k: 'think', s: cut(c.thinking, 200) });
+      else if (c.type === 'tool_use') {
+        const i = c.input || {}, n = c.name || '';
+        if (n === 'Read') out.push({ k: 'read', s: rel(i.file_path) });
+        else if (/^(Edit|Write|MultiEdit|NotebookEdit)$/.test(n)) out.push({ k: 'edit', s: (n === 'Write' ? '새로 씀 ' : '') + rel(i.file_path || i.notebook_path) });
+        else if (n === 'Bash') out.push({ k: 'run', s: cut(i.description || i.command, 160) });
+        else if (n === 'Glob' || n === 'Grep') out.push({ k: 'search', s: cut((i.pattern || '') + (i.path ? '  (' + rel(i.path) + ')' : ''), 160) });
+        else out.push({ k: 'tool', s: cut(n + ' ' + JSON.stringify(i), 160) });
+      }
+    }
+  }
+  if (agent === 'Codex' && e.item && (e.type === 'item.started' || e.type === 'item.completed')) {
+    const it = e.item, t = it.type || it.item_type || '';
+    if (/command/.test(t) && e.type === 'item.started') out.push({ k: 'run', s: cut(it.command, 160) });
+    else if (/file_change|patch/.test(t) && e.type === 'item.completed') out.push({ k: 'edit', s: cut((it.changes || []).map((x) => rel(x.path) + (x.kind ? ' (' + x.kind + ')' : '')).join(', ') || it.path, 200) });
+    else if (/agent_message|assistant/.test(t) && e.type === 'item.completed' && it.text) out.push({ k: 'text', s: cut(it.text.replace(/<<<채널[\s\S]*$/, '(답 정리)'), 300) });
+    else if (/reasoning/.test(t) && e.type === 'item.completed' && it.text) out.push({ k: 'think', s: cut(it.text, 200) });
+    else if (/search|mcp|tool/.test(t) && e.type === 'item.started') out.push({ k: 'tool', s: cut(it.query || it.tool || it.name || t, 160) });
+  }
+  return out;
+}
+// 글의 live 칸에 모아 몇 초마다 올린다(웹이 「작업 중」 말풍선에 보여 준다)
+function liveSink(m, agent) {
+  const list = Array.isArray(m.live) ? m.live : (m.live = []);
+  let timer = null;
+  const flush = async () => { timer = null; try { await patchMsg(m.id, { live: list.slice(-150) }); } catch (e) { log('진행 기록 실패 #' + m.id, e.message); } };
+  return {
+    add(items) { for (const x of items) list.push(Object.assign({ at: new Date().toISOString(), a: agent }, x)); if (items.length && !timer) timer = setTimeout(flush, 2500); },
+    async end() { if (timer) { clearTimeout(timer); await flush(); } },
+  };
+}
+// 이벤트 어디에 있든 답 블록(<<<채널 … 채널>>>)이 든 문자열을 찾는다(형식이 바뀌어도 답을 놓치지 않게)
+function deepFind(o, re, acc) {
+  if (typeof o === 'string') { if (re.test(o)) acc.push(o); } else if (o && typeof o === 'object') for (const v of Object.values(o)) deepFind(v, re, acc);
+  return acc;
 }
 
 const fmt = (m) => '#' + m.id + ' ' + m.sender + ' → ' + m.recipient + (m.topic ? ' · ' + m.topic : '') + ' · ' + m.status + '\n' + m.body
@@ -215,7 +262,7 @@ function prompt(agent, m, ch, group) {
     group ? '받는이: 모두' : '받는이: hong 또는 ' + other,
     group ? '상태: 안내' : '상태: 대기 또는 안내   (받는이가 답하거나 처리해야 하면 대기, 알리기만 하면 안내)',
     '주제: ' + (m.topic || '짧은 제목'),
-    '(본문 15줄 이내)',
+    '(본문: 첫 줄에 결론 한 문장 → 빈 줄 → 「- 」 목록으로 핵심만. 항목 이름은 **굵게**, 파일·경로는 `백틱`. hong 이 결정할 일은 맨 끝에 번호 목록. 15줄 이내)',
     '채널>>>',
   ].join('\n');
 }
@@ -248,7 +295,7 @@ function followUp(agent, m, fresh, group) {
     group ? '받는이: 모두' : '받는이: hong 또는 ' + other,
     group ? '상태: 안내' : '상태: 대기 또는 안내',
     '주제: ' + (m.topic || '짧은 제목'),
-    '(본문 15줄 이내)',
+    '(본문: 첫 줄에 결론 한 문장 → 빈 줄 → 「- 」 목록으로 핵심만. 항목 이름은 **굵게**, 파일·경로는 `백틱`. hong 이 결정할 일은 맨 끝에 번호 목록. 15줄 이내)',
     '채널>>>',
   ].join('\n');
 }
@@ -285,14 +332,16 @@ function run(agent, input, resumeId, images, opt) {
     if (extra.length) a = a.slice(0, 1).concat(extra, a.slice(1));
   }
   if (agent === 'Claude') {
-    a = a.concat(['--output-format', 'json']);
+    a = a.concat(['--output-format', 'stream-json', '--verbose']); // 줄마다 진행 이벤트, 마지막 줄이 result
     if (resumeId) a = a.concat(['--resume', resumeId]);
-  } else if (!resumeId && images && images.length) {
+  }
+  if (agent === 'Codex' && conf.codexJson !== false) a = a.slice(0, 1).concat(['--json'], a.slice(1)); // 줄마다 진행 이벤트
+  if (agent === 'Codex' && !resumeId && images && images.length) {
     // codex exec -i 그림 … -   (새 세션에서만 이미지로 붙인다. 이어 쓰기에서는 경로만 알려 준다)
     const tail = a[a.length - 1] === '-' ? a.pop() : null;
     images.forEach((f) => a.push('-i', f));
     if (tail) a.push(tail);
-  } else if (resumeId) {
+  } else if (agent === 'Codex' && resumeId) {
     // codex exec [옵션] resume <세션> -   (마지막 '-' = 표준입력 프롬프트)
     a = a[a.length - 1] === '-' ? a.slice(0, -1).concat(['resume', resumeId, '-']) : a.concat(['resume', resumeId]);
   }
@@ -312,16 +361,36 @@ function run(agent, input, resumeId, images, opt) {
     const watch = opt.stopId ? setInterval(async () => {
       try { const r = await getRelay(); if (!done && r && +r.stop_id === +opt.stopId) { stopped = true; note += '\n[중계] hong 요청으로 중지'; clearInterval(watch); kill(); } } catch (_) { /* 다음에 다시 */ }
     }, 5000) : null;
-    p.stdout.on('data', (d) => { bufs.push(d); obufs.push(d); });
+    // 표준출력을 줄 단위로 읽어 JSON 이벤트면 진행 요약(opt.onEvent)으로 넘긴다
+    const events = [];
+    let part = Buffer.alloc(0);
+    const eat = (chunk, last) => {
+      part = Buffer.concat([part, chunk]);
+      let i;
+      while ((i = part.indexOf(10)) >= 0 || (last && part.length)) {
+        const line = (i >= 0 ? part.slice(0, i) : part).toString('utf8').trim();
+        part = i >= 0 ? part.slice(i + 1) : Buffer.alloc(0);
+        if (line[0] !== '{') continue;
+        let e; try { e = JSON.parse(line); } catch (_) { continue; }
+        events.push(e);
+        if (opt.onEvent) { try { opt.onEvent(eventLines(agent, e)); } catch (_) { /* 요약 실패는 무시 */ } }
+      }
+    };
+    p.stdout.on('data', (d) => { bufs.push(d); obufs.push(d); eat(d, false); });
     p.stderr.on('data', (d) => { bufs.push(d); });
     p.on('error', (e) => { note += '\n[중계] 실행 실패: ' + e.message; });
     p.on('close', (code) => {
       done = true; clearTimeout(timer); if (watch) clearInterval(watch);
-      // claude --output-format json: 표준출력 마지막 JSON 의 result 가 답, session_id 가 세션 번호
-      let json = null;
-      if (agent === 'Claude') { const so = dec(obufs).trim(); try { json = JSON.parse(so.slice(so.lastIndexOf('\n{') + 1)); } catch (_) { try { json = JSON.parse(so); } catch (_) { /* 형식 밖 출력 */ } } }
+      eat(Buffer.alloc(0), true);
+      // claude: 마지막 result 이벤트의 result 가 답, session_id 가 세션 번호
+      // codex: agent_message 들의 글이 답, thread.started 의 thread_id 가 세션 번호
+      const json = agent === 'Claude' ? events.filter((e) => e.type === 'result').pop() || null : null;
+      const thread = (events.find((e) => e.thread_id || e.session_id) || {});
+      const msgs = events.filter((e) => e.type === 'item.completed' && e.item && /agent_message|assistant/.test(e.item.type || '') && e.item.text).map((e) => e.item.text);
       const out = text();
-      res({ code, out, json, stopped, reply: json && typeof json.result === 'string' ? json.result : out });
+      let reply = json && typeof json.result === 'string' ? json.result : msgs.length ? msgs.join('\n') : '';
+      if (!/<<<채널/.test(reply)) reply = deepFind(events, /<<<채널/, []).pop() || reply || out;
+      res({ code, out, json, stopped, reply, thread: agent === 'Codex' ? thread.thread_id || thread.session_id || null : null });
     });
     p.stdin.on('error', (e) => { note += '\n[중계] 입력 전달 실패: ' + e.message; }); // 프로그램이 입력을 읽기 전에 끝나도 중계는 계속
     p.stdin.end(input, 'utf8'); // 프롬프트(표준입력)
@@ -422,7 +491,8 @@ async function quickHead() {
 
 async function runAgent(agent, m, ch, ctx, group, root) {
   await patchMsg(m.id, { run_state: '실행중', run_note: agent });
-  const quick = !!m.quick, opt = { quick, stopId: quick ? null : m.id };
+  const sink = liveSink(m, agent);
+  const quick = !!m.quick, opt = { quick, stopId: quick ? null : m.id, onEvent: (xs) => sink.add(xs) };
   const all = loadSess(), key = agent + ':' + root;
   let s = conf.resume && !quick ? all[key] : null; // 빠른 질문은 세션을 잇지도 남기지도 않는다
   if (s && (s.turns >= conf.sessionTurns || Date.now() - new Date(s.at).getTime() > conf.sessionDays * 864e5)) { log('새 세션(길이·기간 한도)', key); s = null; }
@@ -435,7 +505,7 @@ async function runAgent(agent, m, ch, ctx, group, root) {
   if (s && fresh.length) {
     log('실행 #' + m.id, agent, '세션 이어 쓰기', s.id, '새 글', fresh.length);
     r = await run(agent, followUp(agent, m, fresh, group), s.id, null, opt);
-    if (r.stopped) { keepLog(m, agent + '_중지', r.out); return r; }
+    if (r.stopped) { await sink.end(); keepLog(m, agent + '_중지', r.out); return r; }
     rep = parseReply(r.reply, agent);
     resumed = !!rep;
     if (!rep) { log('이어 쓰기 실패 #' + m.id, 'code', r.code, '→ 새 세션으로 다시'); keepLog(m, agent + '_이어쓰기실패', r.out); }
@@ -443,9 +513,10 @@ async function runAgent(agent, m, ch, ctx, group, root) {
   if (!resumed) {
     log('실행 #' + m.id, agent, '새 세션');
     r = await run(agent, (quick ? await quickHead() : '') + prompt(agent, m, ctx, group), null, imgs, opt);
-    if (r.stopped) { keepLog(m, agent + '_중지', r.out); return r; }
+    if (r.stopped) { await sink.end(); keepLog(m, agent + '_중지', r.out); return r; }
     rep = parseReply(r.reply, agent);
   }
+  await sink.end();
   keepLog(m, agent, r.out);
   const sid = sessionOf(agent, r) || (resumed ? s.id : null);
   if (rep && sid && conf.resume && !quick) {
