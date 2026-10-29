@@ -1,5 +1,6 @@
 // 소통 채널 — hong · Codex · Claude 가 주고받는 글(sk_channel)을 채팅 형태로 보여준다. 관리자(hong)와 에이전트 계정만 읽고 쓴다.
 // 상태: 대기(받는이가 답해야 함) → 답변 → 완료, 알림만이면 안내. hong 이 「모두」로 보내면 Claude → Codex 순서로 둘 다 답한다(셋이 대화). 글 내용은 고치지 않고 상태만 바꾼다.
+// 화면 오른쪽 아래 💬 버튼으로 여닫는 팝업이라 목록·시스템 화면 어디서나 쓴다. 닫혀 있으면 새 글 수를 버튼에 표시한다.
 // PC 중계(소통\중계.cjs)가 Codex·Claude 앞 「대기」 글을 실행하고 답을 올린다(sk_relay: 신호·멈춤).
 (function () {
   const $ = (id) => document.getElementById(id);
@@ -8,7 +9,9 @@
   const day = (s) => new Date(s).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' });
   const ME = 'hong', MINE = (m) => m.sender !== ME && (m.recipient === ME || m.recipient === '모두');
   const RUN = { 실행중: '⏳ 작업 중', 완료: '✓ 자동 처리', 실패: '✗ 자동 실패', 건너뜀: '⏸ 왕복 한도' };
-  const ch = { sb: null, rows: [], replyTo: null, timer: null, onlyMine: false, to: 'Claude', relay: null, lastTop: 0 };
+  const ch = { sb: null, rows: [], replyTo: null, timer: null, onlyMine: false, to: 'Claude', relay: null, lastTop: 0, open: false, tick: 0 };
+  // 마지막으로 본 글 번호(이 브라우저에만 저장). 저장이 막혀 있으면 배지만 덜 정확하다
+  const seen = { get() { try { return +localStorage.getItem('sonik.ch.seen') || 0; } catch (_) { return 0; } }, set(v) { try { localStorage.setItem('sonik.ch.seen', String(v)); } catch (_) { /* 무시 */ } } };
 
   async function load() {
     const { data, error } = await ch.sb.from('sk_channel').select('*').order('at', { ascending: false }).limit(150);
@@ -18,7 +21,21 @@
     const changed = sig(ch.rows) !== sig((data || []).slice().reverse());
     ch.rows = (data || []).reverse();
     if (changed) render(before !== (ch.rows.length && ch.rows[ch.rows.length - 1].id));
-    loadRelay();
+    badge();
+    if (ch.open) loadRelay();
+  }
+  // 닫혀 있을 때: 내가 마지막으로 본 뒤 Codex·Claude 가 올린 글 수
+  function badge() {
+    const last = ch.rows.length ? ch.rows[ch.rows.length - 1].id : 0;
+    if (ch.open) { seen.set(last); $('chBadge').hidden = true; return; }
+    const n = ch.rows.filter((m) => m.sender !== ME && m.id > seen.get()).length;
+    $('chBadge').hidden = !n; $('chBadge').textContent = n > 99 ? '99+' : String(n);
+  }
+  function setOpen(v) {
+    ch.open = v;
+    $('chCard').hidden = !v;
+    $('chFab').classList.toggle('open', v);
+    if (v) { ch.lastTop = 0; load().then(() => { render(true); $('chBody').focus(); }); } else badge();
   }
 
   // PC 중계 상태: 마지막 신호가 90초 안이면 작동 중
@@ -58,7 +75,7 @@
   function render(scroll) {
     const byId = new Map(ch.rows.map((m) => [m.id, m]));
     const waiting = ch.rows.filter((m) => MINE(m) && m.status === '대기').length;
-    $('chMine').textContent = '나에게 온 대기 ' + waiting;
+    $('chMine').textContent = '내 대기 ' + waiting;
     $('chMine').classList.toggle('on', ch.onlyMine);
     const list = ch.onlyMine ? ch.rows.filter((m) => MINE(m) && m.status === '대기') : ch.rows;
     let lastDay = '', html = '';
@@ -125,10 +142,12 @@
     mount(sb, me) {
       ch.sb = sb;
       const ok = me && me.role === 'admin';
-      $('chCard').hidden = !ok;
+      $('chFab').hidden = !ok;
       clearInterval(ch.timer);
-      if (!ok) return;
-      ch.lastTop = 0;
+      if (!ok) { $('chCard').hidden = true; return; }
+      $('chFab').onclick = () => setOpen(!ch.open);
+      $('chClose').onclick = () => setOpen(false);
+      if (!ch.keyed) { ch.keyed = true; document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ch.open && $('modal').hidden) setOpen(false); }); }
       $('chSend').onclick = send;
       $('chPause').onclick = togglePause;
       $('chMine').onclick = () => { ch.onlyMine = !ch.onlyMine; render(true); };
@@ -139,8 +158,8 @@
       // 한글 입력 중(조합 중) Enter 는 글자 확정이므로 보내지 않는다
       $('chBody').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); send(); } };
       load();
-      // 목록 화면이 보이는 동안 10초마다 새로 읽는다
-      ch.timer = setInterval(() => { if (!$('vList').hidden && !document.hidden) load(); }, 10000);
+      // 열려 있으면 10초마다, 닫혀 있으면 30초마다(배지용) 새로 읽는다
+      ch.timer = setInterval(() => { ch.tick++; if (!document.hidden && (ch.open || ch.tick % 3 === 0)) load(); }, 10000);
     },
   };
 })();
