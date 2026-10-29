@@ -9,7 +9,7 @@
   const day = (s) => new Date(s).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' });
   const ME = 'hong', MINE = (m) => m.sender !== ME && (m.recipient === ME || m.recipient === '모두');
   const RUN = { 실행중: '⏳ 작업 중', 완료: '✓ 자동 처리', 실패: '✗ 자동 실패', 건너뜀: '⏸ 왕복 한도' };
-  const ch = { sb: null, rows: [], replyTo: null, timer: null, onlyMine: false, to: 'Claude', relay: null, lastTop: 0, open: false, tick: 0, pending: [], urls: {} };
+  const ch = { sb: null, rows: [], replyTo: null, timer: null, onlyMine: false, to: 'Claude', relay: null, lastTop: 0, open: false, tick: 0, pending: [], urls: {}, quick: false, stopAsked: 0 };
   const BUCKET = 'sonik-channel', MAXB = 20 * 1024 * 1024; // 첨부: 비공개 버킷, 파일당 20MB
   // 마지막으로 본 글 번호(이 브라우저에만 저장). 저장이 막혀 있으면 배지만 덜 정확하다
   const seen = { get() { try { return +localStorage.getItem('sonik.ch.seen') || 0; } catch (_) { return 0; } }, set(v) { try { localStorage.setItem('sonik.ch.seen', String(v)); } catch (_) { /* 무시 */ } } };
@@ -18,7 +18,7 @@
     const { data, error } = await ch.sb.from('sk_channel').select('*').order('at', { ascending: false }).limit(150);
     if (error) { $('chRows').innerHTML = '<p class="hint">채널을 읽지 못했습니다: ' + esc(error.message) + '</p>'; return; }
     const before = ch.rows.length && ch.rows[ch.rows.length - 1].id;
-    const sig = (r) => r.map((m) => m.id + m.status + (m.run_state || '')).join();
+    const sig = (r) => r.map((m) => m.id + m.status + (m.run_state || '') + (m.run_note || '')).join();
     const changed = sig(ch.rows) !== sig((data || []).slice().reverse());
     ch.rows = (data || []).reverse();
     if (changed) render(before !== (ch.rows.length && ch.rows[ch.rows.length - 1].id));
@@ -50,6 +50,20 @@
     $('chRelay').textContent = r.paused ? 'PC 중계 멈춤' : alive ? 'PC 중계 작동 중' : 'PC 중계 꺼짐';
     $('chRelay').title = r.heartbeat ? '마지막 신호 ' + new Date(r.heartbeat).toLocaleString('ko-KR') : '';
     $('chPause').textContent = r.paused ? '▶ 재개' : '⏸ 멈춤';
+    // ⚙ 모델: 입력 중이 아니면 저장된 값으로 맞춘다
+    [['chClaudeModel', 'claude_model'], ['chCodexModel', 'codex_model'], ['chCodexEffort', 'codex_effort']].forEach(([id, k]) => { if (document.activeElement !== $(id)) $(id).value = r[k] || ''; });
+  }
+  async function saveModels() {
+    const v = { claude_model: $('chClaudeModel').value, codex_model: $('chCodexModel').value.trim(), codex_effort: $('chCodexEffort').value, updated_at: new Date().toISOString() };
+    const { error } = await ch.sb.from('sk_relay').update(v).eq('id', 1);
+    alertMsg(error ? '모델 설정을 저장하지 못했습니다: ' + error.message : '');
+    if (!error) loadRelay();
+  }
+  // ■ 중지: 실행 중인 글 번호를 적으면 PC 중계가 5초 안에 그 실행을 끊는다
+  async function askStop(id) {
+    const { error } = await ch.sb.from('sk_relay').update({ stop_id: id, updated_at: new Date().toISOString() }).eq('id', 1);
+    if (error) { alertMsg('중지 요청을 보내지 못했습니다: ' + error.message); return; }
+    ch.stopAsked = id; render(false);
   }
   async function togglePause() {
     if (!ch.relay) return;
@@ -69,7 +83,8 @@
       + (re ? '<a class="quote" href="#ch' + re.id + '">' + esc(re.sender) + ': ' + esc(re.body.slice(0, 50)) + (re.body.length > 50 ? '…' : '') + '</a>' : '')
       + (m.body ? '<div class="txt">' + esc(m.body) + '</div>' : '') + atts(m) + '</div>'
       + '<div class="meta">' + (m.status !== '안내' ? '<span class="st st-' + esc(m.status) + '">' + esc(m.status) + '</span>' : '')
-      + (m.run_state ? '<span class="run" title="' + esc(m.run_note || '') + '">' + RUN[m.run_state] + '</span>' : '')
+      + (m.quick ? '<span class="q">⚡ 빠른 질문</span>' : '')
+      + (m.run_state ? '<span class="run" title="' + esc(m.run_note || '') + '">' + (/^중지/.test(m.run_note || '') ? '■ 중지됨' : RUN[m.run_state]) + '</span>' : '')
       + '<span>' + esc(hm(m.at)) + '</span></div></div>'
       + '<div class="acts"><button data-re="' + m.id + '">답글</button>'
       + (m.status === '대기' || m.status === '답변' ? '<button data-done="' + m.id + '">완료</button>' : '') + '</div></div>';
@@ -108,12 +123,14 @@
     });
     // 중계가 실행 중인 글이 있으면 받는이가 「작업 중」인 말풍선
     ch.rows.filter((m) => m.run_state === '실행중').forEach((m) => {
-      const who = m.recipient === '모두' ? (m.run_note || 'Claude') : m.recipient; // 「모두」는 지금 답하는 담당(run_note)
-      html += '<div class="cm them s-' + esc(who) + '"><div class="who">' + esc(who) + '</div><div class="line"><div class="bub typing">작업 중<i>.</i><i>.</i><i>.</i></div></div></div>';
+      const who = m.run_note || (m.recipient === '모두' ? 'Claude' : m.recipient); // 지금 답하는 담당(run_note)
+      const stop = m.quick ? '' : ch.stopAsked === m.id ? '<span class="hint"> · 중지 요청함</span>' : '<button class="stop" data-stop="' + m.id + '" title="이 작업을 끊습니다">■ 중지</button>';
+      html += '<div class="cm them s-' + esc(who) + '"><div class="who">' + esc(who) + (m.quick ? ' <span class="hint">⚡</span>' : '') + '</div><div class="line"><div class="bub typing">작업 중<i>.</i><i>.</i><i>.</i>' + stop + '</div></div></div>';
     });
     const box = $('chRows'), atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
     box.innerHTML = html || '<p class="hint center">' + (ch.onlyMine ? '나에게 온 대기 글이 없습니다.' : '아직 대화가 없습니다. 아래에서 첫 글을 보내 보세요.') + '</p>';
     box.querySelectorAll('[data-re]').forEach((b) => { b.onclick = () => setReply(+b.getAttribute('data-re')); });
+    box.querySelectorAll('[data-stop]').forEach((b) => { b.onclick = () => askStop(+b.getAttribute('data-stop')); });
     box.querySelectorAll('[data-done]').forEach((b) => { b.onclick = () => setStatus(+b.getAttribute('data-done'), '완료'); });
     if (scroll || atBottom || !ch.lastTop) box.scrollTop = box.scrollHeight;
     ch.lastTop = 1;
@@ -121,7 +138,12 @@
   function setTo(to) {
     ch.to = to;
     document.querySelectorAll('#chTo button').forEach((b) => b.classList.toggle('on', b.getAttribute('data-to') === to));
-    $('chBody').placeholder = to === '모두' ? 'Claude·Codex 모두에게 (Claude → Codex 순서로 답합니다)' : to + '에게 보내기 (Shift+Enter 줄바꿈)';
+    $('chBody').placeholder = ch.quick ? '⚡ 빠른 질문: 진행 중인 작업과 따로, 파일을 고치지 않고 바로 답합니다' : to === '모두' ? 'Claude·Codex 모두에게 (Claude → Codex 순서로 답합니다)' : to + '에게 보내기 (Shift+Enter 줄바꿈)';
+  }
+  function setQuick(v) {
+    ch.quick = v;
+    $('chQuick').classList.toggle('on', v);
+    setTo(ch.to);
   }
   function setReply(id) {
     const m = ch.rows.find((x) => x.id === id);
@@ -172,13 +194,13 @@
     const { data: s } = await ch.sb.auth.getSession();
     const re = ch.replyTo;
     const row = { sender: ME, recipient: ch.to, topic: re && re.topic ? re.topic : '', status: '대기',
-      reply_to: re ? re.id : null, body, files, author_email: (s.session.user.email || '').toLowerCase() };
+      reply_to: re ? re.id : null, body, files, quick: ch.quick, author_email: (s.session.user.email || '').toLowerCase() };
     const { error } = await ch.sb.from('sk_channel').insert(row);
     $('chSend').disabled = false;
     if (error) { alertMsg('보내지 못했습니다: ' + error.message); return; }
     // 나에게 온 대기 글에 답하면 원글은 「답변」
     if (re && MINE(re) && re.status === '대기') await setStatus(re.id, '답변');
-    $('chBody').value = ''; grow(); setReply(null); ch.pending = []; showPending();
+    $('chBody').value = ''; grow(); setReply(null); ch.pending = []; showPending(); setQuick(false);
     await load(); render(true);
   }
 
@@ -195,6 +217,9 @@
       if (!ch.keyed) { ch.keyed = true; document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ch.open && $('modal').hidden) setOpen(false); }); }
       $('chSend').onclick = send;
       $('chPause').onclick = togglePause;
+      $('chSet').onclick = () => { $('chSetBox').hidden = !$('chSetBox').hidden; };
+      $('chClaudeModel').onchange = $('chCodexModel').onchange = $('chCodexEffort').onchange = saveModels;
+      $('chQuick').onclick = () => setQuick(!ch.quick);
       $('chMine').onclick = () => { ch.onlyMine = !ch.onlyMine; render(true); };
       $('chReplyX').onclick = () => setReply(null);
       document.querySelectorAll('#chTo button').forEach((b) => { b.onclick = () => setTo(b.getAttribute('data-to')); });
