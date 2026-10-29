@@ -1,4 +1,3 @@
--- (미적용 초안: 중계 방식 결정 후 적용)
 -- 2026-10-30: PC 중계 프로그램(소통\중계.cjs). 웹 「소통」의 대기 글을 보고 codex exec / claude -p 를 실행해 답을 올린다.
 -- 중계는 Codex 에이전트 계정으로 로그인한다. can_relay 인 에이전트는 Codex·Claude 이름으로 글을 쓸 수 있다.
 alter table public.sk_agents add column if not exists can_relay boolean not null default false;

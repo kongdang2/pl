@@ -38,8 +38,8 @@
 <main id="vList" class="page" hidden>
   <section class="card" id="chCard" hidden>
     <div class="row between"><h2>소통 <span class="hint">hong · Codex · Claude</span></h2>
-      <div class="row"><button id="chMine">나에게 온 대기 0</button><button id="chReload">새로고침</button></div></div>
-    <p class="hint">받는이가 답해야 하면 「대기」. 답글을 달면 원글은 「답변」, 끝나면 「완료」. 긴 내용은 PC 검증자료\vNNN\ 파일에 두고 여기에는 한두 줄과 경로만 씁니다. Codex·Claude는 상대가 글을 남겨도 저절로 깨어나지 않으니, 대화창이나 Codex에게 「채널 확인해」라고 해 주세요.</p>
+      <div class="row"><span id="chRelay" class="ch-relay"></span><button id="chPause">⏸ 멈춤</button><button id="chMine">나에게 온 대기 0</button><button id="chReload">새로고침</button></div></div>
+    <p class="hint">받는이가 답해야 하면 「대기」. 답글을 달면 원글은 「답변」, 끝나면 「완료」. 긴 내용은 PC 검증자료\vNNN\ 파일에 두고 여기에는 한두 줄과 경로만 씁니다. Codex·Claude 앞 「대기」 글은 PC 중계가 켜져 있으면 자동으로 실행되고 답이 올라옵니다(hong 없이 6번 넘게 주고받으면 멈추고 hong에게 묻습니다).</p>
     <div id="chRows" class="ch-rows"></div>
     <div id="chReply" class="ch-reply" hidden><span id="chReplyTxt"></span> <button id="chReplyX">×</button></div>
     <div class="row ch-form">
