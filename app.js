@@ -95,13 +95,15 @@
         + '<td class="memo">' + esc(s.memo) + '</td><td>' + esc(s.author_name || s.author_email) + '</td><td>' + esc(fmtT(s.updated_at || s.created_at)) + (s.rev > 1 ? ' <span class="hint">(' + s.rev + '회 저장)</span>' : '') + '</td>'
         + '<td><button data-open="' + s.id + '"' + (eng ? '' : ' disabled') + '>열기</button>'
         + ' <button data-dl="' + s.id + '" title="DB 내보내기 ▸ 전체와 같은 .json (PC에서 DB 불러오기)">JSON</button>'
-        + ' <button data-html="' + s.id + '"' + (eng ? '' : ' disabled') + ' title="웹 엔진 + 이 스냅샷을 합친 HTML 한 파일. PC에서 바로 열립니다">오프라인 파일</button>' + (s.rev > 1 ? ' <button data-bk="' + s.id + '">이전 저장</button>' : '') + '</td></tr>';
+        + ' <button data-html="' + s.id + '"' + (eng ? '' : ' disabled') + ' title="웹 엔진 + 이 스냅샷을 합친 HTML 한 파일. PC에서 바로 열립니다">오프라인 파일</button>' + (s.rev > 1 ? ' <button data-bk="' + s.id + '">이전 저장</button>' : '')
+        + (st.me.role === 'admin' ? ' <button data-del="' + s.id + '" class="danger">삭제</button>' : '') + '</td></tr>';
     }).join('') : '<tr><td colspan="7" class="hint">아직 스냅샷이 없습니다.</td></tr>';
     $('snapRows').querySelectorAll('[data-open]').forEach((b) => { b.onclick = () => openSnap(b.getAttribute('data-open')); });
     $('snapRows').querySelectorAll('[data-dl]').forEach((b) => { b.onclick = () => downloadSnap(b.getAttribute('data-dl')); });
     $('snapRows').querySelectorAll('[data-html]').forEach((b) => { b.onclick = () => offlineFromList(b.getAttribute('data-html')); });
     if ($('btnEngDl')) $('btnEngDl').onclick = downloadEngine;
     $('snapRows').querySelectorAll('[data-bk]').forEach((b) => { b.onclick = () => showBackups(b.getAttribute('data-bk')); });
+    $('snapRows').querySelectorAll('[data-del]').forEach((b) => { b.onclick = () => deleteSnap(b.getAttribute('data-del')); });
     if (st.me.role === 'admin') loadMembers();
     loadRequests();
     if (window.SonikChannel) window.SonikChannel.mount(sb, st.me);
@@ -226,6 +228,32 @@
     return html;
   }
   function unmount() { rqClose(true); if (st.mounted) { st.mounted.dispose(); st.mounted = null; } $('engineBox').innerHTML = ''; st.open = null; }
+  // 스냅샷 삭제(관리자만): 저장 파일·이전 저장(백업)까지 지운다. 되돌릴 수 없다
+  async function deleteSnap(id) {
+    const s = st.snaps.find((x) => x.id === id); if (!s) return;
+    const go = await ask('스냅샷 삭제', '<p><b>' + esc(s.base_ym) + ' · ' + esc(s.memo || '') + '</b> (' + (s.source === 'pc' ? 'PC 원본' : '웹 저장') + ', ' + esc(s.author_name || s.author_email) + ')</p>'
+      + '<p>이 스냅샷과 이전 저장(백업) ' + Math.max(0, (s.rev || 1) - 1) + '개까지 지웁니다. <b>되돌릴 수 없습니다.</b></p><p class="hint">PC 원본 파일은 PC에 그대로 있습니다. 이 스냅샷으로 접수한 수정요청은 남고 스냅샷 연결만 빠집니다.</p>');
+    if (!go) return;
+    busy('삭제 중…');
+    try {
+      const paths = new Set([s.storage_path]);
+      const { data: revs } = await sb.from('sk_snapshot_revs').select('storage_path').eq('snapshot_id', id);
+      (revs || []).forEach((r) => paths.add(r.storage_path));
+      const { data: inDir } = await sb.storage.from('sonik').list('snapshots/' + id, { limit: 1000 });
+      (inDir || []).forEach((f) => paths.add('snapshots/' + id + '/' + f.name));
+      // 이 스냅샷에서 갈라져 나온 스냅샷은 남기고 연결만 끊는다
+      let r = await sb.from('sk_snapshots').update({ parent_id: null }).eq('parent_id', id);
+      if (r.error) throw r.error;
+      r = await sb.from('sk_snapshots').delete().eq('id', id);
+      if (r.error) throw r.error;
+      const rm = await sb.storage.from('sonik').remove(Array.from(paths).filter(Boolean));
+      if (rm.error) toast('스냅샷은 지웠지만 저장 파일 일부를 지우지 못했습니다: ' + rm.error.message, 7000);
+      else toast('스냅샷을 삭제했습니다.');
+      log('delete', null, id + ' ' + s.base_ym + ' ' + (s.memo || '') + ' files=' + paths.size);
+    } catch (e) { toast('삭제하지 못했습니다: ' + (e.message || e), 7000); }
+    busy(null);
+    await loadList();
+  }
   async function openSnap(id, backup) {
     const s0 = st.snaps.find((x) => x.id === id); if (!s0 || !st.engine) return;
     const s = backup ? Object.assign({}, s0, { storage_path: backup.storage_path, backupOf: s0.id, memo: s0.memo + ' (' + backup.rev + '번째 저장)', updated_at: backup.saved_at }) : s0;

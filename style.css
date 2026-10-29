@@ -15,6 +15,7 @@ input,select{font:inherit;padding:7px 9px;border:1px solid var(--line);border-ra
 label input{display:block;width:100%;margin-top:3px}
 button,.btn{font:inherit;padding:6px 12px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer;display:inline-block}
 button.pri{background:var(--pri);border-color:var(--pri);color:#fff}
+button.danger{color:#B42318;border-color:#F3B5AE}
 button:disabled{opacity:.5;cursor:default}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.row.between{justify-content:space-between}.row.end{justify-content:flex-end;margin-top:14px}.row.add{margin-top:8px}
 .hint{color:var(--mut);font-size:12.5px;margin:6px 0}.msg{color:var(--warn);min-height:1.2em}
