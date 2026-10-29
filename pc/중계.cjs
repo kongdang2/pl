@@ -14,11 +14,21 @@ const ROOT = path.resolve(__dirname, '..'); // 손익추정시스템
 const LOGIN = process.env.SONIK_CODEX_LOGIN || path.join(os.homedir(), '.sonik-codex.json');
 const CONF_PATH = path.join(__dirname, '중계설정.json');
 const LOG_DIR = path.join(__dirname, '중계로그');
+// codex.exe 는 Codex 앱 안(%LOCALAPPDATA%\OpenAI\Codex\bin\<버전>\)에 있고 일반 PATH 에는 없다. 가장 최근 것을 쓴다.
+function findCodex() {
+  const base = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'OpenAI', 'Codex', 'bin');
+  try {
+    const c = fs.readdirSync(base).map((d) => path.join(base, d, 'codex.exe')).filter((f) => fs.existsSync(f))
+      .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+    if (c.length) return '"' + c[0] + '"';
+  } catch (_) { /* 없으면 PATH 의 codex */ }
+  return 'codex';
+}
 const DEF = {
   pollSec: 20,
   timeoutMin: 90,
   // 프롬프트는 표준입력으로 넘긴다(Windows 인자 길이·따옴표 문제 회피). 중계설정.json 으로 덮어쓸 수 있다.
-  codex: { cmd: 'codex', args: ['exec', '-C', '{ROOT}', '-s', 'workspace-write', '-'] },
+  codex: { cmd: findCodex(), args: ['exec', '-C', '{ROOT}', '-s', 'workspace-write', '-'] },
   // claude 는 PATH 에 없어도 설치 위치(사용자 폴더 .local\bin)를 먼저 쓴다
   claude: { cmd: fs.existsSync(path.join(os.homedir(), '.local', 'bin', 'claude.exe')) ? '"' + path.join(os.homedir(), '.local', 'bin', 'claude.exe') + '"' : 'claude', args: ['-p', '--permission-mode', 'acceptEdits', '--allowedTools', 'Bash Read Edit Write Glob Grep'] },
 };
@@ -115,13 +125,16 @@ function run(agent, text) {
   const q = (x) => (process.platform === 'win32' && /\s/.test(x) && !/^".*"$/.test(x) ? '"' + x + '"' : x);
   const args = c.args.map((a) => q(a.replace('{ROOT}', ROOT)));
   return new Promise((res) => {
-    let out = '', done = false;
+    const bufs = [];
+    let note = '', done = false;
+    // Windows 명령창 오류는 CP949 로 나온다: UTF-8 로 깨지면 EUC-KR 로 다시 읽는다
+    const text = () => { const b = Buffer.concat(bufs); let t = b.toString('utf8'); if (t.includes('\uFFFD')) { try { t = new TextDecoder('euc-kr').decode(b); } catch (_) { /* ICU 없음 */ } } return t + note; };
     const p = cp.spawn(c.cmd, args, { cwd: ROOT, shell: process.platform === 'win32', windowsHide: true });
-    const timer = setTimeout(() => { if (!done) { out += '\n[중계] 시간 초과로 중단'; p.kill(); } }, conf.timeoutMin * 60000);
-    p.stdout.on('data', (d) => { out += d; });
-    p.stderr.on('data', (d) => { out += d; });
-    p.on('error', (e) => { out += '\n[중계] 실행 실패: ' + e.message; });
-    p.on('close', (code) => { done = true; clearTimeout(timer); res({ code, out }); });
+    const timer = setTimeout(() => { if (!done) { note += '\n[중계] 시간 초과로 중단'; p.kill(); } }, conf.timeoutMin * 60000);
+    p.stdout.on('data', (d) => { bufs.push(d); });
+    p.stderr.on('data', (d) => { bufs.push(d); });
+    p.on('error', (e) => { note += '\n[중계] 실행 실패: ' + e.message; });
+    p.on('close', (code) => { done = true; clearTimeout(timer); res({ code, out: text() }); });
     p.stdin.end(text);
   });
 }
@@ -169,6 +182,7 @@ async function tick() {
 (async () => {
   await login();
   log('중계 시작', auth.email, '폴더', ROOT);
+  log('codex =', conf.codex.cmd, '· claude =', conf.claude.cmd);
   // 지난번 실행 중에 꺼진 글은 실패로 표시(다시 돌리려면 웹에서 새 글로 요청)
   for (const m of await api('GET', 'sk_channel', '?select=id&run_state=eq.' + encodeURIComponent('실행중'))) {
     await patchMsg(m.id, { run_state: '실패', run_note: '중계가 실행 중에 꺼짐' });
