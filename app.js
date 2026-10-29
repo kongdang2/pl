@@ -53,6 +53,7 @@
     $('btnBack').hidden = !inEngine;
     $('btnSave').hidden = $('btnSaveNew').hidden = !(inEngine && canWrite());
     $('btnReq').hidden = !inEngine;
+    $('btnOffline').hidden = !inEngine;
     $('ctx').textContent = inEngine && st.open ? (st.open.base_ym + ' · ' + (st.open.engine_ver || '버전 미상') + ' · ' + (st.open.memo || '') + (st.open.backupOf ? ' · 백업본' : isOwnWeb(st.open) ? ' · 저장하면 이 스냅샷에 덮어씀' : ' · 첫 저장은 새 스냅샷')) : '';
   }
   $('btnLogin').onclick = async () => {
@@ -84,7 +85,7 @@
     if (error) { toast('목록을 읽지 못했습니다: ' + error.message); return; }
     st.engine = eng; st.snaps = snaps || [];
     $('engineLine').innerHTML = eng
-      ? '웹 엔진: <b>' + esc(eng.ver) + '</b> · ' + esc(fmtT(eng.uploaded_at)) + ' 올림'
+      ? '웹 엔진: <b>' + esc(eng.ver) + '</b> · ' + esc(fmtT(eng.uploaded_at)) + ' 올림 <button id="btnEngDl" class="sm" title="데이터 없는 빈 엔진 HTML. PC에서 열고 DB 불러오기로 데이터를 넣습니다">빈 엔진 받기</button>'
       : '<span class="tag old">웹 엔진이 아직 없습니다</span> 관리자가 빈 엔진을 올려야 열 수 있습니다.';
     $('snapRows').innerHTML = st.snaps.length ? st.snaps.map((s) => {
       const old = eng && s.engine_ver && sameBase(s.engine_ver) !== sameBase(eng.ver);
@@ -92,10 +93,13 @@
         + '<td><span class="tag ' + s.source + '">' + (s.source === 'pc' ? 'PC 원본' : '웹 저장') + '</span></td>'
         + '<td class="memo">' + esc(s.memo) + '</td><td>' + esc(s.author_name || s.author_email) + '</td><td>' + esc(fmtT(s.updated_at || s.created_at)) + (s.rev > 1 ? ' <span class="hint">(' + s.rev + '회 저장)</span>' : '') + '</td>'
         + '<td><button data-open="' + s.id + '"' + (eng ? '' : ' disabled') + '>열기</button>'
-        + ' <button data-dl="' + s.id + '">JSON</button>' + (s.rev > 1 ? ' <button data-bk="' + s.id + '">이전 저장</button>' : '') + '</td></tr>';
+        + ' <button data-dl="' + s.id + '" title="DB 내보내기 ▸ 전체와 같은 .json (PC에서 DB 불러오기)">JSON</button>'
+        + ' <button data-html="' + s.id + '"' + (eng ? '' : ' disabled') + ' title="웹 엔진 + 이 스냅샷을 합친 HTML 한 파일. PC에서 바로 열립니다">오프라인 파일</button>' + (s.rev > 1 ? ' <button data-bk="' + s.id + '">이전 저장</button>' : '') + '</td></tr>';
     }).join('') : '<tr><td colspan="7" class="hint">아직 스냅샷이 없습니다.</td></tr>';
     $('snapRows').querySelectorAll('[data-open]').forEach((b) => { b.onclick = () => openSnap(b.getAttribute('data-open')); });
     $('snapRows').querySelectorAll('[data-dl]').forEach((b) => { b.onclick = () => downloadSnap(b.getAttribute('data-dl')); });
+    $('snapRows').querySelectorAll('[data-html]').forEach((b) => { b.onclick = () => offlineFromList(b.getAttribute('data-html')); });
+    if ($('btnEngDl')) $('btnEngDl').onclick = downloadEngine;
     $('snapRows').querySelectorAll('[data-bk]').forEach((b) => { b.onclick = () => showBackups(b.getAttribute('data-bk')); });
     if (st.me.role === 'admin') loadMembers();
     loadRequests();
@@ -119,6 +123,66 @@
       log('download', s.id);
     } catch (e) { toast(e.message, 6000); }
     busy(null);
+  }
+
+  function saveBlob(blob, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+  }
+  const stamp = () => { const d = new Date(), p = (n) => String(n).padStart(2, '0'); return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()); };
+  // 빈 엔진(데이터 없음) 받기 — 웹에 올라간 그대로
+  async function downloadEngine() {
+    if (!st.engine) return;
+    busy('빈 엔진 받는 중…');
+    try {
+      const html = await getEngineHtml();
+      saveBlob(new Blob([html], { type: 'text/html;charset=utf-8' }), '손익추정_빈엔진_' + st.engine.ver + '.html');
+      log('download_engine', null, st.engine.ver);
+    } catch (e) { toast(e.message, 6000); }
+    busy(null);
+  }
+  // 오프라인 파일: 열린 엔진이 자기 자신을 데이터째 HTML 로 만든다(엔진의 「HTML 저장」과 같은 함수, 빈 엔진 표시는 빠짐).
+  // 결과는 PC 에서 그냥 열면 되는 손익추정 파일(웹 시험판 엔진 vNNN-n + 이 스냅샷 데이터).
+  function offlineHtml(win) {
+    if (typeof win.__buildEngineHtml !== 'function') throw new Error('이 엔진은 HTML 만들기 기능이 없습니다');
+    try { if (typeof win.commitActiveEditBeforeSave === 'function') win.commitActiveEditBeforeSave(); } catch (_) { /* 무시 */ }
+    const html = win.__buildEngineHtml({ embedData: true, emptyEngine: false, stripAdminBar: false });
+    if (!/id=["']__SAVED_DATA__["']/.test(html)) throw new Error('데이터를 넣지 못했습니다');
+    return html;
+  }
+  const offlineName = (s, ver) => '손익추정_10초_웹받음_' + (ver || 'v') + '_' + (s.base_ym || '') + '_' + stamp() + '.html';
+  async function downloadOffline() {
+    if (!st.mounted || !st.open) return;
+    busy('오프라인 파일 만드는 중…');
+    try {
+      await new Promise((r) => setTimeout(r, 30));
+      const html = offlineHtml(st.mounted.win);
+      saveBlob(new Blob([html], { type: 'text/html;charset=utf-8' }), offlineName(st.open, st.engine && st.engine.ver));
+      log('download_html', st.open.backupOf || st.open.id, '열린 화면(저장 안 한 작업 포함)');
+      toast('오프라인 파일을 받았습니다. 저장하지 않은 작업도 들어 있습니다.', 5000);
+    } catch (e) { toast(e.message, 8000); }
+    busy(null);
+  }
+  // 목록에서 바로: 화면 밖에서 엔진을 열어 스냅샷을 넣고 HTML 로 만든 뒤 닫는다
+  async function offlineFromList(id) {
+    const s = st.snaps.find((x) => x.id === id); if (!s || !st.engine) return;
+    const box = document.createElement('div');
+    box.className = 'offscreen-engine';
+    document.body.appendChild(box);
+    let m = null;
+    busy('엔진과 스냅샷을 받는 중…');
+    try {
+      const [html, db] = await Promise.all([getEngineHtml(), fetchSnapDb(s)]);
+      busy('오프라인 파일 만드는 중… (10~30초)');
+      m = await E.mount(box, html, () => {});
+      m.bridge.applyDb(db);
+      await new Promise((r) => setTimeout(r, 300));
+      saveBlob(new Blob([offlineHtml(m.win)], { type: 'text/html;charset=utf-8' }), offlineName(s, st.engine.ver));
+      log('download_html', s.id, '목록');
+    } catch (e) { toast(e.message, 8000); }
+    finally { if (m) m.dispose(); box.remove(); busy(null); }
   }
 
   // ── 스냅샷 올리기(PC 원본 .json) ──────────────────
@@ -226,6 +290,7 @@
   }
   $('btnSave').onclick = () => saveFromEngine(false);
   $('btnSaveNew').onclick = () => saveFromEngine(true);
+  $('btnOffline').onclick = downloadOffline;
 
   // 이전 저장(숨은 백업 최대 3개) — 열면 백업본으로 열리고, 저장하면 새 스냅샷이 된다
   async function showBackups(id) {
