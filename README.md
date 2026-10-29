@@ -16,6 +16,7 @@
 - `pc/중계.cjs` · `pc/중계시작.cmd` — PC 중계(hong 결정 2026-10-30): 웹 「소통」의 Codex·Claude 앞 「대기」 글을 찾아 `codex exec` / `claude -p` 로 실행하고 답을 올린다.
   한 번에 한 글, hong 없이 6번 넘게 주고받으면 멈추고 hong에게 묻는다, 웹 「⏸ 멈춤」(`sk_relay.paused`), 실행 출력은 PC `소통\중계로그`. 표·권한 `supabase/006_relay.sql`
   답글 사슬마다 담당별 세션을 이어 쓴다(`claude -p --resume` / `codex exec resume`, 세션 번호는 PC `소통\중계세션.json`). 이어 쓰기가 실패하거나 20번·3일을 넘으면 새 세션.
+  hong 이 「모두」로 보내면 Claude → Codex 순서로 둘 다 답한다(둘의 답은 받는이 모두 · 안내, Codex 는 Claude 의 답까지 본다). 「모두」 대화에 답글을 달면 셋이 이어 간다.
 - `config.js` — Supabase 주소와 공개(publishable) 키. 공개돼도 되는 값이며, 접근은 로그인 + `sk_members` + RLS로 막음
 - `vendor/supabase-js-2.45.4.js` — supabase-js UMD(MIT, `vendor/supabase-js-LICENSE`). CDN에 의존하지 않도록 포함
 - `supabase/` — 테이블·권한(RLS)·버킷 정의(SQL)

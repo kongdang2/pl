@@ -84,9 +84,9 @@ async function chain(m, max) {
   return out;
 }
 // 답글이 아닌 새 글이면, 그 전에 hong 과 이 담당이 나눈 최근 글을 앞 맥락으로 붙인다
-async function recent(m, agent, n) {
-  const who = '(hong,' + agent + ')';
-  const q = '?select=*&id=lt.' + m.id + '&sender=in.' + who + '&recipient=in.' + encodeURIComponent('(hong,' + agent + ',모두)') + '&order=id.desc&limit=' + n;
+async function recent(m, agents, n) {
+  const who = '(hong,' + agents.join(',') + ')';
+  const q = '?select=*&id=lt.' + m.id + '&sender=in.' + who + '&recipient=in.' + encodeURIComponent('(hong,' + agents.join(',') + ',모두)') + '&order=id.desc&limit=' + n;
   return (await api('GET', 'sk_channel', q)).reverse();
 }
 // 마지막 hong 글 이후 Codex·Claude 끼리 이어진 글 수
@@ -108,7 +108,7 @@ function sessionOf(agent, r) {
 
 const fmt = (m) => '#' + m.id + ' ' + m.sender + ' → ' + m.recipient + (m.topic ? ' · ' + m.topic : '') + ' · ' + m.status + '\n' + m.body;
 
-function prompt(agent, m, ch) {
+function prompt(agent, m, ch, group) {
   const other = agent === 'Codex' ? 'Claude' : 'Codex';
   const role = agent === 'Codex'
     ? '너는 Codex(검증 담당)다. AGENTS.md 와 ../협업규칙.md §5 를 따른다.'
@@ -120,14 +120,15 @@ function prompt(agent, m, ch) {
     '',
     ch.map(fmt).join('\n\n'),
     '',
-    '할 일: 마지막 글(#' + m.id + ')의 요청을 처리한다. 긴 결과는 지금처럼 검증자료\\vNNN\\ 등 파일에 쓰고 채널에는 요약과 경로만 남긴다.',
+    group ? '이 대화는 hong·Claude·Codex 셋이 함께 하는 대화(받는이 모두)다. Claude 가 먼저 답하고 Codex 가 Claude 의 답까지 보고 이어서 답한다. 상대 답에 덧붙이거나 다른 의견을 내되 같은 말은 되풀이하지 않는다.' : '',
+    '할 일: ' + (group ? 'hong 의 글(#' + m.id + ')' : '마지막 글(#' + m.id + ')') + '의 요청을 처리한다. 긴 결과는 지금처럼 검증자료\\vNNN\\ 등 파일에 쓰고 채널에는 요약과 경로만 남긴다.',
     '되돌리기 어려운 일(운영본 교체·보관 이동·파일 삭제·외부 전송)은 하지 말고 받는이를 hong 으로 해서 확인을 요청한다.',
     '다른 담당에게 넘길 일이 있으면 받는이를 ' + other + ' 로, hong 이 결정할 일이면 hong 으로 한다.',
     '',
     '마지막에 채널에 올릴 답을 정확히 아래 형식으로 출력한다(이 블록만 채널에 올라간다):',
     '<<<채널',
-    '받는이: hong 또는 ' + other,
-    '상태: 대기 또는 안내   (받는이가 답하거나 처리해야 하면 대기, 알리기만 하면 안내)',
+    group ? '받는이: 모두' : '받는이: hong 또는 ' + other,
+    group ? '상태: 안내' : '상태: 대기 또는 안내   (받는이가 답하거나 처리해야 하면 대기, 알리기만 하면 안내)',
     '주제: ' + (m.topic || '짧은 제목'),
     '(본문 15줄 이내)',
     '채널>>>',
@@ -135,18 +136,19 @@ function prompt(agent, m, ch) {
 }
 
 // 이어 쓰는 세션에는 그 세션이 아직 못 본 글만 넘긴다
-function followUp(agent, m, fresh) {
+function followUp(agent, m, fresh, group) {
   const other = agent === 'Codex' ? 'Claude' : 'Codex';
   return [
     '웹 「소통」 채널에 이 대화의 새 글이 올라왔다(마지막 글이 너에게 온 요청).',
     '',
     fresh.map(fmt).join('\n\n'),
     '',
-    '할 일: 마지막 글(#' + m.id + ')의 요청을 처리한다. 앞에서와 같은 규칙(AGENTS.md, 되돌리기 어려운 일은 hong 확인)을 따른다.',
+    group ? '이 글은 셋이 함께 하는 대화(받는이 모두)다. Claude 가 먼저, Codex 가 이어서 답한다. 같은 말은 되풀이하지 않는다.' : '',
+    '할 일: ' + (group ? 'hong 의 글(#' + m.id + ')' : '마지막 글(#' + m.id + ')') + '의 요청을 처리한다. 앞에서와 같은 규칙(AGENTS.md, 되돌리기 어려운 일은 hong 확인)을 따른다.',
     '마지막에 채널에 올릴 답을 앞에서와 같은 형식으로 출력한다:',
     '<<<채널',
-    '받는이: hong 또는 ' + other,
-    '상태: 대기 또는 안내',
+    group ? '받는이: 모두' : '받는이: hong 또는 ' + other,
+    group ? '상태: 안내' : '상태: 대기 또는 안내',
     '주제: ' + (m.topic || '짧은 제목'),
     '(본문 15줄 이내)',
     '채널>>>',
@@ -204,20 +206,53 @@ function run(agent, text, resumeId) {
 function keepLog(m, tag, out) { fs.writeFileSync(path.join(LOG_DIR, stamp().replace(/[-:T]/g, '') + '_' + m.id + '_' + tag + '.txt'), out); }
 
 async function handle(m, ctl) {
-  const agent = m.recipient;
   const ch = await chain(m, conf.contextMax || 30);
-  const ctx = ch.length > 1 ? ch : (await recent(m, agent, conf.recentMax || 10)).concat([m]);
   const hops = hopsSinceHong(ch);
   if (hops >= ctl.max_hops) {
+    const who = m.recipient === '모두' ? 'Claude' : m.recipient;
     await patchMsg(m.id, { run_state: '건너뜀', run_note: 'hong 없이 자동 왕복 ' + hops + '회' });
-    await post({ sender: agent, recipient: 'hong', topic: m.topic, status: '대기', reply_to: m.id,
+    await post({ sender: who, recipient: 'hong', topic: m.topic, status: '대기', reply_to: m.id,
       body: '[중계] hong 없이 Codex·Claude 가 ' + hops + '번 주고받아 자동 실행을 멈췄습니다. #' + m.id + ' 를 보고 이어갈지 정해 주세요(이 글에 답하면 다시 시작합니다).' });
     log('건너뜀 #' + m.id, '왕복', hops);
     return;
   }
-  await patchMsg(m.id, { run_state: '실행중', run_note: '' });
   await setRelay({ busy_with: m.id });
-  // 같은 답글 사슬에서 이 담당이 쓰던 세션이 있으면 못 본 글만 넘겨 이어 쓴다
+  if (m.recipient !== '모두') {
+    const ctx = ch.length > 1 ? ch : (await recent(m, [m.recipient], conf.recentMax || 10)).concat([m]);
+    const r = await runAgent(m.recipient, m, ch, ctx, false);
+    if (!r.rep) await failed(m, m.recipient, r);
+    else {
+      await post({ sender: m.recipient, recipient: r.rep.to, topic: r.rep.topic || m.topic, status: r.rep.st, reply_to: m.id, body: r.rep.body });
+      await patchMsg(m.id, { status: '답변', run_state: '완료', run_note: '' });
+      log('완료 #' + m.id, '→', r.rep.to, r.rep.st);
+    }
+  } else {
+    // 「모두」: Claude 가 먼저 답하고, Codex 는 그 답까지 보고 이어서 답한다(둘 다 받는이 모두 · 안내)
+    let ctx = ch.length > 1 ? ch : (await recent(m, ['Claude', 'Codex'], conf.recentMax || 10)).concat([m]);
+    let cur = ch, last = m, ok = 0;
+    for (const agent of ['Claude', 'Codex']) {
+      const r = await runAgent(agent, m, cur, ctx, true);
+      if (!r.rep) { await failed(m, agent, r, last.id); continue; }
+      const [row] = await post({ sender: agent, recipient: '모두', topic: r.rep.topic || m.topic, status: '안내', reply_to: last.id, body: r.rep.body });
+      cur = cur.concat([row]); ctx = ctx.concat([row]); last = row; ok++;
+      log('완료 #' + m.id, agent, '→ 모두');
+    }
+    await patchMsg(m.id, { status: ok ? '답변' : '대기', run_state: ok === 2 ? '완료' : '실패', run_note: ok === 2 ? '' : '일부 실패' });
+  }
+  await setRelay({ busy_with: null });
+}
+
+async function failed(m, agent, r, replyTo) {
+  const tail = r.out.trim().split(/\r?\n/).slice(-12).join('\n');
+  await post({ sender: agent, recipient: 'hong', topic: m.topic, status: '대기', reply_to: replyTo || m.id,
+    body: '[중계] ' + agent + ' 실행이 답 형식 없이 끝났습니다(종료 코드 ' + r.code + '). 마지막 출력:\n' + tail + '\n전체 기록: 소통\\중계로그' });
+  if (m.recipient !== '모두') await patchMsg(m.id, { status: '답변', run_state: '실패', run_note: '종료 코드 ' + r.code });
+  log('실패 #' + m.id, agent, 'code', r.code);
+}
+
+// 한 담당을 실행한다. 같은 답글 사슬에서 쓰던 세션이 있으면 못 본 글만 넘겨 이어 쓰고, 안 되면 새 세션 + 글 흐름 전체
+async function runAgent(agent, m, ch, ctx, group) {
+  await patchMsg(m.id, { run_state: '실행중', run_note: agent });
   const all = loadSess(), key = agent + ':' + ch[0].id;
   let s = conf.resume ? all[key] : null;
   if (s && (s.turns >= conf.sessionTurns || Date.now() - new Date(s.at).getTime() > conf.sessionDays * 864e5)) { log('새 세션(길이·기간 한도)', key); s = null; }
@@ -225,41 +260,30 @@ async function handle(m, ctl) {
   let r, rep, resumed = false;
   if (s && fresh.length) {
     log('실행 #' + m.id, agent, '세션 이어 쓰기', s.id, '새 글', fresh.length);
-    r = await run(agent, followUp(agent, m, fresh), s.id);
+    r = await run(agent, followUp(agent, m, fresh, group), s.id);
     rep = parseReply(r.reply, agent);
     resumed = !!rep;
     if (!rep) { log('이어 쓰기 실패 #' + m.id, 'code', r.code, '→ 새 세션으로 다시'); keepLog(m, agent + '_이어쓰기실패', r.out); }
   }
   if (!resumed) {
     log('실행 #' + m.id, agent, '새 세션');
-    r = await run(agent, prompt(agent, m, ctx));
+    r = await run(agent, prompt(agent, m, ctx, group));
     rep = parseReply(r.reply, agent);
   }
   keepLog(m, agent, r.out);
   const sid = sessionOf(agent, r) || (resumed ? s.id : null);
   if (rep && sid && conf.resume) {
-    all[key] = { id: sid, turns: (resumed ? s.turns : 0) + 1, lastId: m.id, at: new Date().toISOString() };
+    all[key] = { id: sid, turns: (resumed ? s.turns : 0) + 1, lastId: Math.max(...ch.map((x) => x.id)), at: new Date().toISOString() };
     saveSess(all);
   }
-  if (!rep) {
-    const tail = r.out.trim().split(/\r?\n/).slice(-12).join('\n');
-    await post({ sender: agent, recipient: 'hong', topic: m.topic, status: '대기', reply_to: m.id,
-      body: '[중계] ' + agent + ' 실행이 답 형식 없이 끝났습니다(종료 코드 ' + r.code + '). 마지막 출력:\n' + tail + '\n전체 기록: 소통\\중계로그' });
-    await patchMsg(m.id, { status: '답변', run_state: '실패', run_note: '종료 코드 ' + r.code });
-    log('실패 #' + m.id, 'code', r.code);
-  } else {
-    await post({ sender: agent, recipient: rep.to, topic: rep.topic || m.topic, status: rep.st, reply_to: m.id, body: rep.body });
-    await patchMsg(m.id, { status: '답변', run_state: '완료', run_note: '' });
-    log('완료 #' + m.id, '→', rep.to, rep.st);
-  }
-  await setRelay({ busy_with: null });
+  return Object.assign(r, { rep });
 }
 
 async function tick() {
   await setRelay({ heartbeat: new Date().toISOString() });
   const ctl = await getRelay();
   if (!ctl || ctl.paused) return;
-  const q = '?select=*&status=eq.' + encodeURIComponent('대기') + '&run_state=is.null&recipient=in.(Codex,Claude)&order=at.asc&limit=1';
+  const q = '?select=*&status=eq.' + encodeURIComponent('대기') + '&run_state=is.null&recipient=in.(Codex,Claude,' + encodeURIComponent('모두') + ')&order=at.asc&limit=1';
   const [m] = await api('GET', 'sk_channel', q);
   if (m) await handle(m, ctl);
 }

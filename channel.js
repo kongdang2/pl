@@ -1,12 +1,12 @@
 // 소통 채널 — hong · Codex · Claude 가 주고받는 글(sk_channel)을 채팅 형태로 보여준다. 관리자(hong)와 에이전트 계정만 읽고 쓴다.
-// 상태: 대기(받는이가 답해야 함) → 답변 → 완료, 알림만이면 안내. 글 내용은 고치지 않고 상태만 바꾼다.
+// 상태: 대기(받는이가 답해야 함) → 답변 → 완료, 알림만이면 안내. hong 이 「모두」로 보내면 Claude → Codex 순서로 둘 다 답한다(셋이 대화). 글 내용은 고치지 않고 상태만 바꾼다.
 // PC 중계(소통\중계.cjs)가 Codex·Claude 앞 「대기」 글을 실행하고 답을 올린다(sk_relay: 신호·멈춤).
 (function () {
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const hm = (s) => new Date(s).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
   const day = (s) => new Date(s).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' });
-  const ME = 'hong', MINE = (m) => m.recipient === ME || m.recipient === '모두';
+  const ME = 'hong', MINE = (m) => m.sender !== ME && (m.recipient === ME || m.recipient === '모두');
   const RUN = { 실행중: '⏳ 작업 중', 완료: '✓ 자동 처리', 실패: '✗ 자동 실패', 건너뜀: '⏸ 왕복 한도' };
   const ch = { sb: null, rows: [], replyTo: null, timer: null, onlyMine: false, to: 'Claude', relay: null, lastTop: 0 };
 
@@ -69,7 +69,8 @@
     });
     // 중계가 실행 중인 글이 있으면 받는이가 「작업 중」인 말풍선
     ch.rows.filter((m) => m.run_state === '실행중').forEach((m) => {
-      html += '<div class="cm them s-' + esc(m.recipient) + '"><div class="who">' + esc(m.recipient) + '</div><div class="line"><div class="bub typing">작업 중<i>.</i><i>.</i><i>.</i></div></div></div>';
+      const who = m.recipient === '모두' ? (m.run_note || 'Claude') : m.recipient; // 「모두」는 지금 답하는 담당(run_note)
+      html += '<div class="cm them s-' + esc(who) + '"><div class="who">' + esc(who) + '</div><div class="line"><div class="bub typing">작업 중<i>.</i><i>.</i><i>.</i></div></div></div>';
     });
     const box = $('chRows'), atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
     box.innerHTML = html || '<p class="hint center">' + (ch.onlyMine ? '나에게 온 대기 글이 없습니다.' : '아직 대화가 없습니다. 아래에서 첫 글을 보내 보세요.') + '</p>';
@@ -81,7 +82,7 @@
   function setTo(to) {
     ch.to = to;
     document.querySelectorAll('#chTo button').forEach((b) => b.classList.toggle('on', b.getAttribute('data-to') === to));
-    $('chBody').placeholder = to === '모두' ? '모두에게 알림 (답이 필요 없는 글)' : to + '에게 보내기 (Shift+Enter 줄바꿈)';
+    $('chBody').placeholder = to === '모두' ? 'Claude·Codex 모두에게 (Claude → Codex 순서로 답합니다)' : to + '에게 보내기 (Shift+Enter 줄바꿈)';
   }
   function setReply(id) {
     const m = ch.rows.find((x) => x.id === id);
@@ -89,7 +90,8 @@
     $('chReply').hidden = !m;
     if (m) {
       $('chReplyTxt').textContent = '↩ ' + m.sender + ': ' + m.body.slice(0, 60);
-      if (m.sender !== ME) setTo(m.sender);
+      if (m.recipient === '모두') setTo('모두'); // 셋이 하던 대화는 셋이 이어 간다
+      else if (m.sender !== ME) setTo(m.sender);
       $('chBody').focus();
     }
   }
@@ -106,7 +108,7 @@
     alertMsg('');
     const { data: s } = await ch.sb.auth.getSession();
     const re = ch.replyTo;
-    const row = { sender: ME, recipient: ch.to, topic: re && re.topic ? re.topic : '', status: ch.to === '모두' ? '안내' : '대기',
+    const row = { sender: ME, recipient: ch.to, topic: re && re.topic ? re.topic : '', status: '대기',
       reply_to: re ? re.id : null, body, author_email: (s.session.user.email || '').toLowerCase() };
     $('chSend').disabled = true;
     const { error } = await ch.sb.from('sk_channel').insert(row);
