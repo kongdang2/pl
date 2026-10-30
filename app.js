@@ -155,7 +155,7 @@
     if (!/id=["']__SAVED_DATA__["']/.test(html)) throw new Error('데이터를 넣지 못했습니다');
     return html;
   }
-  const offlineName = (s, ver) => '손익추정_10초_웹받음_' + (ver || 'v') + '_' + (s.base_ym || '') + '_' + stamp() + '.html';
+  const offlineName = (s, ver) => '손익추정_웹받음_' + (ver || 'v') + '_' + (s.base_ym || '') + '_' + stamp() + '.html';
   async function downloadOffline() {
     if (!st.mounted || !st.open) return;
     busy('오프라인 파일 만드는 중…');
