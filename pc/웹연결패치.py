@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""웹 연결 패치(웹 시험판 vNNN-n): 오프라인 운영본 vNNN(10초·일반) + 웹 버전 연결(엔진이 웹 페이지 안에서 열릴 때만 동작).
+"""웹 연결 패치(웹 시험판 vNNN-n): 오프라인 운영본 vNNN(v312까지 10초·일반 두 파일, v313부터 운영본 한 파일) + 웹 버전 연결(엔진이 웹 페이지 안에서 열릴 때만 동작).
 
 검증자료\\v309-1\\patch.py 와 같은 내용을 버전·날짜만 인자로 받게 한 것. 웹엔진갱신.cjs 가 운영본이 바뀌면 부른다.
 웹판은 정규화 전까지 오프라인 번호와 따로 관리한다(오프라인 vNNN 위에 -1, -2…, 웹테스트\\README.md).
@@ -12,6 +12,7 @@
 
 사용 (손익추정시스템 루트에서):
   python -I 웹테스트/웹연결패치.py --ver v310-1 --basever v310 --date 20261031 --base10 <운영본 10초> --base <일반본> --out 웹테스트
+  python -I 웹테스트/웹연결패치.py --ver v313-1 --basever v313 --date 20261101 --base <운영본> --out 웹테스트   (v313부터, 한 파일 → 손익추정_웹연결_v313-1_날짜.html)
 """
 import argparse, os, re
 
@@ -80,7 +81,7 @@ NEW1 = r'''  /* [@VER@] 웹 버전 연결 — 웹 페이지(로그인 화면)가
       }
       /* 계획DB: 스냅샷에 있으면 그것으로(브라우저 임시저장엔 쓰지 않음), 없으면 지금 것 유지 */
       if(db.plan && typeof PLAN_DB!=='undefined'){ PLAN_DB=JSON.parse(JSON.stringify(db.plan)); }
-      try{ if(window.__perfV17Bust) window.__perfV17Bust(); }catch(_){}
+      try{ if(window.__dbBustCalcCaches) window.__dbBustCalcCaches(); if(window.__perfV17Bust) window.__perfV17Bust(); }catch(_){}
       if(typeof switchSite==='function'){ try{ switchSite(S.site); }catch(e){} }
       pnlRefreshAll();
       var res=null;
@@ -114,7 +115,7 @@ def main():
     ap.add_argument('--ver', required=True)       # 웹판 번호, 예 v310-1
     ap.add_argument('--basever', required=True)   # 기반 오프라인 번호, 예 v310
     ap.add_argument('--date', required=True)      # 파일 이름 날짜 YYYYMMDD
-    ap.add_argument('--base10', required=True)
+    ap.add_argument('--base10')                  # v312까지의 10초본. v313부터는 빼고 --base 에 운영본 하나
     ap.add_argument('--base', required=True)
     ap.add_argument('--out', default='.')
     a = ap.parse_args()
@@ -125,7 +126,7 @@ def main():
     cl = sub(CHANGELOG)
     NAME10 = '손익추정_10초_웹연결_' + a.ver + '_' + a.date + '.html'
     NAMEG = '손익추정_웹연결_' + a.ver + '_' + a.date + '.html'
-    for src, name in ((a.base10, NAME10), (a.base, NAMEG)):
+    for src, name in (((a.base10, NAME10), (a.base, NAMEG)) if a.base10 else ((a.base, NAMEG),)):
         t = read(src)
         crlf = t.count('\r\n')
         nl = '\r\n' if crlf else '\n'

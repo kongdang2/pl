@@ -3,7 +3,7 @@
 // 웹 자동검증(quick)을 통과한 경우에만 빈 엔진을 만들어 웹(Supabase)의 「현재 엔진」으로 올린다. hong 결정(2026-10-30, 소통 스레드).
 // PC 위치: 손익추정시스템\웹테스트\웹엔진갱신.cjs   (소통\중계.cjs 가 10분마다 부른다. 직접: node 웹테스트\웹엔진갱신.cjs [--force] [--dry])
 // 단계: ① AGENTS.md 의 운영본 줄 → 기반 vNNN  ② 검증자료\vNNN\교차검증.md 「통과」 확인  ③ 웹 현재 엔진이 이미 vNNN-n 이면 끝
-//       ④ 웹연결패치.py 로 웹판 10초·일반 생성(이미 있으면 그대로)  ⑤ 웹 자동검증 extra 사본을 오프라인 extra 에 맞춤
+//       ④ 웹연결패치.py 로 웹판 생성(v312까지 10초·일반 두 파일, v313부터 운영본 한 파일. 이미 있으면 그대로)  ⑤ 웹 자동검증 extra 사본을 오프라인 extra 에 맞춤
 //       ⑥ 웹 quick 자동검증(FAIL·ERROR 0 이어야 다음 단계)  ⑦ 브라우저로 빈 엔진 생성·검사  ⑧ 웹 업로드(새 엔진을 올린 뒤 현재 엔진을 바꾼다)
 //       ⑨ 이전 웹판을 보관\vOLD\ 로 옮기고, 검증자료\vNNN-1\ 기록, README·AGENTS 의 「현재 웹판」 줄 갱신  ⑩ 소통 채널에 결과 안내
 // 실패하면 웹 엔진은 그대로 두고 채널로 hong 에게 알린다. 같은 운영본으로는 다시 시도하지 않는다(--force 로 다시).
@@ -112,7 +112,7 @@ function updateDocs(oldLocal, ver, basever, base10, baseG, web10, moved) {
   const rp = path.join(WEB, 'README.md');
   let t = fs.readFileSync(rp, 'utf8');
   t = t.replace(/지금은 `[^`]+`\([^)\n]*\)/, '지금은 `' + ver + '`(오프라인 ' + basever + ' + 웹 연결, ' + D + ', 웹 반영 ' + DAY + ' 자동 갱신)');
-  t = t.replace(/^python -I 웹테스트\/.*$/m, 'python -I 웹테스트/웹연결패치.py --ver ' + ver + ' --basever ' + basever + ' --date ' + fileDay + ' --base10 ' + base10 + ' --base ' + baseG + ' --out 웹테스트');
+  t = t.replace(/^python -I 웹테스트\/.*$/m, 'python -I 웹테스트/웹연결패치.py --ver ' + ver + ' --basever ' + basever + ' --date ' + fileDay + (baseG ? ' --base10 ' + base10 + ' --base ' + baseG : ' --base ' + base10) + ' --out 웹테스트');
   t = t.replace(/^node 웹테스트\/자동검증\/runner\.cjs .*$/m, 'node 웹테스트/자동검증/runner.cjs --project 웹테스트 --mode quick --plan-year 2027 --file 웹테스트/' + web10 + ' --out 웹테스트/자동검증/runs/<날짜>-' + ver);
   if (moved && t.indexOf('`보관\\' + oldLocal + '\\`') < 0) t = t.replace(/(\| `보관\\v[^\n]*\n)(?!\| `보관)/, '$1| `보관\\' + oldLocal + '\\` | 이전 웹판(' + oldLocal + ', ' + DAY + ' 자동 갱신 때 이동) |\n');
   if (!dry) fs.writeFileSync(rp, t);
@@ -131,10 +131,11 @@ function updateDocs(oldLocal, ver, basever, base10, baseG, web10, moved) {
   const saveState = (v) => { if (!dry) fs.writeFileSync(STATE, JSON.stringify(Object.assign(st, v, { at: new Date().toISOString() }), null, 1)); };
   // ① 운영본
   const ag = fs.readFileSync(path.join(ROOT, 'AGENTS.md'), 'utf8');
-  const m = /운영본\(현 기준 최종본\)\s*=\s*(손익추정_10초_\S+?_v(\d+)_\d{8}\.html)/.exec(ag);
+  // v312까지: 운영본 = 10초본(일반본은 이름에서 「10초_」를 뺀 것). v313부터(hong 10/30): 일반본 없이 운영본 한 파일(손익추정_<내용>_vNNN_날짜.html)
+  const m = /운영본\(현 기준 최종본\)\s*=\s*(손익추정_\S+?_v(\d+)_\d{8}\.html)/.exec(ag);
   if (!m) throw new Error('AGENTS.md 에서 운영본 줄을 찾지 못했습니다');
-  const base10 = m[1], NNN = +m[2], basever = 'v' + NNN, baseG = base10.replace('손익추정_10초_', '손익추정_');
-  for (const f of [base10, baseG]) if (!fs.existsSync(path.join(ROOT, f))) throw new Error('운영본 파일 없음: ' + f);
+  const base10 = m[1], NNN = +m[2], basever = 'v' + NNN, two = base10.startsWith('손익추정_10초_'), baseG = two ? base10.replace('손익추정_10초_', '손익추정_') : null;
+  for (const f of [base10, baseG].filter(Boolean)) if (!fs.existsSync(path.join(ROOT, f))) throw new Error('운영본 파일 없음: ' + f);
   // ② Codex 통과
   const cx = path.join(ROOT, '검증자료', basever, '교차검증.md');
   const cxt = fs.existsSync(cx) ? fs.readFileSync(cx, 'utf8') : '';
@@ -160,13 +161,14 @@ function updateDocs(oldLocal, ver, basever, base10, baseG, web10, moved) {
     // ④ 웹판 생성
     const dir = path.join(WEB, '검증자료', ver);
     fs.mkdirSync(dir, { recursive: true });
-    const have = fs.readdirSync(WEB).find((x) => x.startsWith('손익추정_10초_웹연결_' + ver + '_') && x.endsWith('.html'));
-    let web10 = have, webG = have ? have.replace('손익추정_10초_', '손익추정_') : null;
+    const WP = two ? '손익추정_10초_웹연결_' : '손익추정_웹연결_';
+    const have = fs.readdirSync(WEB).find((x) => x.startsWith(WP + ver + '_') && x.endsWith('.html'));
+    let web10 = have, webG = have && two ? have.replace('손익추정_10초_', '손익추정_') : null;
     if (!have) {
-      const r = run('python', ['-I', path.join(WEB, '웹연결패치.py'), '--ver', ver, '--basever', basever, '--date', YMD, '--base10', base10, '--base', baseG, '--out', WEB], '웹연결패치.py');
+      const r = run('python', ['-I', path.join(WEB, '웹연결패치.py'), '--ver', ver, '--basever', basever, '--date', YMD].concat(two ? ['--base10', base10, '--base', baseG] : ['--base', base10], ['--out', WEB]), '웹연결패치.py');
       fs.writeFileSync(path.join(dir, 'patch_출력.txt'), r.out);
       if (r.code !== 0) return await fail('웹 연결 패치', '웹연결패치.py 종료 코드 ' + r.code + ' — ' + r.out.trim().split('\n').slice(-3).join(' / '), '웹테스트\\검증자료\\' + ver + '\\patch_출력.txt');
-      web10 = '손익추정_10초_웹연결_' + ver + '_' + YMD + '.html'; webG = '손익추정_웹연결_' + ver + '_' + YMD + '.html';
+      web10 = WP + ver + '_' + YMD + '.html'; webG = two ? '손익추정_웹연결_' + ver + '_' + YMD + '.html' : null;
       fs.copyFileSync(path.join(WEB, '웹연결패치.py'), path.join(dir, 'patch.py'));
     } else log('이미 있는 웹판을 씀:', web10);
     // ⑤ extra 사본
@@ -202,20 +204,20 @@ function updateDocs(oldLocal, ver, basever, base10, baseG, web10, moved) {
     }
     // 기록: 이미 손으로 만든 기록이 있으면 덮지 않고 「자동갱신_」 이름으로 따로 쓴다
     const rec = (n) => path.join(dir, fs.existsSync(path.join(dir, n)) ? '자동갱신_' + n : n);
-    const h10 = sha(fs.readFileSync(path.join(WEB, web10))), hG = sha(fs.readFileSync(path.join(WEB, webG)));
+    const h10 = sha(fs.readFileSync(path.join(WEB, web10))), hG = webG ? sha(fs.readFileSync(path.join(WEB, webG))) : null;
     fs.writeFileSync(rec('변경내역.md'), ['# ' + ver + ' 변경내역 (웹 시험판, ' + DAY + ', 자동 갱신)', '',
-      '- 기반: 오프라인 운영본 ' + basever + ' (' + base10 + ' ' + sha(fs.readFileSync(path.join(ROOT, base10))).slice(0, 8) + '… / ' + baseG + ' ' + sha(fs.readFileSync(path.join(ROOT, baseG))).slice(0, 8) + '…, 교차검증 「통과」)',
+      '- 기반: 오프라인 운영본 ' + basever + ' (' + base10 + ' ' + sha(fs.readFileSync(path.join(ROOT, base10))).slice(0, 8) + '…' + (baseG ? ' / ' + baseG + ' ' + sha(fs.readFileSync(path.join(ROOT, baseG))).slice(0, 8) + '…' : '') + ', 교차검증 「통과」)',
       '- 얹은 것: 웹 연결(window.__sonikWebBridge, 웹 안에서 저장 → sonik:save, DB 내보내기 sysVer) — 웹테스트\\웹연결패치.py. 계산·데이터·<title>·script 블록 수 불변.',
-      '- 결과: ' + web10 + ' (' + h10.slice(0, 8) + '…), ' + webG + ' (' + hG.slice(0, 8) + '…)'].join('\n') + '\n');
+      '- 결과: ' + web10 + ' (' + h10.slice(0, 8) + '…)' + (webG ? ', ' + webG + ' (' + hG.slice(0, 8) + '…)' : '')].join('\n') + '\n');
     fs.writeFileSync(rec('검증결과.md'), ['# ' + ver + ' 검증결과 (웹 시험판, ' + DAY + ', 웹엔진갱신.cjs 자동)', '',
       '데이터 머리: 엔진만 교체(오프라인 ' + basever + ' 운영본 데이터 그대로). 웹판은 정규화 전까지 Codex 교차검증 대상 아님(웹테스트\\README.md).', '',
       '| 항목 | 값 |', '|---|---|',
-      '| ' + web10 + ' | ' + h10 + ' |', '| ' + webG + ' | ' + hG + ' |',
+      '| ' + web10 + ' | ' + h10 + ' |'].concat(webG ? ['| ' + webG + ' | ' + hG + ' |'] : [], [
       '| 웹 quick | PASS ' + counts.PASS + ' / FAIL 0 / ERROR 0 / UNVERIFIED ' + counts.UNVERIFIED + ' — ' + runDir + ' |',
       '| 웹 extra 사본 | ' + (synced ? '오프라인 extra 에 맞춤(이전 사본 extra_' + YMD + '_갱신전.cjs)' : '변경 없음') + ' |',
       '| 빈 엔진(웹 업로드) | ' + up.h + ' · ' + up.sp + ' |',
       '| 이전 웹 엔진(웹) | ' + (curVer || '없음') + ' |', '| 이전 웹판 파일(PC) | ' + (oldVer ? oldVer + (moved ? ' → 웹테스트\\보관\\' + oldVer + '\\' : ' (옮길 것 없음)') : '없음') + ' |', '',
-      '결론: 웹 시험판 ' + ver + ' 를 웹 현재 엔진으로 올림. 사업계획 웹판은 만들지 않았다(필요하면 웹판 10초에서 [📘 사업계획 시스템 다운로드]).'].join('\n') + '\n');
+      '결론: 웹 시험판 ' + ver + ' 를 웹 현재 엔진으로 올림. 사업계획 웹판은 만들지 않았다(필요하면 웹판에서 [📘 사업계획 시스템 다운로드]).']).join('\n') + '\n');
     try { updateDocs(oldVer, ver, basever, base10, baseG, web10, moved); } catch (e) { log('README·AGENTS 갱신 실패', e.message); }
     saveState({ failed: null, reason: null, done: base10, ver });
     fs.writeFileSync(path.join(dir, '웹엔진갱신.log'), lines.join('\n') + '\n');
