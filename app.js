@@ -1,13 +1,17 @@
 // 손익추정 웹 — 로그인 · 추정자료 목록 · 엔진 열기/저장 · 관리자(빈 엔진 올리기, 명단)
 (function () {
-  const C = window.SONIK_CONFIG, E = window.SonikEngine;
+  const C = window.SONIK_CONFIG, E = window.SonikEngine, B = window.SonikBizplan;
   // 만료된 확인 메일 링크 등으로 주소 끝에 #error=… 가 남아 있으면, supabase-js 가 새로고침할 때마다
   // 저장된 로그인을 지운다. 클라이언트를 만들기 전에 그런 주소 조각을 걷어낸다.
   if (/(^#|&)error(_code)?=/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
   const sb = window.supabase.createClient(C.url, C.key);
   const $ = (id) => document.getElementById(id);
   const ROLE = { admin: '관리자', writer: '작성자', viewer: '열람자' };
-  const st = { user: null, me: null, engine: null, snaps: [], open: null, mounted: null };
+  const st = { user: null, me: null, engine: null, snaps: [], open: null, mounted: null, tab: 'sonik' };
+  try { if (localStorage.getItem('sk_tab') === 'bizplan') st.tab = 'bizplan'; } catch (_) { /* 기본 손익추정 */ }
+  const modeOf = (s) => (s && s.mode) || 'sonik';
+  const KIND = (s) => modeOf(s) === 'bizplan' ? '사업계획' : '추정자료';
+  const RO = (k) => k + (k === '사업계획' ? '으로' : '로');
 
   // ── 화면 도우미 ─────────────────────────────────────
   const views = ['vLogin', 'vDenied', 'vList', 'vEngine'];
@@ -55,7 +59,8 @@
     $('btnReq').hidden = !inEngine;
     $('btnOffline').hidden = !inEngine;
     $('btnZoom').hidden = !inEngine;
-    $('ctx').textContent = inEngine && st.open ? (st.open.base_ym + ' · ' + (st.open.memo || '(이름 없음)') + (st.open.backupOf ? ' · 백업본' : isOwnWeb(st.open) ? ' · 저장하면 이 추정자료에 덮어씀' : ' · 첫 저장은 새 추정자료')) : '';
+    const K = st.open ? KIND(st.open) : '';
+    $('ctx').textContent = inEngine && st.open ? ((K === '사업계획' ? '📘 ' : '') + st.open.base_ym + ' · ' + (st.open.memo || '(이름 없음)') + (st.open.backupOf ? ' · 백업본' : isOwnWeb(st.open) ? ' · 저장하면 이 ' + K + '에 덮어씀' : ' · 첫 저장은 새 ' + K)) : '';
   }
   $('btnLogin').onclick = async () => {
     $('loginMsg').textContent = '';
@@ -77,7 +82,6 @@
   async function loadList() {
     unmount();
     show('vList'); renderBar();
-    $('lblUpSnap').hidden = !canWrite();
     $('adminCard').hidden = st.me.role !== 'admin';
     const [{ data: eng }, { data: snaps, error }] = await Promise.all([
       sb.from('sk_engines').select('*').eq('is_current', true).maybeSingle(),
@@ -85,10 +89,17 @@
     ]);
     if (error) { toast('목록을 읽지 못했습니다: ' + error.message); return; }
     st.engine = eng; st.snaps = snaps || [];
+    const biz = st.tab === 'bizplan', rows = st.snaps.filter((s) => modeOf(s) === st.tab);
+    document.querySelectorAll('#listTabs button').forEach((b) => b.classList.toggle('on', b.getAttribute('data-t') === st.tab));
+    $('lblUpSnap').hidden = biz || !canWrite();
+    $('btnNewBiz').hidden = !biz || !canWrite();
+    $('btnNewBiz').disabled = !eng;
+    $('listHint').hidden = biz; $('bizHint').hidden = !biz;
+    $('snapHead').textContent = biz ? '사업계획명' : '추정자료명';
     $('engineLine').innerHTML = eng
       ? '웹 엔진: <b>' + esc(eng.ver) + '</b> · ' + esc(fmtT(eng.uploaded_at)) + ' 올림'
       : '<span class="tag old">웹 엔진이 아직 없습니다</span> 관리자가 빈 엔진을 올려야 열 수 있습니다.';
-    $('snapRows').innerHTML = st.snaps.length ? st.snaps.map((s) => {
+    $('snapRows').innerHTML = rows.length ? rows.map((s) => {
       return '<tr><td class="memo"><b>' + esc(s.memo || '(이름 없음)') + '</b></td><td>' + esc(s.base_ym) + '</td>'
         + '<td><span class="tag ' + s.source + '">' + (s.source === 'pc' ? 'PC 원본' : '웹 저장') + '</span></td>'
         + '<td>' + esc(s.author_name || s.author_email) + '</td><td>' + esc(fmtT(s.updated_at || s.created_at)) + (s.rev > 1 ? ' <span class="hint">(' + s.rev + '회 저장)</span>' : '') + '</td>'
@@ -96,7 +107,7 @@
         + ' <button data-dl="' + s.id + '" title="DB 내보내기 ▸ 전체와 같은 .json (PC에서 DB 불러오기)">JSON</button>'
         + ' <button data-html="' + s.id + '"' + (eng ? '' : ' disabled') + ' title="웹 엔진 + 이 추정자료를 합친 HTML 한 파일. PC에서 바로 열립니다">오프라인 파일</button>' + (s.rev > 1 ? ' <button data-bk="' + s.id + '">이전 저장</button>' : '')
         + (st.me.role === 'admin' ? ' <button data-del="' + s.id + '" class="danger">삭제</button>' : '') + '</td></tr>';
-    }).join('') : '<tr><td colspan="6" class="hint">아직 추정자료가 없습니다.</td></tr>';
+    }).join('') : '<tr><td colspan="6" class="hint">' + (biz ? '아직 웹 사업계획이 없습니다. 「📘 새 사업계획」으로 손익추정 자료에서 만듭니다.' : '아직 추정자료가 없습니다.') + '</td></tr>';
     $('snapRows').querySelectorAll('[data-open]').forEach((b) => { b.onclick = () => openSnap(b.getAttribute('data-open')); });
     $('snapRows').querySelectorAll('[data-dl]').forEach((b) => { b.onclick = () => downloadSnap(b.getAttribute('data-dl')); });
     $('snapRows').querySelectorAll('[data-html]').forEach((b) => { b.onclick = () => offlineFromList(b.getAttribute('data-html')); });
@@ -120,7 +131,7 @@
       const db = await fetchSnapDb(s);
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob([JSON.stringify(db)], { type: 'application/json' }));
-      a.download = '손익추정DB_전체_' + s.base_ym + '_' + (s.source === 'pc' ? 'PC' : '웹') + '_' + (s.updated_at || s.created_at).slice(0, 16).replace(/[-:T]/g, '') + '.json';
+      a.download = (modeOf(s) === 'bizplan' ? '사업계획DB_전체_' : '손익추정DB_전체_') + s.base_ym + '_' + (s.source === 'pc' ? 'PC' : '웹') + '_' + (s.updated_at || s.created_at).slice(0, 16).replace(/[-:T]/g, '') + '.json';
       a.click(); URL.revokeObjectURL(a.href);
       log('download', s.id);
     } catch (e) { toast(e.message, 6000); }
@@ -150,11 +161,12 @@
   function offlineHtml(win) {
     if (typeof win.__buildEngineHtml !== 'function') throw new Error('이 엔진은 HTML 만들기 기능이 없습니다');
     try { if (typeof win.commitActiveEditBeforeSave === 'function') win.commitActiveEditBeforeSave(); } catch (_) { /* 무시 */ }
-    const html = win.__buildEngineHtml({ embedData: true, emptyEngine: false, stripAdminBar: false });
+    let html = win.__buildEngineHtml({ embedData: true, emptyEngine: false, stripAdminBar: false });
     if (!/id=["']__SAVED_DATA__["']/.test(html)) throw new Error('데이터를 넣지 못했습니다');
+    if (B.isBiz(win)) html = B.offlineFlag(win, html); // 사업계획 모드 표시를 다시 넣어야 PC에서도 사업계획으로 열린다
     return html;
   }
-  const offlineName = (s, ver) => '손익추정_웹받음_' + (ver || 'v') + '_' + (s.base_ym || '') + '_' + stamp() + '.html';
+  const offlineName = (s, ver) => (modeOf(s) === 'bizplan' ? '사업계획시스템_웹받음_' : '손익추정_웹받음_') + (ver || 'v') + '_' + (s.base_ym || '') + '_' + stamp() + '.html';
   async function downloadOffline() {
     if (!st.mounted || !st.open) return;
     busy('오프라인 파일 만드는 중…');
@@ -178,7 +190,7 @@
     try {
       const [html, db] = await Promise.all([getEngineHtml(), fetchSnapDb(s)]);
       busy('오프라인 파일 만드는 중… (10~30초)');
-      m = await E.mount(box, html, () => {});
+      m = await E.mount(box, engineFor(s, html, db), () => {});
       m.bridge.applyDb(db);
       await new Promise((r) => setTimeout(r, 300));
       saveBlob(new Blob([offlineHtml(m.win)], { type: 'text/html;charset=utf-8' }), offlineName(s, st.engine.ver));
@@ -202,14 +214,15 @@
     return id;
   }
   // 추정자료명(필수). 같은 이름이 있으면 알리고, 그래도 쓰겠다면 그대로 저장한다(hong 2026-10-30)
-  async function askName(title, bodyHtml) {
+  async function askName(title, bodyHtml, label) {
+    label = label || '추정자료명';
     for (;;) {
-      const ok = await ask(title, bodyHtml + '<label>추정자료명<textarea id="memoIn" placeholder="예: 10월 가마감"></textarea></label>');
+      const ok = await ask(title, bodyHtml + '<label>' + esc(label) + '<textarea id="memoIn" placeholder="' + (label === '사업계획명' ? '예: 2027 사업계획 1차' : '예: 10월 가마감') + '"></textarea></label>');
       if (!ok) return null;
       const name = (($('memoIn') || {}).value || '').trim();
-      if (!name) { toast('추정자료명을 적어 주세요.'); continue; }
+      if (!name) { toast(label + '을 적어 주세요.'); continue; }
       if (st.snaps.some((s) => (s.memo || '').trim() === name)) {
-        const go = await ask('같은 이름이 있습니다', '<p>「' + esc(name) + '」 추정자료가 이미 있습니다. 그래도 이 이름으로 저장할까요?</p><p class="hint">목록에서 구분하기 어려우니 다른 이름을 권합니다.</p>');
+        const go = await ask('같은 이름이 있습니다', '<p>「' + esc(name) + '」 ' + esc(label.replace(/명$/, '')) + '가 이미 있습니다. 그래도 이 이름으로 저장할까요?</p><p class="hint">목록에서 구분하기 어려우니 다른 이름을 권합니다.</p>');
         if (!go) continue;
       }
       return name;
@@ -239,6 +252,66 @@
     getEngineHtml.cache = { key, html };
     return html;
   }
+  // 사업계획 저장본은 웹 엔진에 사업계획 표시를 넣어 연다(계획연도·동봉 전년자료는 저장본에 함께 있다)
+  function engineFor(s, html, db) {
+    if (modeOf(s) !== 'bizplan') return html;
+    return B.shell(html, db.bizplanYear || +String(s.base_ym || db.baseYm || '').slice(0, 4), db.bizPrev);
+  }
+  // 열고 나서 상대편 최신 웹 저장본의 자료를 넣는다: 손익추정 ← 최신 사업계획 DB, 사업계획 ← 최신 손익추정 연간 비교자료
+  async function linkAfterOpen(s) {
+    const win = st.mounted && st.mounted.win; if (!win) return;
+    const biz = modeOf(s) === 'bizplan';
+    const py = biz ? +win.__BIZPLAN__.planYear : 0;
+    const cand = st.snaps.filter((x) => x.id !== s.id && modeOf(x) === (biz ? 'sonik' : 'bizplan') && (!biz || String(x.base_ym || '').slice(0, 4) === String(py - 1)))
+      .sort((a, b) => String(b.updated_at || b.created_at).localeCompare(String(a.updated_at || a.created_at)));
+    const src = cand[0]; if (!src) return;
+    busy('연동 자료 받는 중…');
+    try {
+      const db = await fetchSnapDb(src), when = fmtT(src.updated_at || src.created_at), name = '「' + (src.memo || src.base_ym) + '」(' + when + ')';
+      if (biz) {
+        if (db.annual && B.applyAnnual(win, db.annual)) { toast('손익추정 ' + name + '의 ' + (py - 1) + '년 실적·추정을 「당해」 비교자료로 넣었습니다.', 6000); log('link_annual', s.id, src.id); }
+        else toast('최신 손익추정 ' + name + '에 연간 비교자료가 없어 넣지 않았습니다. 그 자료를 웹에서 한 번 저장하면 생깁니다.', 7000);
+      } else if (db.planDb) {
+        const r = B.applyPlan(win, db.planDb), y = B.planYearOf(db.planDb);
+        if (r === 'ok') { toast('사업계획 ' + name + '의 ' + y + '년 계획을 차이분석 계획으로 넣었습니다.', 6000); log('link_plan', s.id, src.id); }
+        else if (r === 'other-year') toast('이 엔진은 계획을 한 해만 보관해서 ' + y + '년 사업계획을 넣지 않았습니다(v312 이후 엔진부터 연도별 보관).', 7000);
+      }
+    } catch (e) { toast('연동 자료를 넣지 못했습니다: ' + e.message, 7000); }
+    busy(null);
+  }
+  // 새 사업계획: 고른 손익추정 자료를 화면 밖에서 열어 「📘 사업계획 시스템 다운로드」와 같은 결과를 받아 바로 연다
+  async function newBizplan() {
+    const srcs = st.snaps.filter((x) => modeOf(x) === 'sonik');
+    if (!srcs.length || !st.engine) { toast('먼저 손익추정 자료가 있어야 합니다.'); return; }
+    const ok = await ask('새 사업계획', '<p class="hint">고른 손익추정 자료의 기말재고·12월 추정·올해 연간 실적을 넣어 사업계획 시스템을 만듭니다(「📘 사업계획 시스템 다운로드」와 같은 내용). 첫 저장 때 사업계획 목록에 올라갑니다.</p>'
+      + '<label>바탕 손익추정 자료<select id="bizSrc">' + srcs.map((x) => '<option value="' + x.id + '">' + esc(x.base_ym + ' · ' + (x.memo || '(이름 없음)') + ' · ' + fmtT(x.updated_at || x.created_at)) + '</option>').join('') + '</select></label>');
+    if (!ok) return;
+    const s = srcs.find((x) => x.id === ($('bizSrc') || {}).value) || srcs[0];
+    const box = document.createElement('div'); box.className = 'offscreen-engine'; document.body.appendChild(box);
+    let m = null, html = null;
+    busy('손익추정 자료를 여는 중… (10~30초)');
+    try {
+      const [eh, db] = await Promise.all([getEngineHtml(), fetchSnapDb(s)]);
+      m = await E.mount(box, eh, () => {});
+      m.bridge.applyDb(db);
+      busy('사업계획 시스템 만드는 중…');
+      html = await B.makeHtml(m.win);
+    } catch (e) { toast(e.message, 8000); }
+    finally { if (m) m.dispose(); box.remove(); }
+    if (!html) { busy(null); return; }
+    try {
+      show('vEngine'); st.open = { id: null, srcId: s.id, mode: 'bizplan', memo: '새 사업계획', base_ym: '', source: 'new', rev: 0 }; renderBar(); fitEngine();
+      busy('사업계획 여는 중… (10~30초)');
+      st.mounted = await E.mount($('engineBox'), html, onEngineMsg);
+      const info = st.mounted.bridge.info();
+      st.open.base_ym = info.baseYm || ''; st.open.memo = '새 사업계획 ' + String(info.baseYm || '').slice(0, 4); renderBar();
+      log('bizplan_new', null, 'from=' + s.id);
+    } catch (e) { toast(e.message, 8000); await loadList(); }
+    busy(null);
+  }
+  $('btnNewBiz').onclick = newBizplan;
+  document.querySelectorAll('#listTabs button').forEach((b) => { b.onclick = () => { st.tab = b.getAttribute('data-t'); try { localStorage.setItem('sk_tab', st.tab); } catch (_) { /* 무시 */ } loadList(); }; });
+
   function unmount() { rqClose(true); if (st.mounted) { st.mounted.dispose(); st.mounted = null; } $('engineBox').innerHTML = ''; st.open = null; }
   // 추정자료 삭제(관리자만): 저장 파일·이전 저장(백업)까지 지운다. 되돌릴 수 없다
   async function deleteSnap(id) {
@@ -278,12 +351,13 @@
       const [html, db] = await Promise.all([getEngineHtml(), fetchSnapDb(s)]);
       show('vEngine'); st.open = s; renderBar(); fitEngine();
       busy('엔진 여는 중… (10~30초)');
-      st.mounted = await E.mount($('engineBox'), html, onEngineMsg);
-      busy('추정자료 불러오는 중…');
+      st.mounted = await E.mount($('engineBox'), engineFor(s, html, db), onEngineMsg);
+      busy(KIND(s) + ' 불러오는 중…');
       await new Promise((r) => setTimeout(r, 50));
       const r = st.mounted.bridge.applyDb(db);
       const n = r.verify ? r.verify.diffs.length : null;
       log('open', s.id, (backup ? 'rev=' + backup.rev + ' ' : '') + (n == null ? 'verify 없음' : ('diffs=' + n)));
+      if (!backup) await linkAfterOpen(s);
     } catch (e) { toast(e.message, 8000); await loadList(); }
     busy(null);
   }
@@ -321,13 +395,17 @@
     if (!canWrite()) { toast('열람 권한이라 저장할 수 없습니다.'); return; }
     let memo = null;
     if (asNew || !isOwnWeb(st.open)) {
-      const why = asNew ? '현재 작업을 새 추정자료로 따로 남깁니다.' : (st.open.backupOf ? '백업본을 열었으므로' : st.open.source === 'pc' ? 'PC 원본을 열었으므로' : '다른 사람의 추정자료가므로') + ' 첫 저장은 새 추정자료로 만들고, 그다음 저장부터는 거기에 덮어씁니다.';
-      memo = await askName(asNew ? '새 버전으로 저장' : '저장', '<p class="hint">' + esc(why) + ' 원래 추정자료(' + esc(st.open.memo || st.open.base_ym) + ', ' + esc(fmtT(st.open.updated_at || st.open.created_at)) + ')는 그대로 남습니다.</p>');
+      const K = KIND(st.open);
+      const why = st.open.source === 'new' ? '새로 만든 사업계획입니다. 저장하면 사업계획 목록에 올라가고, 그다음 저장부터는 거기에 덮어씁니다.'
+        : (asNew ? '현재 작업을 새 ' + RO(K) + ' 따로 남깁니다.' : (st.open.backupOf ? '백업본을 열었으므로' : st.open.source === 'pc' ? 'PC 원본을 열었으므로' : '다른 사람의 ' + K + '이므로') + ' 첫 저장은 새 ' + RO(K) + ' 만들고, 그다음 저장부터는 거기에 덮어씁니다.')
+          + ' 원래 ' + K + '(' + (st.open.memo || st.open.base_ym) + ', ' + fmtT(st.open.updated_at || st.open.created_at) + ')는 그대로 남습니다.';
+      memo = await askName(asNew ? '새 버전으로 저장' : '저장', '<p class="hint">' + esc(why) + '</p>', K + '명');
       if (memo === null) return;
     }
     saveFromEngine.busy = true; busy('저장하는 중…');
     try {
-      const db = st.mounted.bridge.buildDb();
+      // 연동 자료도 함께 싣는다(손익추정: 올해 연간 비교자료 / 사업계획: 사업계획 DB) — 상대편이 열 때 자동으로 넣는다
+      const db = Object.assign(st.mounted.bridge.buildDb(), await B.extras(st.mounted.win));
       if (memo === null) {
         const s = st.open, path = 'snapshots/' + s.id + '/r' + (s.rev + 1) + '_' + crypto.randomUUID().slice(0, 8) + '.json.gz';
         const gz = await E.gzip(JSON.stringify(db));
@@ -344,12 +422,12 @@
         log('save_web', s.id, 'rev=' + r.data.rev);
         toast('저장했습니다.');
       } else {
-        const parent = st.open.backupOf || st.open.id;
+        const parent = st.open.backupOf || st.open.id || st.open.srcId || null;
         const id = await putSnapshot(db, { source: 'web', memo, parent_id: parent });
         log('save_web_new', id, 'parent=' + parent);
         const now = new Date().toISOString();
         st.open = Object.assign({}, st.open, { id, memo, rev: 1, created_at: now, updated_at: now, source: 'web', author_email: st.me.email, author_name: st.me.name || '', engine_ver: db.sysVer, backupOf: null });
-        toast('새 추정자료로 저장했습니다. 다음 저장부터는 여기에 덮어씁니다.', 5000);
+        toast('새 ' + RO(KIND(st.open)) + ' 저장했습니다. 다음 저장부터는 여기에 덮어씁니다.', 5000);
       }
       renderBar();
     } catch (e) { toast(e.message, 8000); }

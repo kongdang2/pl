@@ -166,3 +166,4 @@ body.ch-resizing{user-select:none}body.ch-resizing *{cursor:inherit!important}
 .row.add input,.row.add select{flex:1 1 140px}
 .modal-card.wide{padding:12px}
 }
+#listTabs{margin:0 0 0 12px}#listTabs button{flex:none;padding:4px 12px}#listTabs button.on{background:#244A70;border-color:#244A70;color:#fff}
