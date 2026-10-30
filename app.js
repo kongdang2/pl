@@ -1,4 +1,4 @@
-// 손익추정 웹 — 로그인 · 스냅샷 목록 · 엔진 열기/저장 · 관리자(빈 엔진 올리기, 명단)
+// 손익추정 웹 — 로그인 · 추정자료 목록 · 엔진 열기/저장 · 관리자(빈 엔진 올리기, 명단)
 (function () {
   const C = window.SONIK_CONFIG, E = window.SonikEngine;
   // 만료된 확인 메일 링크 등으로 주소 끝에 #error=… 가 남아 있으면, supabase-js 가 새로고침할 때마다
@@ -29,7 +29,7 @@
     try { await sb.from('sk_log').insert({ email: st.me.email, action, snapshot_id: snapshotId || null, detail: detail || '' }); } catch (_) { /* 기록 실패는 무시 */ }
   }
   const canWrite = () => st.me && (st.me.role === 'admin' || st.me.role === 'writer');
-  // 덮어쓸 수 있는 스냅샷 = 내가 웹에서 저장한 것(PC 원본·남의 것·백업본은 첫 저장 때 새 스냅샷)
+  // 덮어쓸 수 있는 추정자료 = 내가 웹에서 저장한 것(PC 원본·남의 것·백업본은 첫 저장 때 새 추정자료)
   const isOwnWeb = (s) => s && !s.backupOf && s.source === 'web' && s.author_email === (st.me && st.me.email);
 
   // ── 로그인 ─────────────────────────────────────────
@@ -55,7 +55,7 @@
     $('btnReq').hidden = !inEngine;
     $('btnOffline').hidden = !inEngine;
     $('btnZoom').hidden = !inEngine;
-    $('ctx').textContent = inEngine && st.open ? (st.open.base_ym + ' · ' + (st.open.engine_ver || '버전 미상') + ' · ' + (st.open.memo || '') + (st.open.backupOf ? ' · 백업본' : isOwnWeb(st.open) ? ' · 저장하면 이 스냅샷에 덮어씀' : ' · 첫 저장은 새 스냅샷')) : '';
+    $('ctx').textContent = inEngine && st.open ? (st.open.base_ym + ' · ' + (st.open.memo || '(이름 없음)') + (st.open.backupOf ? ' · 백업본' : isOwnWeb(st.open) ? ' · 저장하면 이 추정자료에 덮어씀' : ' · 첫 저장은 새 추정자료')) : '';
   }
   $('btnLogin').onclick = async () => {
     $('loginMsg').textContent = '';
@@ -89,15 +89,14 @@
       ? '웹 엔진: <b>' + esc(eng.ver) + '</b> · ' + esc(fmtT(eng.uploaded_at)) + ' 올림'
       : '<span class="tag old">웹 엔진이 아직 없습니다</span> 관리자가 빈 엔진을 올려야 열 수 있습니다.';
     $('snapRows').innerHTML = st.snaps.length ? st.snaps.map((s) => {
-      const old = eng && s.engine_ver && sameBase(s.engine_ver) !== sameBase(eng.ver);
-      return '<tr><td><b>' + esc(s.base_ym) + '</b></td><td>' + esc(s.engine_ver || '—') + (old ? ' <span class="tag old">엔진과 다름</span>' : '') + '</td>'
+      return '<tr><td class="memo"><b>' + esc(s.memo || '(이름 없음)') + '</b></td><td>' + esc(s.base_ym) + '</td>'
         + '<td><span class="tag ' + s.source + '">' + (s.source === 'pc' ? 'PC 원본' : '웹 저장') + '</span></td>'
-        + '<td class="memo">' + esc(s.memo) + '</td><td>' + esc(s.author_name || s.author_email) + '</td><td>' + esc(fmtT(s.updated_at || s.created_at)) + (s.rev > 1 ? ' <span class="hint">(' + s.rev + '회 저장)</span>' : '') + '</td>'
+        + '<td>' + esc(s.author_name || s.author_email) + '</td><td>' + esc(fmtT(s.updated_at || s.created_at)) + (s.rev > 1 ? ' <span class="hint">(' + s.rev + '회 저장)</span>' : '') + '</td>'
         + '<td><button data-open="' + s.id + '"' + (eng ? '' : ' disabled') + '>열기</button>'
         + ' <button data-dl="' + s.id + '" title="DB 내보내기 ▸ 전체와 같은 .json (PC에서 DB 불러오기)">JSON</button>'
-        + ' <button data-html="' + s.id + '"' + (eng ? '' : ' disabled') + ' title="웹 엔진 + 이 스냅샷을 합친 HTML 한 파일. PC에서 바로 열립니다">오프라인 파일</button>' + (s.rev > 1 ? ' <button data-bk="' + s.id + '">이전 저장</button>' : '')
+        + ' <button data-html="' + s.id + '"' + (eng ? '' : ' disabled') + ' title="웹 엔진 + 이 추정자료를 합친 HTML 한 파일. PC에서 바로 열립니다">오프라인 파일</button>' + (s.rev > 1 ? ' <button data-bk="' + s.id + '">이전 저장</button>' : '')
         + (st.me.role === 'admin' ? ' <button data-del="' + s.id + '" class="danger">삭제</button>' : '') + '</td></tr>';
-    }).join('') : '<tr><td colspan="7" class="hint">아직 스냅샷이 없습니다.</td></tr>';
+    }).join('') : '<tr><td colspan="6" class="hint">아직 추정자료가 없습니다.</td></tr>';
     $('snapRows').querySelectorAll('[data-open]').forEach((b) => { b.onclick = () => openSnap(b.getAttribute('data-open')); });
     $('snapRows').querySelectorAll('[data-dl]').forEach((b) => { b.onclick = () => downloadSnap(b.getAttribute('data-dl')); });
     $('snapRows').querySelectorAll('[data-html]').forEach((b) => { b.onclick = () => offlineFromList(b.getAttribute('data-html')); });
@@ -111,12 +110,12 @@
 
   async function fetchSnapDb(snap) {
     const { data, error } = await sb.storage.from(C.bucket).download(snap.storage_path);
-    if (error) throw new Error('스냅샷을 받지 못했습니다: ' + error.message);
+    if (error) throw new Error('추정자료를 받지 못했습니다: ' + error.message);
     return JSON.parse(await E.gunzipToText(data));
   }
   async function downloadSnap(id) {
     const s = st.snaps.find((x) => x.id === id); if (!s) return;
-    busy('스냅샷 받는 중…');
+    busy('추정자료 받는 중…');
     try {
       const db = await fetchSnapDb(s);
       const a = document.createElement('a');
@@ -147,7 +146,7 @@
     busy(null);
   }
   // 오프라인 파일: 열린 엔진이 자기 자신을 데이터째 HTML 로 만든다(엔진의 「HTML 저장」과 같은 함수, 빈 엔진 표시는 빠짐).
-  // 결과는 PC 에서 그냥 열면 되는 손익추정 파일(웹 시험판 엔진 vNNN-n + 이 스냅샷 데이터).
+  // 결과는 PC 에서 그냥 열면 되는 손익추정 파일(웹 시험판 엔진 vNNN-n + 이 추정자료 데이터).
   function offlineHtml(win) {
     if (typeof win.__buildEngineHtml !== 'function') throw new Error('이 엔진은 HTML 만들기 기능이 없습니다');
     try { if (typeof win.commitActiveEditBeforeSave === 'function') win.commitActiveEditBeforeSave(); } catch (_) { /* 무시 */ }
@@ -168,14 +167,14 @@
     } catch (e) { toast(e.message, 8000); }
     busy(null);
   }
-  // 목록에서 바로: 화면 밖에서 엔진을 열어 스냅샷을 넣고 HTML 로 만든 뒤 닫는다
+  // 목록에서 바로: 화면 밖에서 엔진을 열어 추정자료를 넣고 HTML 로 만든 뒤 닫는다
   async function offlineFromList(id) {
     const s = st.snaps.find((x) => x.id === id); if (!s || !st.engine) return;
     const box = document.createElement('div');
     box.className = 'offscreen-engine';
     document.body.appendChild(box);
     let m = null;
-    busy('엔진과 스냅샷을 받는 중…');
+    busy('엔진과 추정자료를 받는 중…');
     try {
       const [html, db] = await Promise.all([getEngineHtml(), fetchSnapDb(s)]);
       busy('오프라인 파일 만드는 중… (10~30초)');
@@ -188,7 +187,7 @@
     finally { if (m) m.dispose(); box.remove(); busy(null); }
   }
 
-  // ── 스냅샷 올리기(PC 원본 .json) ──────────────────
+  // ── 추정자료 올리기(PC 원본 .json) ──────────────────
   async function putSnapshot(db, meta) {
     const id = crypto.randomUUID();
     // 웹 저장본은 snapshots/<id>/ 아래(덮어쓸 때 옛 백업을 작성자가 정리), PC 원본은 snapshots/<id>.json.gz(관리자만 삭제)
@@ -202,14 +201,27 @@
     if (ins.error) { await sb.storage.from(C.bucket).remove([path]); throw new Error('목록 등록 실패: ' + ins.error.message); }
     return id;
   }
+  // 추정자료명(필수). 같은 이름이 있으면 알리고, 그래도 쓰겠다면 그대로 저장한다(hong 2026-10-30)
+  async function askName(title, bodyHtml) {
+    for (;;) {
+      const ok = await ask(title, bodyHtml + '<label>추정자료명<textarea id="memoIn" placeholder="예: 10월 가마감"></textarea></label>');
+      if (!ok) return null;
+      const name = (($('memoIn') || {}).value || '').trim();
+      if (!name) { toast('추정자료명을 적어 주세요.'); continue; }
+      if (st.snaps.some((s) => (s.memo || '').trim() === name)) {
+        const go = await ask('같은 이름이 있습니다', '<p>「' + esc(name) + '」 추정자료가 이미 있습니다. 그래도 이 이름으로 저장할까요?</p><p class="hint">목록에서 구분하기 어려우니 다른 이름을 권합니다.</p>');
+        if (!go) continue;
+      }
+      return name;
+    }
+  }
   $('upSnap').onchange = async (ev) => {
     const f = ev.target.files[0]; ev.target.value = ''; if (!f) return;
     let db;
     try { db = JSON.parse(await f.text()); } catch (e) { toast('JSON을 읽지 못했습니다: ' + e.message); return; }
     const bad = E.checkSnapshot(db); if (bad) { toast(bad, 6000); return; }
-    const ok = await ask('PC 파일 올리기', '<p>' + esc(f.name) + '</p><p class="hint">기준월 ' + esc(db.baseYm) + ' · ' + esc(db.author || '') + ' · 시스템 ' + esc(db.sysVer || '버전 표기 없음(오프라인 v307 이하 내보내기)') + '</p><label>메모<textarea id="memoIn" placeholder="예: 10/29 가마감 반영"></textarea></label>');
-    if (!ok) return;
-    const memo = ($('memoIn') || {}).value || '';
+    const memo = await askName('PC 파일 올리기', '<p>' + esc(f.name) + '</p><p class="hint">기준월 ' + esc(db.baseYm) + ' · ' + esc(db.author || '') + '</p>');
+    if (memo === null) return;
     busy('올리는 중…');
     try { const id = await putSnapshot(db, { source: 'pc', memo }); log('upload_pc', id, f.name); toast('올렸습니다.'); await loadList(); }
     catch (e) { toast(e.message, 6000); }
@@ -228,11 +240,11 @@
     return html;
   }
   function unmount() { rqClose(true); if (st.mounted) { st.mounted.dispose(); st.mounted = null; } $('engineBox').innerHTML = ''; st.open = null; }
-  // 스냅샷 삭제(관리자만): 저장 파일·이전 저장(백업)까지 지운다. 되돌릴 수 없다
+  // 추정자료 삭제(관리자만): 저장 파일·이전 저장(백업)까지 지운다. 되돌릴 수 없다
   async function deleteSnap(id) {
     const s = st.snaps.find((x) => x.id === id); if (!s) return;
-    const go = await ask('스냅샷 삭제', '<p><b>' + esc(s.base_ym) + ' · ' + esc(s.memo || '') + '</b> (' + (s.source === 'pc' ? 'PC 원본' : '웹 저장') + ', ' + esc(s.author_name || s.author_email) + ')</p>'
-      + '<p>이 스냅샷과 이전 저장(백업) ' + Math.max(0, (s.rev || 1) - 1) + '개까지 지웁니다. <b>되돌릴 수 없습니다.</b></p><p class="hint">PC 원본 파일은 PC에 그대로 있습니다. 이 스냅샷으로 접수한 수정요청은 남고 스냅샷 연결만 빠집니다.</p>');
+    const go = await ask('추정자료 삭제', '<p><b>' + esc(s.base_ym) + ' · ' + esc(s.memo || '') + '</b> (' + (s.source === 'pc' ? 'PC 원본' : '웹 저장') + ', ' + esc(s.author_name || s.author_email) + ')</p>'
+      + '<p>이 추정자료와 이전 저장(백업) ' + Math.max(0, (s.rev || 1) - 1) + '개까지 지웁니다. <b>되돌릴 수 없습니다.</b></p><p class="hint">PC 원본 파일은 PC에 그대로 있습니다. 이 추정자료로 접수한 수정요청은 남고 추정자료 연결만 빠집니다.</p>');
     if (!go) return;
     busy('삭제 중…');
     try {
@@ -241,14 +253,14 @@
       (revs || []).forEach((r) => paths.add(r.storage_path));
       const { data: inDir } = await sb.storage.from('sonik').list('snapshots/' + id, { limit: 1000 });
       (inDir || []).forEach((f) => paths.add('snapshots/' + id + '/' + f.name));
-      // 이 스냅샷에서 갈라져 나온 스냅샷은 남기고 연결만 끊는다
+      // 이 추정자료에서 갈라져 나온 추정자료는 남기고 연결만 끊는다
       let r = await sb.from('sk_snapshots').update({ parent_id: null }).eq('parent_id', id);
       if (r.error) throw r.error;
       r = await sb.from('sk_snapshots').delete().eq('id', id);
       if (r.error) throw r.error;
       const rm = await sb.storage.from('sonik').remove(Array.from(paths).filter(Boolean));
-      if (rm.error) toast('스냅샷은 지웠지만 저장 파일 일부를 지우지 못했습니다: ' + rm.error.message, 7000);
-      else toast('스냅샷을 삭제했습니다.');
+      if (rm.error) toast('추정자료는 지웠지만 저장 파일 일부를 지우지 못했습니다: ' + rm.error.message, 7000);
+      else toast('추정자료를 삭제했습니다.');
       log('delete', null, id + ' ' + s.base_ym + ' ' + (s.memo || '') + ' files=' + paths.size);
     } catch (e) { toast('삭제하지 못했습니다: ' + (e.message || e), 7000); }
     busy(null);
@@ -258,16 +270,16 @@
     const s0 = st.snaps.find((x) => x.id === id); if (!s0 || !st.engine) return;
     const s = backup ? Object.assign({}, s0, { storage_path: backup.storage_path, backupOf: s0.id, memo: s0.memo + ' (' + backup.rev + '번째 저장)', updated_at: backup.saved_at }) : s0;
     if (s.engine_ver && sameBase(s.engine_ver) !== sameBase(st.engine.ver)) {
-      const go = await ask('엔진 버전이 다릅니다', '<p>이 스냅샷은 <b>' + esc(s.engine_ver) + '</b>에서 만들었고 웹 엔진은 <b>' + esc(st.engine.ver) + '</b>입니다.</p><p class="hint">계산 로직이 바뀐 버전이면 재현검증에서 차이가 표시될 수 있습니다. 열까요?</p>');
+      const go = await ask('엔진 버전이 다릅니다', '<p>이 추정자료는 <b>' + esc(s.engine_ver) + '</b>에서 만들었고 웹 엔진은 <b>' + esc(st.engine.ver) + '</b>입니다.</p><p class="hint">계산 로직이 바뀐 버전이면 재현검증에서 차이가 표시될 수 있습니다. 열까요?</p>');
       if (!go) return;
     }
-    busy('엔진과 스냅샷을 받는 중…');
+    busy('엔진과 추정자료를 받는 중…');
     try {
       const [html, db] = await Promise.all([getEngineHtml(), fetchSnapDb(s)]);
       show('vEngine'); st.open = s; renderBar(); fitEngine();
       busy('엔진 여는 중… (10~30초)');
       st.mounted = await E.mount($('engineBox'), html, onEngineMsg);
-      busy('스냅샷 불러오는 중…');
+      busy('추정자료 불러오는 중…');
       await new Promise((r) => setTimeout(r, 50));
       const r = st.mounted.bridge.applyDb(db);
       const n = r.verify ? r.verify.diffs.length : null;
@@ -303,16 +315,15 @@
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 
   function onEngineMsg(m) { if (m.type === 'sonik:save') saveFromEngine(false); }
-  // 저장: 내 웹 스냅샷이면 덮어쓰기(직전 3개는 숨은 백업으로 남음), 아니면 첫 저장만 새 스냅샷. asNew = 「새 버전으로 저장」
+  // 저장: 내 웹 추정자료가면 덮어쓰기(직전 3개는 숨은 백업으로 남음), 아니면 첫 저장만 새 추정자료. asNew = 「새 버전으로 저장」
   async function saveFromEngine(asNew) {
     if (!st.mounted || !st.open || saveFromEngine.busy) return;
     if (!canWrite()) { toast('열람 권한이라 저장할 수 없습니다.'); return; }
     let memo = null;
     if (asNew || !isOwnWeb(st.open)) {
-      const why = asNew ? '현재 작업을 새 스냅샷으로 따로 남깁니다.' : (st.open.backupOf ? '백업본을 열었으므로' : st.open.source === 'pc' ? 'PC 원본을 열었으므로' : '다른 사람의 스냅샷이므로') + ' 첫 저장은 새 스냅샷으로 만들고, 그다음 저장부터는 거기에 덮어씁니다.';
-      const ok = await ask(asNew ? '새 버전으로 저장' : '저장', '<p class="hint">' + esc(why) + ' 원래 스냅샷(' + esc(st.open.base_ym) + ', ' + esc(fmtT(st.open.updated_at || st.open.created_at)) + ')은 그대로 남습니다.</p><label>메모<textarea id="memoIn" placeholder="예: 10/29 가마감 반영"></textarea></label>');
-      if (!ok) return;
-      memo = ($('memoIn') || {}).value || '';
+      const why = asNew ? '현재 작업을 새 추정자료로 따로 남깁니다.' : (st.open.backupOf ? '백업본을 열었으므로' : st.open.source === 'pc' ? 'PC 원본을 열었으므로' : '다른 사람의 추정자료가므로') + ' 첫 저장은 새 추정자료로 만들고, 그다음 저장부터는 거기에 덮어씁니다.';
+      memo = await askName(asNew ? '새 버전으로 저장' : '저장', '<p class="hint">' + esc(why) + ' 원래 추정자료(' + esc(st.open.memo || st.open.base_ym) + ', ' + esc(fmtT(st.open.updated_at || st.open.created_at)) + ')는 그대로 남습니다.</p>');
+      if (memo === null) return;
     }
     saveFromEngine.busy = true; busy('저장하는 중…');
     try {
@@ -325,7 +336,7 @@
         const r = await sb.rpc('sk_overwrite_snapshot', { p_id: s.id, p_expected_rev: s.rev, p_path: path, p_size: gz.size, p_engine_ver: db.sysVer || null });
         if (r.error) {
           await sb.storage.from(C.bucket).remove([path]);
-          if (/CONFLICT/.test(r.error.message)) { toast('다른 창이나 다른 사람이 그사이 이 스냅샷을 저장했습니다. 덮어쓰지 않았으니 「새 버전으로 저장」을 쓰세요.', 9000); return; }
+          if (/CONFLICT/.test(r.error.message)) { toast('다른 창이나 다른 사람이 그사이 이 추정자료를 저장했습니다. 덮어쓰지 않았으니 「새 버전으로 저장」을 쓰세요.', 9000); return; }
           throw new Error('저장 실패: ' + r.error.message);
         }
         if (r.data && r.data.prune && r.data.prune.length) await sb.storage.from(C.bucket).remove(r.data.prune);
@@ -338,7 +349,7 @@
         log('save_web_new', id, 'parent=' + parent);
         const now = new Date().toISOString();
         st.open = Object.assign({}, st.open, { id, memo, rev: 1, created_at: now, updated_at: now, source: 'web', author_email: st.me.email, author_name: st.me.name || '', engine_ver: db.sysVer, backupOf: null });
-        toast('새 스냅샷으로 저장했습니다. 다음 저장부터는 여기에 덮어씁니다.', 5000);
+        toast('새 추정자료로 저장했습니다. 다음 저장부터는 여기에 덮어씁니다.', 5000);
       }
       renderBar();
     } catch (e) { toast(e.message, 8000); }
@@ -349,14 +360,14 @@
   $('btnOffline').onclick = downloadOffline;
   $('btnEngDl').onclick = downloadEngine;
 
-  // 이전 저장(숨은 백업 최대 3개) — 열면 백업본으로 열리고, 저장하면 새 스냅샷이 된다
+  // 이전 저장(숨은 백업 최대 3개) — 열면 백업본으로 열리고, 저장하면 새 추정자료가 된다
   async function showBackups(id) {
     const s = st.snaps.find((x) => x.id === id); if (!s) return;
     const { data, error } = await sb.from('sk_snapshot_revs').select('*').eq('snapshot_id', id).order('rev', { ascending: false });
     if (error) { toast(error.message); return; }
     if (!data || !data.length) { toast('남아 있는 이전 저장이 없습니다.'); return; }
     const pick = await new Promise((res) => {
-      ask('이전 저장 — ' + s.base_ym + ' ' + (s.memo || ''), '<p class="hint">덮어쓰기 전 내용을 최근 3개까지 남겨 둡니다. 열어서 저장하면 새 스냅샷으로 저장됩니다.</p><table class="grid"><tbody>'
+      ask('이전 저장 — ' + s.base_ym + ' ' + (s.memo || ''), '<p class="hint">덮어쓰기 전 내용을 최근 3개까지 남겨 둡니다. 열어서 저장하면 새 추정자료로 저장됩니다.</p><table class="grid"><tbody>'
         + data.map((b) => '<tr><td>' + b.rev + '번째 저장</td><td>' + esc(fmtT(b.saved_at)) + '</td><td><button data-rev="' + b.rev + '">열기</button></td></tr>').join('') + '</tbody></table>').then(() => res(null));
       $('mBody').querySelectorAll('[data-rev]').forEach((btn) => { btn.onclick = () => { $('mOk').click(); res(data.find((b) => String(b.rev) === btn.getAttribute('data-rev'))); }; });
     });
@@ -469,7 +480,7 @@
       if (error) throw new Error(error.message);
       log('request', d.snapshot_id, '#' + data.id);
       RQ.reset(); $('rqTitle').value = $('rqBody').value = ''; $('rqKind').value = '기타'; renderRqItems();
-      toast('수정요청 #' + data.id + '을(를) 접수했습니다. 💬 소통으로 Claude에게 넘겼습니다.', 6000);
+      toast('수정요청 #' + data.id + '을(를) 접수했습니다. 💬 챗봇으로 Claude에게 넘겼습니다.', 6000);
     } catch (e) { toast('접수 실패: ' + e.message, 8000); }
     busy(null);
   };
@@ -503,12 +514,12 @@
     busy(null);
     if (error) { toast(error.message); return; }
     $('rvBody').innerHTML = '<h3>수정요청 #' + r.id + ' · ' + esc(r.title) + '</h3>'
-      + '<p class="hint">' + esc(r.kind) + ' · ' + esc(r.author_name || r.author_email) + ' · ' + esc(fmtT(r.created_at)) + ' · 스냅샷 ' + esc(r.base_ym || '') + ' / 엔진 ' + esc(r.engine_ver || '') + '</p>'
+      + '<p class="hint">' + esc(r.kind) + ' · ' + esc(r.author_name || r.author_email) + ' · ' + esc(fmtT(r.created_at)) + ' · 추정자료 ' + esc(r.base_ym || '') + ' / 엔진 ' + esc(r.engine_ver || '') + '</p>'
       + (r.body ? '<p style="white-space:pre-wrap">' + esc(r.body) + '</p>' : '')
       + stageBar(r, false)
       + '<h4>진행 기록</h4>' + ((r.progress || []).length
         ? '<ol class="rq-log">' + r.progress.map((p) => '<li><span class="hint">' + esc(fmtT(p.at)) + ' · ' + esc(STAGES[p.stage] || p.stage) + '</span><div>' + esc(p.text) + '</div></li>').join('') + '</ol>'
-        : '<p class="hint">아직 답변이 없습니다. 접수 글이 💬 소통으로 Claude에게 넘어갔고, PC 중계가 돌고 있으면 곧 여기에 진행 상황이 적힙니다.</p>')
+        : '<p class="hint">아직 답변이 없습니다. 접수 글이 💬 챗봇으로 Claude에게 넘어갔고, PC 중계가 돌고 있으면 곧 여기에 진행 상황이 적힙니다.</p>')
       + '<h4>요청 내용</h4>'
       + (r.items || []).map((it, i) => itemHtml(it, i, false) + excerptHtml(it.excerpt)).join('');
     $('rqView').hidden = false;

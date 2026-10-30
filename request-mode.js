@@ -377,7 +377,7 @@
     const put = (k, v) => { const r = ws.addRow([k, v]); r.getCell(1).font = { bold: true }; r.getCell(1).fill = grey; ws.mergeCells(r.number, 2, r.number, 5); r.getCell(2).alignment = { wrapText: true, vertical: 'top' }; };
     put('요청 번호', req.id ? '#' + req.id : '(접수 전)'); put('제목', req.title); put('구분', req.kind); put('상태', req.status || '접수');
     put('작성', (req.author_name || req.author_email || '') + ' · ' + new Date(req.created_at || Date.now()).toLocaleString('ko-KR'));
-    put('스냅샷', (req.base_ym || '') + ' · 엔진 ' + (req.engine_ver || '') + (req.snapshot_id ? ' · ' + req.snapshot_id : ''));
+    put('추정자료', (req.base_ym || '') + ' · 엔진 ' + (req.engine_ver || '') + (req.snapshot_id ? ' · ' + req.snapshot_id : ''));
     put('설명', req.body || '');
     ws.addRow([]);
     const h = ws.addRow(['항목', '위치', '행', '열', '현재 값 → 메모(기대값)']); h.font = { bold: true }; h.eachCell((c) => { c.fill = grey; c.border = box; });

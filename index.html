@@ -43,15 +43,15 @@
 
 <main id="vList" class="page" hidden>
   <section class="card">
-    <div class="row between"><h2>스냅샷</h2><div class="row">
+    <div class="row between"><h2>자료 목록</h2><div class="row">
       <label class="btn" id="lblUpSnap" hidden>PC 파일 올리기<input id="upSnap" type="file" accept=".json,application/json" hidden></label>
     </div></div>
-    <p class="hint">PC 원본에서 관리자 도구 ▸ DB 내보내기 ▸ 전체 (확정 + 추정)로 받은 .json 파일을 올립니다. 웹에서 저장하면 내가 웹에서 만든 스냅샷에 덮어쓰고(이전 저장 3개 보관), 「새 버전으로 저장」은 따로 남깁니다.</p>
+    <p class="hint">PC 원본에서 관리자 도구 ▸ DB 내보내기 ▸ 전체 (확정 + 추정)로 받은 .json 파일을 올립니다. 웹에서 저장하면 내가 웹에서 만든 추정자료에 덮어쓰고(이전 저장 3개 보관), 「새 버전으로 저장」은 따로 남깁니다.</p>
     <div id="engineLine" class="engine-line"></div>
-    <table class="grid"><thead><tr><th>기준월</th><th>시스템 버전</th><th>출처</th><th>메모</th><th>작성자</th><th>마지막 저장</th><th></th></tr></thead><tbody id="snapRows"></tbody></table>
+    <table class="grid"><thead><tr><th>추정자료명</th><th>기준월</th><th>출처</th><th>작성자</th><th>마지막 저장</th><th></th></tr></thead><tbody id="snapRows"></tbody></table>
   </section>
   <section class="card">
-    <div class="row between"><h2>수정요청</h2><span class="hint">스냅샷을 연 뒤 위쪽 「✏️ 수정요청」으로 접수하면 💬 소통으로 Claude에게 바로 넘어가고, 진행 막대는 Claude·Codex가 일하면서 적습니다.</span></div>
+    <div class="row between"><h2>수정요청</h2><span class="hint">추정자료를 연 뒤 위쪽 「✏️ 수정요청」으로 접수하면 💬 챗봇으로 Claude에게 바로 넘어가고, 진행 막대는 Claude·Codex가 일하면서 적습니다.</span></div>
     <table class="grid"><thead><tr><th>번호</th><th>제목</th><th>구분</th><th>진행</th><th>작성자</th><th>접수</th><th></th></tr></thead><tbody id="rqRows"></tbody></table>
   </section>
   <section class="card" id="adminCard" hidden>
@@ -83,9 +83,9 @@
 
 <div id="modal" class="modal" hidden><div class="modal-card"><h3 id="mTitle"></h3><div id="mBody"></div><div class="row end"><button id="mCancel">취소</button><button id="mOk" class="pri">확인</button></div></div></div>
 <!-- 소통: 어느 화면에서나 오른쪽 아래 버튼으로 여닫는 채팅 팝업(관리자만) -->
-<button id="chFab" class="chat-fab" title="소통 (hong · Claude · Codex)" hidden>💬<span id="chBadge" class="chat-badge" hidden></span></button>
+<button id="chFab" class="chat-fab" title="챗봇 (hong · Claude · Codex)" hidden>💬<span id="chBadge" class="chat-badge" hidden></span></button>
 <section class="card chat chat-pop" id="chCard" hidden>
-  <div class="chat-head"><b>💬 소통</b><span class="hint">hong · Claude · Codex</span><span class="grow"></span>
+  <div class="chat-head"><b>💬 챗봇</b><span class="hint">hong · Claude · Codex</span><span class="grow"></span>
     <span id="chRelay" class="ch-relay"></span><button id="chSet" title="모델 설정">⚙</button><button id="chPause">⏸ 멈춤</button><button id="chMine" title="나에게 온 대기 글만 보기">내 대기 0</button><button id="chClose" title="닫기 (Esc)">✕</button></div>
   <div id="chSetBox" class="chat-set" hidden>
     <label>Claude 모델<select id="chClaudeModel"><option value="">기본 (PC 설정)</option><option value="claude-opus-5-5">Opus 5.5</option><option value="claude-sonnet-5-5">Sonnet 5.5</option><option value="claude-fable-5-1">Fable 5.1</option><option value="claude-haiku-5-5">Haiku 5.5</option></select></label>
