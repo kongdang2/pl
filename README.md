@@ -10,17 +10,17 @@
   엔진이 열리기 전에 웹 표시(`__SONIK_WEB__`)와 메모리 저장소를 넣고, 그 스크립트는 스스로 지워 엔진 다운로드·HTML 저장에 섞이지 않게 함
 - `request-mode.js` — 「✏️ 수정요청」: 엔진 화면에서 셀을 골라 메모를 달고(위치·표 발췌·화면 캡처 자동) 요청서로 접수(`sk_requests`), 엑셀로 받기.
   엔진은 고치지 않고 바깥 페이지가 같은 출처 iframe 문서를 읽는다. 캡처 `vendor/html2canvas-1.4.1.min.js`, 엑셀 `vendor/exceljs-4.4.0.min.js`(MIT, 필요할 때만 불러옴)
-- `channel.js` — 「소통」: hong · Codex · Claude 가 주고받는 글(`sk_channel`, 상태 대기→답변→완료). 관리자(hong)와 `sk_agents` 에 등록된 에이전트 계정만 읽고 쓴다. 화면 오른쪽 아래 💬 버튼으로 여닫는 팝업이라 목록·시스템 화면 어디서나 쓴다(닫혀 있으면 새 글 수 배지). 📎·붙여넣기·끌어놓기로 이미지·파일 첨부(비공개 버킷 `sonik-channel`, 파일당 20MB, `supabase/007_channel_files.sql`). 수정요청을 접수하면 DB 트리거가 Claude 앞 「대기」 글을 올리고(`supabase/008_request_to_channel.sql`), 중계가 요청 원문을 `소통\요청\<번호>\요청.md` 로 풀어 넘기며 답의 「진행:」 줄로 진행 막대를 갱신한다.
+- `channel.js` — 「챗봇」: hong · Codex · Claude 가 주고받는 글(`sk_channel`, 상태 대기→답변→완료). 관리자(hong)와 `sk_agents` 에 등록된 에이전트 계정만 읽고 쓴다. 화면 오른쪽 아래 💬 버튼으로 여닫는 팝업이라 목록·시스템 화면 어디서나 쓴다(닫혀 있으면 새 글 수 배지). 📎·붙여넣기·끌어놓기로 이미지·파일 첨부(비공개 버킷 `sonik-channel`, 파일당 20MB, `supabase/007_channel_files.sql`). 수정요청을 접수하면 DB 트리거가 Claude 앞 「대기」 글을 올리고(`supabase/008_request_to_channel.sql`), 중계가 요청 원문을 `소통\요청\<번호>\요청.md` 로 풀어 넘기며 답의 「진행:」 줄로 진행 막대를 갱신한다.
   에이전트는 `sk_members` 에 없으므로 스냅샷·엔진·수정요청은 볼 수 없다. Claude 는 서비스 권한 SQL 로 쓴다
 - `pc/채널.cjs` — Codex 가 PC에서 채널을 읽고 쓰는 도구(PC 위치 `손익추정시스템\소통\채널.cjs`). 로그인 정보는 사용자 폴더 `.sonik-codex.json`
-- `pc/중계.cjs` · `pc/중계시작.cmd` — PC 중계(hong 결정 2026-10-30): 웹 「소통」의 Codex·Claude 앞 「대기」 글을 찾아 `codex exec` / `claude -p` 로 실행하고 답을 올린다.
+- `pc/중계.cjs` · `pc/중계시작.cmd` — PC 중계(hong 결정 2026-10-30): 웹 「챗봇」의 Codex·Claude 앞 「대기」 글을 찾아 `codex exec` / `claude -p` 로 실행하고 답을 올린다.
   한 번에 한 글, hong 없이 6번 넘게 주고받으면 멈추고 hong에게 묻는다, 웹 「⏸ 멈춤」(`sk_relay.paused`), 실행 출력은 PC `소통\중계로그`. 표·권한 `supabase/006_relay.sql`
   대화마다 담당별 세션을 이어 쓴다(답글 사슬, 또는 답글이 아니어도 직전 글과 2시간 안이면 같은 대화. `claude -p --resume` / `codex exec resume`, 세션 번호는 PC `소통\중계세션.json`). 이어 쓰기가 실패하거나 20번·3일을 넘으면 새 세션.
   hong 이 「모두」로 보내면 Claude → Codex 순서로 둘 다 답한다(둘의 답은 받는이 모두 · 안내, Codex 는 Claude 의 답까지 본다). 「모두」 대화에 답글을 달면 셋이 이어 간다.
   첨부는 PC `소통\첨부\<글번호>\` 에 내려받아 경로를 프롬프트에 넣는다(Codex 새 세션은 이미지를 `-i` 로도 붙인다).
   웹 제어: ⚙ 모델(`sk_relay.claude_model·codex_model·codex_effort`), 작업 중 말풍선의 ■ 중지(`stop_id`, 5초 안에 프로세스 나무째 종료), ⚡ 빠른 질문(`sk_channel.quick`, 본 작업과 따로 읽기 전용 실행). `supabase/009_relay_controls.sql`
   작업 과정: claude `--output-format stream-json --verbose`, codex `exec --json` 의 진행 이벤트를 한 줄 요약(읽기·고침·명령·찾기·말·생각)으로 바꿔 실행 중인 글의 `live` 에 2.5초마다 올린다(`supabase/010_channel_live.sql`). 웹은 작업 중 말풍선에 최근 5줄, 끝난 뒤 「작업 과정 N단계」로 펼쳐 본다. 에이전트 답은 문단·목록·굵게·코드 서식으로 보인다.
-  팝업은 가장자리 4곳·모서리 4곳을 끌어 크기를, 머리줄(💬 소통)을 끌어 위치를 바꾼다(내 브라우저에 기억, 손잡이나 머리줄을 두 번 누르면 처음 자리·크기).
+  팝업은 가장자리 4곳·모서리 4곳을 끌어 크기를, 머리줄(💬 챗봇)을 끌어 위치를 바꾼다(내 브라우저에 기억, 손잡이나 머리줄을 두 번 누르면 처음 자리·크기).
 - `pc/웹엔진갱신.cjs` · `pc/웹연결패치.py` — 웹 엔진 자동 갱신(hong 결정 2026-10-30, PC 위치 `손익추정시스템\웹테스트\`). 중계가 10분마다 부른다.
   AGENTS.md 의 운영본이 새 번호(vNNN)이고 `검증자료\vNNN\교차검증.md` 첫 줄이 「통과」이면 → 웹판 vNNN-1 생성(웹연결패치.py) → 웹 자동검증 extra 사본 동기화 → 웹 quick(FAIL·ERROR 0) → 빈 엔진 생성·검사 → 웹 현재 엔진 교체 → 이전 웹판은 `웹테스트\보관\` 로, 기록은 `웹테스트\검증자료\vNNN-1\` → 소통 채널에 결과.
   어느 단계든 실패하면 웹 엔진은 그대로 두고 채널로 알린다. 같은 운영본으로는 다시 하지 않고, 채널에 「웹 엔진 갱신 다시 해줘」로 다시 시킨다. 권한 `supabase/011_relay_engines.sql`(중계 계정은 vNNN-n 엔진만 올리고 바꿈).
