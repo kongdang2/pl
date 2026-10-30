@@ -353,6 +353,13 @@
       load();
       // 열려 있으면 10초마다, 닫혀 있으면 30초마다(배지용) 새로 읽는다
       ch.timer = setInterval(() => { ch.tick++; if (!document.hidden && (ch.open || ch.tick % 3 === 0)) load(); }, 10000);
+      // 새 글·답·작업 과정이 생기면 Realtime 으로 바로 새로 읽는다(migration 012). 몰려오면 0.8초에 한 번만. 위 주기 확인은 예비
+      if (!ch.rt) {
+        let t = null;
+        ch.rt = sb.channel('sk_channel_web').on('postgres_changes', { event: '*', schema: 'public', table: 'sk_channel' }, () => {
+          if (!t) t = setTimeout(() => { t = null; load(); }, 800);
+        }).subscribe();
+      }
     },
   };
 })();

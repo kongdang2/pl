@@ -570,12 +570,51 @@ async function tick(quick) {
   const [m] = await api('GET', 'sk_channel', q);
   if (m) await handle(m, ctl);
 }
+// 새 대기 글이 올라오면 Realtime 이 바로 깨운다(wake). 주기 확인(pollSec·8초)은 연결이 끊겼을 때를 위한 예비
+const wakers = new Set();
+function wake() { for (const w of [...wakers]) w(); }
 async function loop(quick, sec, once) {
   for (;;) {
     try { await tick(quick); } catch (e) { log('오류', quick ? '(빠른 질문)' : '', e.message); }
     if (once) break;
-    await new Promise((r) => setTimeout(r, sec * 1000));
+    await new Promise((r) => { let w; const t = setTimeout(() => { wakers.delete(w); r(); }, sec * 1000); w = () => { clearTimeout(t); wakers.delete(w); r(); }; wakers.add(w); });
   }
+}
+
+// ── Realtime(웹소켓): sk_channel 에 대기 글이 생기면 즉시 tick. migration 012. Node 22 이상(전역 WebSocket)에서만, 아니면 주기 확인만 ──
+function realtime() {
+  if (typeof WebSocket === 'undefined') { log('Realtime 없음(Node', process.version, ') → 주기 확인만'); return; }
+  let ws, hb, ref = 0, tokSent = null, backoff = 5;
+  const send = (topic, event, payload) => { try { ws.send(JSON.stringify({ topic, event, payload, ref: String(++ref) })); } catch (_) {} };
+  const TOPIC = 'realtime:sk_channel_relay';
+  const open = async () => {
+    try { if (!auth.tok || Date.now() > auth.exp) await login(); } catch (e) { log('Realtime 로그인 오류', e.message); }
+    ws = new WebSocket(URL_.replace(/^http/, 'ws') + '/realtime/v1/websocket?apikey=' + KEY + '&vsn=1.0.0');
+    ws.onopen = () => {
+      tokSent = auth.tok;
+      send(TOPIC, 'phx_join', { config: { broadcast: { self: false }, presence: { key: '' }, postgres_changes: [{ event: '*', schema: 'public', table: 'sk_channel' }], private: false }, access_token: auth.tok });
+      hb = setInterval(async () => {
+        send('phoenix', 'heartbeat', {});
+        // 토큰이 갱신되면 Realtime 에도 알려 준다(만료되면 알림이 끊긴다)
+        try { if (Date.now() > auth.exp) await login(); } catch (_) {}
+        if (auth.tok !== tokSent) { tokSent = auth.tok; send(TOPIC, 'access_token', { access_token: auth.tok }); }
+      }, 25000);
+    };
+    ws.onmessage = (ev) => {
+      let m; try { m = JSON.parse(ev.data); } catch (_) { return; }
+      if (m.event === 'phx_reply' && m.topic === TOPIC && m.payload) {
+        if (m.payload.status === 'ok') { if (backoff !== 5) log('Realtime 다시 연결됨'); else log('Realtime 연결됨(새 글 즉시 처리)'); backoff = 5; }
+        else log('Realtime 가입 실패', JSON.stringify(m.payload.response || {}).slice(0, 200));
+      }
+      if (m.event === 'postgres_changes') {
+        const r = (m.payload && m.payload.data && m.payload.data.record) || {};
+        if (r.status === '대기' && !r.run_state && ['Codex', 'Claude', '모두'].includes(r.recipient)) wake();
+      }
+    };
+    ws.onclose = () => { clearInterval(hb); setTimeout(open, backoff * 1000); backoff = Math.min(backoff * 2, 300); };
+    ws.onerror = () => { try { ws.close(); } catch (_) {} };
+  };
+  open();
 }
 
 (async () => {
@@ -592,5 +631,6 @@ async function loop(quick, sec, once) {
   const beat = () => setRelay({ heartbeat: new Date().toISOString() }).catch((e) => log('신호 오류', e.message));
   await beat();
   if (!once) setInterval(beat, 30000);
+  if (!once) realtime();
   await Promise.all([loop(false, conf.pollSec, once), loop(true, 8, once), engineLoop(once)]);
 })().catch((e) => { log('중단', e.message); process.exit(1); });
