@@ -6,6 +6,7 @@
 
 - window.__sonikWebBridge: 웹 페이지가 스냅샷(pnl-db/1 전체)을 확인창 없이 불러오고(applyDb), 현재 작업을 같은 형식으로 만들어 받는다(buildDb).
 - window.__SONIK_WEB__ 가 켜진 경우에만 Ctrl+S·저장을 「웹 스냅샷 저장」으로 돌린다. PC 파일(file://)에서는 동작이 바뀌지 않는다.
+- 웹 스냅샷(buildDb)에 사업계획 계획DB(PLAN_DB)도 담고, 불러올 때(applyDb) 되살린다. PC 「DB 내보내기」 파일에는 없으니 계획DB는 웹에서 한 번 탑재·저장하면 이후 따라다닌다.
 - 「DB 내보내기」 파일에 시스템 버전(sysVer)을 함께 적는다.
 - 계산 로직·데이터·<title>·script 블록 수 불변(assert).
 
@@ -57,6 +58,7 @@ NEW1 = r'''  /* [@VER@] 웹 버전 연결 — 웹 페이지(로그인 화면)가
         months:(S.session&&S.session.months)||[],
         payload:pnlDbPayload(),
         confirmed:(typeof CONFIRMED_DB!=='undefined' && CONFIRMED_DB)?JSON.parse(JSON.stringify(CONFIRMED_DB)):null,
+        plan:(typeof PLAN_DB!=='undefined' && PLAN_DB)?JSON.parse(JSON.stringify(PLAN_DB)):null,   /* 사업계획 계획DB(빈 엔진엔 없음) — 웹 스냅샷이 함께 들고 다닌다 */
         verify:verify
       };
     },
@@ -76,6 +78,8 @@ NEW1 = r'''  /* [@VER@] 웹 버전 연결 — 웹 페이지(로그인 화면)가
         Object.keys(CONFIRMED_DB).forEach(function(k){ delete CONFIRMED_DB[k]; });
         Object.assign(CONFIRMED_DB, db.confirmed);
       }
+      /* 계획DB: 스냅샷에 있으면 그것으로(브라우저 임시저장엔 쓰지 않음), 없으면 지금 것 유지 */
+      if(db.plan && typeof PLAN_DB!=='undefined'){ PLAN_DB=JSON.parse(JSON.stringify(db.plan)); }
       try{ if(window.__perfV17Bust) window.__perfV17Bust(); }catch(_){}
       if(typeof switchSite==='function'){ try{ switchSite(S.site); }catch(e){} }
       pnlRefreshAll();
