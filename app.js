@@ -86,7 +86,7 @@
     if (error) { toast('목록을 읽지 못했습니다: ' + error.message); return; }
     st.engine = eng; st.snaps = snaps || [];
     $('engineLine').innerHTML = eng
-      ? '웹 엔진: <b>' + esc(eng.ver) + '</b> · ' + esc(fmtT(eng.uploaded_at)) + ' 올림 <button id="btnEngDl" class="sm" title="데이터 없는 빈 엔진 HTML. PC에서 열고 DB 불러오기로 데이터를 넣습니다">빈 엔진 받기</button>'
+      ? '웹 엔진: <b>' + esc(eng.ver) + '</b> · ' + esc(fmtT(eng.uploaded_at)) + ' 올림'
       : '<span class="tag old">웹 엔진이 아직 없습니다</span> 관리자가 빈 엔진을 올려야 열 수 있습니다.';
     $('snapRows').innerHTML = st.snaps.length ? st.snaps.map((s) => {
       const old = eng && s.engine_ver && sameBase(s.engine_ver) !== sameBase(eng.ver);
@@ -101,7 +101,7 @@
     $('snapRows').querySelectorAll('[data-open]').forEach((b) => { b.onclick = () => openSnap(b.getAttribute('data-open')); });
     $('snapRows').querySelectorAll('[data-dl]').forEach((b) => { b.onclick = () => downloadSnap(b.getAttribute('data-dl')); });
     $('snapRows').querySelectorAll('[data-html]').forEach((b) => { b.onclick = () => offlineFromList(b.getAttribute('data-html')); });
-    if ($('btnEngDl')) $('btnEngDl').onclick = downloadEngine;
+    $('btnEngDl').disabled = !eng;
     $('snapRows').querySelectorAll('[data-bk]').forEach((b) => { b.onclick = () => showBackups(b.getAttribute('data-bk')); });
     $('snapRows').querySelectorAll('[data-del]').forEach((b) => { b.onclick = () => deleteSnap(b.getAttribute('data-del')); });
     if (st.me.role === 'admin') loadMembers();
@@ -347,6 +347,7 @@
   $('btnSave').onclick = () => saveFromEngine(false);
   $('btnSaveNew').onclick = () => saveFromEngine(true);
   $('btnOffline').onclick = downloadOffline;
+  $('btnEngDl').onclick = downloadEngine;
 
   // 이전 저장(숨은 백업 최대 3개) — 열면 백업본으로 열리고, 저장하면 새 스냅샷이 된다
   async function showBackups(id) {
