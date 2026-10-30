@@ -191,9 +191,7 @@
       + '<div class="meta">' + (m.status !== '안내' ? '<span class="st st-' + esc(m.status) + '">' + esc(m.status) + '</span>' : '')
       + (m.quick ? '<span class="q">⚡ 빠른 질문</span>' : '')
       + (m.run_state ? '<span class="run" title="' + esc(m.run_note || '') + '">' + (/^중지/.test(m.run_note || '') ? '■ 중지됨' : RUN[m.run_state]) + '</span>' : '')
-      + '<span>' + esc(hm(m.at)) + '</span></div></div>'
-      + '<div class="acts"><button data-re="' + m.id + '">답글</button>'
-      + (m.status === '대기' || m.status === '답변' ? '<button data-done="' + m.id + '">완료</button>' : '') + '</div></div>'
+      + '<span>' + esc(hm(m.at)) + '</span></div></div></div>'
       // 끝난 작업: 「작업 과정 N단계」를 눌러 펼친다
       + ((m.live || []).length && m.run_state !== '실행중' ? '<div class="cm them live-done"><button class="live-tg" data-live="' + m.id + '">' + (ch.liveOpen[m.id] ? '▾' : '▸') + ' 작업 과정 ' + m.live.length + '단계</button>'
         + (ch.liveOpen[m.id] ? '<div class="live-box">' + liveList(m.live, true) + '</div>' : '') + '</div>' : '');
@@ -243,11 +241,9 @@
     });
     const box = $('chRows'), atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
     box.innerHTML = html || '<p class="hint center">' + (ch.onlyMine ? '나에게 온 대기 글이 없습니다.' : '아직 대화가 없습니다. 아래에서 첫 글을 보내 보세요.') + '</p>';
-    box.querySelectorAll('[data-re]').forEach((b) => { b.onclick = () => setReply(+b.getAttribute('data-re')); });
     box.querySelectorAll('[data-live]').forEach((b) => { b.onclick = () => { const id = +b.getAttribute('data-live'); ch.liveOpen[id] = !ch.liveOpen[id]; render(false); }; });
     box.querySelectorAll('.live-box.all').forEach((x) => { x.scrollTop = x.scrollHeight; });
     box.querySelectorAll('[data-stop]').forEach((b) => { b.onclick = () => askStop(+b.getAttribute('data-stop')); });
-    box.querySelectorAll('[data-done]').forEach((b) => { b.onclick = () => setStatus(+b.getAttribute('data-done'), '완료'); });
     if (scroll || atBottom || !ch.lastTop) box.scrollTop = box.scrollHeight;
     ch.lastTop = 1;
   }
@@ -308,14 +304,16 @@
     let files = [];
     try { for (const f of ch.pending) files.push(await upload(f)); } catch (e) { $('chSend').disabled = false; alertMsg(e.message); return; }
     const { data: s } = await ch.sb.auth.getSession();
-    const re = ch.replyTo;
+    // 답글 단추는 없앴다(hong 10/30). 보내는 상대가 나에게 남긴 대기 글 중 마지막 것에 이어 쓰고, 그 대기 글들은 「답변」으로 바꾼다
+    const owed = ch.rows.filter((m) => MINE(m) && m.status === '대기' && m.sender !== ME && (ch.to === '모두' || m.sender === ch.to));
+    const re = ch.replyTo || owed[owed.length - 1] || null;
     const row = { sender: ME, recipient: ch.to, topic: re && re.topic ? re.topic : '', status: '대기',
       reply_to: re ? re.id : null, body, files, quick: ch.quick, author_email: (s.session.user.email || '').toLowerCase() };
     const { error } = await ch.sb.from('sk_channel').insert(row);
     $('chSend').disabled = false;
     if (error) { alertMsg('보내지 못했습니다: ' + error.message); return; }
     // 나에게 온 대기 글에 답하면 원글은 「답변」
-    if (re && MINE(re) && re.status === '대기') await setStatus(re.id, '답변');
+    for (const m of (re && MINE(re) && re.status === '대기' && !owed.includes(re) ? owed.concat(re) : owed)) await setStatus(m.id, '답변');
     $('chBody').value = ''; grow(); setReply(null); ch.pending = []; showPending(); setQuick(false);
     await load(); render(true);
   }
