@@ -358,6 +358,26 @@
     const tl = clone.querySelector('title'); if (tl) tl.textContent = (st.open && st.open.memo) || '손익추정';
     return '<!doctype html>\n' + clone.outerHTML;
   }
+  // 새 창에서 A4 가로 폭에 맞춰 줄인다. 엔진은 표를 감싼 상자(가로 스크롤) 폭으로 재서 긴 표(생산월보·제품수불부)가 오른쪽에서 잘렸다.
+  // 상자를 펼쳐 표 전체 폭을 재고, 인쇄 폭(1040px)과 같은 폭에서 배율을 정한다
+  const PRINT_W = 1040;
+  function fitPrint(doc) {
+    const t = doc.querySelector('.print-target'); if (!t) return;
+    if (!doc.getElementById('skPrintFit')) {
+      const css = doc.createElement('style'); css.id = 'skPrintFit';
+      css.textContent = '@page{size:A4 landscape;margin:8mm}html,body{margin:0!important;padding:0!important}'
+        + '.print-target{margin:0!important;padding-left:0!important;padding-right:0!important;width:auto!important;max-width:none!important}'
+        + '.print-target *{overflow:visible!important;max-height:none!important}'
+        + '.print-target th,.print-target td{transform:none!important}';
+      doc.head.appendChild(css);
+    }
+    doc.documentElement.style.width = PRINT_W + 'px';
+    t.style.setProperty('zoom', '1', 'important'); // 엔진 CSS(body.layout-notion #content_…{zoom:1!important})가 보통 배율을 덮어쓰므로 important 로 준다
+    const left = t.getBoundingClientRect().left;
+    let w = t.scrollWidth;
+    t.querySelectorAll('table').forEach((tb) => { const r = tb.getBoundingClientRect(); if (r.width) w = Math.max(w, r.right - left); });
+    if (w > PRINT_W) t.style.setProperty('zoom', String(Math.max(0.3, PRINT_W / w)), 'important');
+  }
   function hookPrint(win) {
     try {
       if (win.__skPrintHooked) return; win.__skPrintHooked = true;
@@ -369,7 +389,7 @@
           w = window.open('', '_blank');
           if (w) {
             w.document.open(); w.document.write(html); w.document.close();
-            const go = () => { try { w.focus(); w.print(); } catch (_) { /* 무시 */ } };
+            const go = () => { try { fitPrint(w.document); w.focus(); w.print(); } catch (_) { /* 무시 */ } };
             w.addEventListener('afterprint', () => { try { w.close(); } catch (_) { /* 무시 */ } });
             if (w.document.readyState === 'complete') setTimeout(go, 300); else w.addEventListener('load', () => setTimeout(go, 300));
           }
