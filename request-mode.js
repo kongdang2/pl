@@ -210,13 +210,13 @@
   // 캡처(html2canvas)는 outline을 그리지 않으므로 안쪽 box-shadow로 표시한다
   const CSS = '.sk-rq-on td,.sk-rq-on th{cursor:cell!important}.sk-rq-sel{box-shadow:inset 0 0 0 2px #D92D20!important;background-image:linear-gradient(rgba(217,45,32,.12),rgba(217,45,32,.12))!important}'
     + '.sk-rq-done{box-shadow:inset 0 0 0 2px #F79009!important}'
-    + '.sk-rq-area,.sk-rq-area *{cursor:crosshair!important;user-select:none!important}'
+    + '.sk-rq-area,.sk-rq-area *{cursor:crosshair!important;user-select:none!important;touch-action:none!important}'
     + '#' + BOX_ID + '{position:fixed;z-index:2147483647;border:2px solid #D92D20;background:rgba(217,45,32,.08);pointer-events:none}';
 
   function create(opts) {
     // opts: {getWin, onChange(state)}
     const st = { on: false, win: null, table: null, G: null, sel: new Map(), anchor: null, dragging: false, items: [], mode: 'cell', area: null, prev: null, a0: null, box: null };
-    let handlers = null;
+    let handlers = null, touchH = null;
 
     function clearMarks(cls) { if (!st.win) return; st.win.document.querySelectorAll('.' + cls).forEach((e) => e.classList.remove(cls)); }
     function paint() {
@@ -272,6 +272,11 @@
       area.busy = false;
       if (st.area === area) opts.onChange && opts.onChange(api);
     }
+    // 태블릿·휴대폰: 영역 끌기 모드에서는 손가락으로 끌면 화면이 밀리지 않고 사각형이 그려진다(셀 고르기로 돌아가면 다시 스크롤)
+    const pt = (ev) => { const t = (ev.touches && ev.touches[0]) || (ev.changedTouches && ev.changedTouches[0]); return t ? { button: 0, clientX: t.clientX, clientY: t.clientY, preventDefault: () => ev.preventDefault(), stopPropagation: () => ev.stopPropagation() } : null; };
+    function tStart(ev) { if (st.mode !== 'area' || ev.touches.length !== 1) return; const p = pt(ev); if (p) areaDown(p); }
+    function tMove(ev) { if (st.mode !== 'area' || !st.dragging) return; ev.preventDefault(); const p = pt(ev); if (p) areaMove(p); }
+    function tEnd(ev) { if (st.mode !== 'area' || !st.dragging) return; ev.preventDefault(); const p = pt(ev); if (p) areaUp(p); }
     function down(ev) {
       if (st.mode === 'area') return areaDown(ev);
       if (ev.button !== 0) return;
@@ -307,12 +312,15 @@
         d.body.classList.add('sk-rq-on');
         handlers = { mousedown: down, mouseover: over, mousemove: areaMove, mouseup: up, click: block, dblclick: block, focusin: block, keydown: key };
         Object.entries(handlers).forEach(([k, f]) => d.addEventListener(k, f, true));
+        touchH = { touchstart: tStart, touchmove: tMove, touchend: tEnd, touchcancel: tEnd };
+        Object.entries(touchH).forEach(([k, f]) => d.addEventListener(k, f, { capture: true, passive: false }));
         paint();
       },
       stop() {
         if (!st.on) return;
         const d = st.win.document;
         Object.entries(handlers || {}).forEach(([k, f]) => d.removeEventListener(k, f, true));
+        Object.entries(touchH || {}).forEach(([k, f]) => d.removeEventListener(k, f, { capture: true }));
         d.body.classList.remove('sk-rq-on', 'sk-rq-area'); drawBox(null); st.area = null; st.mode = 'cell';
         clearMarks('sk-rq-sel'); clearMarks('sk-rq-done');
         st.on = false; st.sel = new Map(); st.table = null;
