@@ -306,6 +306,7 @@
       st.mounted = await E.mount($('engineBox'), html, onEngineMsg);
       const info = st.mounted.bridge.info();
       st.open.base_ym = info.baseYm || ''; st.open.memo = '새 사업계획 ' + String(info.baseYm || '').slice(0, 4); renderBar();
+      trimHeader(st.mounted.win); navStart();
       log('bizplan_new', null, 'from=' + s.id);
     } catch (e) { toast(e.message, 8000); await loadList(); }
     busy(null);
@@ -316,7 +317,25 @@
   // 요약·손익 시뮬레이션의 「조정 전」 기준 = 파일을 연 시점. 엔진은 페이지가 열릴 때(웹에서는 빈 엔진일 때) 기준을 잡으므로,
   // 자료를 넣은 직후 엔진의 「DB 불러오기」와 똑같이 기준을 새로 잡는다(cpOpenReset). 없던 엔진이면 그냥 둔다
   function rebase(win) { try { if (win && typeof win.cpOpenReset === 'function') win.cpOpenReset(); } catch (_) { /* 무시 */ } }
-  function unmount() { rqClose(true); if (st.mounted) { st.mounted.dispose(); st.mounted = null; } $('engineBox').innerHTML = ''; st.open = null; }
+  // 웹에서는 엔진 둘째 줄(손익추정 시스템 제목줄)이 필요 없다: 저장은 사이트 저장 버튼, 파일 연결·다른 이름으로 저장·모바일 내보내기는 PC 파일용.
+  // 되돌리기·다시 실행·인쇄만 관리자 도구 줄 오른쪽으로 옮기고 제목줄은 숨긴다. 브라우저 임시저장(저장 상세)·HTML 파일 저장 상태 표시도 웹에선 뜻이 없어 숨긴다.
+  // 엔진 파일은 그대로 두고 화면에 띄울 때만 정리한다(웹 전용 표시)
+  function trimHeader(win) {
+    try {
+      const d = win.document, bar = d.getElementById('dbAdminBar'), head = d.getElementById('appHeader');
+      if (!bar || !head || head.dataset.skTrim) return;
+      const undo = d.getElementById('undoBtn'), redo = d.getElementById('redoBtn'), print = head.querySelector('[onclick^="printCurrentMenu"]');
+      const at = bar.querySelector('span[style*="flex:1"]');
+      const box = d.createElement('span'); box.style.cssText = 'display:inline-flex;gap:6px;align-items:center;';
+      [undo, redo, print].forEach((b) => { if (b) box.appendChild(b); });
+      if (at) at.after(box); else bar.appendChild(box);
+      head.dataset.skTrim = '1';
+      const css = d.createElement('style'); css.id = 'skWebTrim'; // 엔진이 배지를 다시 보이게 해도 숨김 유지
+      css.textContent = '#appHeader,#lsUsageBadge,#autoSaveBadge{display:none!important}';
+      d.head.appendChild(css);
+    } catch (_) { /* 엔진 구조가 다르면 그대로 둔다 */ }
+  }
+  function unmount() { navStop(); rqClose(true); if (st.mounted) { st.mounted.dispose(); st.mounted = null; } $('engineBox').innerHTML = ''; st.open = null; }
   // 추정자료 삭제(관리자만): 저장 파일·이전 저장(백업)까지 지운다. 되돌릴 수 없다
   async function deleteSnap(id) {
     const s = st.snaps.find((x) => x.id === id); if (!s) return;
@@ -360,6 +379,7 @@
       await new Promise((r) => setTimeout(r, 50));
       const r = st.mounted.bridge.applyDb(db);
       rebase(st.mounted.win);
+      trimHeader(st.mounted.win); navStart();
       const n = r.verify ? r.verify.diffs.length : null;
       log('open', s.id, (backup ? 'rev=' + backup.rev + ' ' : '') + (n == null ? 'verify 없음' : ('diffs=' + n)));
       if (!backup) await linkAfterOpen(s);
@@ -467,11 +487,55 @@
     });
     if (pick) openSnap(id, pick);
   }
-  $('btnBack').onclick = async () => {
+  async function leaveOk() {
     const draft = RQ.items.length ? ' 접수하지 않은 수정요청 항목 ' + RQ.items.length + '개도 사라집니다.' : '';
-    if ((canWrite() || draft) && !(await ask('목록으로', '<p>저장하지 않은 작업은 사라집니다.' + draft + ' 목록으로 갈까요?</p>'))) return;
-    loadList();
+    return !(canWrite() || draft) || await ask('목록으로', '<p>저장하지 않은 작업은 사라집니다.' + draft + ' 목록으로 갈까요?</p>');
+  }
+  // 목록으로: 엔진에서 쌓인 브라우저 기록만큼 되돌아가 목록 자리로 간다(그래야 앞으로·뒤로가 꼬이지 않는다)
+  $('btnBack').onclick = async () => {
+    if (!(await leaveOk())) return;
+    if (NAV.depth > 0) { NAV.leaving = true; history.go(-NAV.depth); } else loadList();
   };
+
+  // ── 브라우저 뒤로·앞으로 = 엔진 안에서 직전·직후 메뉴로 ──
+  // 엔진 메뉴(구역·사업장·메뉴·서브탭)가 바뀔 때마다 기록을 하나 쌓고, 뒤로·앞으로 하면 그 메뉴로 되돌린다.
+  // 처음 연 메뉴에서 더 뒤로 가면 목록으로(저장 안 한 작업 확인). 월 이동은 기록하지 않는다
+  const NAV = { timer: null, key: '', depth: 0, restoring: false, leaving: false };
+  function engLoc(win) {
+    try { return win.eval('(function(){var s=S;return {zone:s._zone||"",site:s.site||"",menu:s.menu||"",sub:(s._sub&&s._sub[s.menu])||""};})()'); } catch (_) { return null; }
+  }
+  const locKey = (l) => l ? [l.zone, l.site, l.menu, l.sub].join('|') : '';
+  function navPush(l) { NAV.depth++; NAV.key = locKey(l); history.pushState({ sk: 'eng', i: NAV.depth, loc: l }, ''); }
+  function navStart() { navStop(); NAV.depth = 0; navPush(engLoc(st.mounted.win)); NAV.timer = setInterval(navPoll, 400); }
+  function navStop() { clearInterval(NAV.timer); NAV.timer = null; }
+  function navPoll() {
+    if (!st.mounted || NAV.restoring) return;
+    const l = engLoc(st.mounted.win);
+    if (l && l.menu && locKey(l) !== NAV.key) navPush(l);
+  }
+  function navGo(l) {
+    const w = st.mounted.win, cur = () => engLoc(w) || {};
+    NAV.restoring = true;
+    try {
+      if (l.zone && cur().zone !== l.zone && typeof w.switchZone === 'function') w.switchZone(l.zone);
+      if (l.site && cur().site !== l.site && typeof w.switchSite === 'function') w.switchSite(l.site);
+      if (l.menu && cur().menu !== l.menu && typeof w.switchMenu === 'function') w.switchMenu(l.menu);
+      if (l.sub && cur().sub !== l.sub && typeof w.switchSub === 'function') w.switchSub(l.menu, l.sub);
+    } catch (_) { /* 엔진이 막으면 지금 메뉴에 둔다 */ }
+    NAV.key = locKey(cur()); NAV.restoring = false;
+  }
+  window.addEventListener('popstate', async (e) => {
+    const s = e.state || {}, inEngine = !$('vEngine').hidden && !!st.mounted;
+    if (s.sk === 'eng') {
+      if (inEngine && !NAV.leaving) { NAV.depth = s.i || 1; navGo(s.loc || {}); }
+      else if (!inEngine) history.replaceState({ sk: 'list' }, '');
+      return;
+    }
+    if (!inEngine) return;
+    if (NAV.leaving || await leaveOk()) { NAV.leaving = false; NAV.depth = 0; loadList(); }
+    else navPush(engLoc(st.mounted.win)); // 취소: 엔진에 그대로 있고 기록을 다시 쌓는다
+  });
+  history.replaceState({ sk: 'list' }, '');
   window.addEventListener('beforeunload', (e) => { if (!$('vEngine').hidden && canWrite()) { e.preventDefault(); e.returnValue = ''; } });
 
   // ── 수정요청 모드 ─────────────────────────────────
