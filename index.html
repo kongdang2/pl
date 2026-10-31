@@ -18,12 +18,14 @@
   <span class="grow"></span>
   <button id="btnReq" hidden title="셀을 골라 메모를 달고 수정요청서로 묶습니다">✏️ 수정요청</button>
   <button id="btnSave" class="pri" hidden title="Ctrl+S와 같음">저장</button>
-  <button id="btnSaveNew" hidden>새 버전으로 저장</button>
-  <button id="btnOffline" hidden title="지금 화면(저장하지 않은 작업 포함)을 PC에서 바로 여는 HTML 한 파일로 받습니다">💾 오프라인 파일</button>
+  <button id="btnSaveNew" class="more" hidden>새 버전으로 저장</button>
+  <button id="btnOffline" class="more" hidden title="지금 화면(저장하지 않은 작업 포함)을 PC에서 바로 여는 HTML 한 파일로 받습니다">💾 오프라인 파일</button>
   <button id="btnZoom" hidden title="휴대폰: 엔진 화면을 폭에 맞춰 보기 / 원래 크기로 옆으로 밀어 보기">🔍 확대</button>
   <button id="btnBack" hidden>목록으로</button>
+  <button id="btnHideBar" title="위 메뉴 줄을 숨기고 본문만 크게 봅니다. 왼쪽 아래 「▴ 메뉴」로 다시 엽니다">⤢ 본문만</button>
   <span id="who" class="who"></span>
-  <button id="btnLogout" hidden>로그아웃</button>
+  <button id="btnLogout" class="more" hidden>로그아웃</button>
+  <button id="btnMore" class="more-tg" title="나머지 메뉴">⋯</button>
 </header>
 
 <main id="vLogin" class="page" hidden>
@@ -104,6 +106,7 @@
     <p id="chMsg" class="msg" hidden></p>
   </div>
 </section>
+<button id="btnShowBar" class="show-bar" title="메뉴 줄 다시 보기" hidden>▴ 메뉴</button>
 <div id="toast" class="toast" hidden></div>
 <div id="busy" class="busy" hidden><div class="spin"></div><div id="busyText"></div></div>
 

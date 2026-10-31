@@ -53,6 +53,7 @@
   function renderBar() {
     $('who').textContent = st.user ? (st.user.email + (st.me ? ' · ' + ROLE[st.me.role] : '')) : '';
     $('btnLogout').hidden = !st.user;
+    $('btnMore').hidden = !st.user;
     const inEngine = !$('vEngine').hidden;
     $('btnBack').hidden = !inEngine;
     $('btnSave').hidden = $('btnSaveNew').hidden = !(inEngine && canWrite());
@@ -377,6 +378,17 @@
     f.style.cssText = 'width:' + ENGINE_W + 'px;height:' + Math.floor(box.clientHeight / k) + 'px;zoom:' + k; // zoom은 배치 크기도 줄여 옆 스크롤이 실제 폭만큼만 생긴다
   }
   $('btnZoom').onclick = () => { st.zoom = (st.zoom + 1) % ZOOMS.length; fitEngine(); };
+  // 메뉴 줄 숨기기(본문 위주로 보기). 화면 위 가운데 「▾ 메뉴」로 다시 연다. 내 브라우저에 기억
+  function setBarHidden(v) {
+    document.body.classList.toggle('nobar', v); $('btnShowBar').hidden = !v;
+    try { localStorage.setItem('sk_nobar', v ? '1' : ''); } catch (_) { /* 무시 */ }
+    fitEngine();
+  }
+  $('btnHideBar').onclick = () => setBarHidden(true);
+  // 좁은 화면: 덜 쓰는 단추(새 버전으로 저장·오프라인 파일·로그아웃)는 「⋯」 안에
+  $('btnMore').onclick = () => { $('bar').classList.toggle('open-more'); fitEngine(); };
+  $('btnShowBar').onclick = () => setBarHidden(false);
+  try { if (localStorage.getItem('sk_nobar') === '1') setBarHidden(true); } catch (_) { /* 무시 */ }
   new MutationObserver(fitEngine).observe($('engineBox'), { childList: true });
   window.addEventListener('resize', fitEngine);
   new MutationObserver(fitEngine).observe($('rqPanel'), { attributes: true, attributeFilter: ['hidden'] });

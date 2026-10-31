@@ -39,9 +39,12 @@
     set(v) { try { if (v) localStorage.setItem('sonik.ch.box', JSON.stringify(v)); else localStorage.removeItem('sonik.ch.box'); } catch (_) { /* 무시 */ } },
   };
   const MIN_W = 340, MIN_H = 320, wide = () => window.innerWidth > 600;
+  // 휴대폰(좁은 화면)은 폭은 화면 가득, 높이만 위쪽 손잡이로 조절(sonik.ch.mh)
+  const mh = { get() { try { return +localStorage.getItem('sonik.ch.mh') || 0; } catch (_) { return 0; } }, set(v) { try { if (v) localStorage.setItem('sonik.ch.mh', String(v)); else localStorage.removeItem('sonik.ch.mh'); } catch (_) { /* 무시 */ } } };
   function place(b) {
     const st = $('chCard').style;
-    if (!b || !wide()) { st.left = st.top = st.width = st.height = st.right = st.bottom = ''; return; }
+    if (!wide()) { st.left = st.top = st.width = st.right = st.bottom = ''; const h = mh.get(); st.height = h ? Math.min(Math.max(h, 220), window.innerHeight - 90) + 'px' : ''; return; }
+    if (!b) { st.left = st.top = st.width = st.height = st.right = st.bottom = ''; return; }
     const vw = window.innerWidth, vh = window.innerHeight;
     const w = Math.min(Math.max(b.w, MIN_W), vw - 16), h = Math.min(Math.max(b.h, MIN_H), vh - 16);
     const l = Math.min(Math.max(b.l, 8), vw - w - 8), t = Math.min(Math.max(b.t, 8), vh - h - 8);
@@ -52,9 +55,18 @@
     for (const d of ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']) {
       const g = document.createElement('div');
       g.className = 'ch-rz ch-rz-' + d;
-      g.ondblclick = () => { box.set(null); place(null); };
+      g.ondblclick = () => { box.set(null); mh.set(0); place(null); };
       g.onpointerdown = (e) => {
-        if (e.button !== 0 || !wide()) return;
+        if (e.button !== 0) return;
+        if (!wide()) { // 휴대폰: 위쪽 손잡이로 높이만
+          if (d !== 'n') return;
+          e.preventDefault(); g.setPointerCapture(e.pointerId);
+          const bottom = card.getBoundingClientRect().bottom;
+          const mv = (ev) => { const h = Math.min(Math.max(bottom - ev.clientY, 220), window.innerHeight - 90); card.style.height = h + 'px'; };
+          const up = () => { g.removeEventListener('pointermove', mv); g.removeEventListener('pointerup', up); g.removeEventListener('pointercancel', up); mh.set(Math.round(card.getBoundingClientRect().height)); };
+          g.addEventListener('pointermove', mv); g.addEventListener('pointerup', up); g.addEventListener('pointercancel', up);
+          return;
+        }
         e.preventDefault(); g.setPointerCapture(e.pointerId);
         const r = card.getBoundingClientRect(), x0 = e.clientX, y0 = e.clientY;
         document.body.classList.add('ch-resizing'); document.body.style.cursor = getComputedStyle(g).cursor;
