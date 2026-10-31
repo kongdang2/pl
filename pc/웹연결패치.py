@@ -82,6 +82,7 @@ NEW1 = r'''  /* [@VER@] 웹 버전 연결 — 웹 페이지(로그인 화면)가
       /* 계획DB: 스냅샷에 있으면 그것으로(브라우저 임시저장엔 쓰지 않음), 없으면 지금 것 유지 */
       if(db.plan && typeof PLAN_DB!=='undefined'){ PLAN_DB=JSON.parse(JSON.stringify(db.plan)); }
       try{ if(window.__dbBustCalcCaches) window.__dbBustCalcCaches(); if(window.__perfV17Bust) window.__perfV17Bust(); }catch(_){}
+      try{ if(window.cpOpenReset) window.cpOpenReset(); }catch(_){}   /* 요약 「조정 전」 기준 = 불러온 자료(DB 불러오기와 같게) */
       if(typeof switchSite==='function'){ try{ switchSite(S.site); }catch(e){} }
       pnlRefreshAll();
       var res=null;

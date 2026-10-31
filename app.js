@@ -313,6 +313,9 @@
   $('btnNewBiz').onclick = newBizplan;
   document.querySelectorAll('#listTabs button').forEach((b) => { b.onclick = () => { st.tab = b.getAttribute('data-t'); try { localStorage.setItem('sk_tab', st.tab); } catch (_) { /* 무시 */ } loadList(); }; });
 
+  // 요약·손익 시뮬레이션의 「조정 전」 기준 = 파일을 연 시점. 엔진은 페이지가 열릴 때(웹에서는 빈 엔진일 때) 기준을 잡으므로,
+  // 자료를 넣은 직후 엔진의 「DB 불러오기」와 똑같이 기준을 새로 잡는다(cpOpenReset). 없던 엔진이면 그냥 둔다
+  function rebase(win) { try { if (win && typeof win.cpOpenReset === 'function') win.cpOpenReset(); } catch (_) { /* 무시 */ } }
   function unmount() { rqClose(true); if (st.mounted) { st.mounted.dispose(); st.mounted = null; } $('engineBox').innerHTML = ''; st.open = null; }
   // 추정자료 삭제(관리자만): 저장 파일·이전 저장(백업)까지 지운다. 되돌릴 수 없다
   async function deleteSnap(id) {
@@ -356,6 +359,7 @@
       busy(KIND(s) + ' 불러오는 중…');
       await new Promise((r) => setTimeout(r, 50));
       const r = st.mounted.bridge.applyDb(db);
+      rebase(st.mounted.win);
       const n = r.verify ? r.verify.diffs.length : null;
       log('open', s.id, (backup ? 'rev=' + backup.rev + ' ' : '') + (n == null ? 'verify 없음' : ('diffs=' + n)));
       if (!backup) await linkAfterOpen(s);
