@@ -306,7 +306,7 @@
       st.mounted = await E.mount($('engineBox'), html, onEngineMsg);
       const info = st.mounted.bridge.info();
       st.open.base_ym = info.baseYm || ''; st.open.memo = '새 사업계획 ' + String(info.baseYm || '').slice(0, 4); renderBar();
-      trimHeader(st.mounted.win); navStart();
+      trimHeader(st.mounted.win); hookPrint(st.mounted.win); navStart();
       log('bizplan_new', null, 'from=' + s.id);
     } catch (e) { toast(e.message, 8000); await loadList(); }
     busy(null);
@@ -320,6 +320,74 @@
   // 웹에서는 엔진 둘째 줄(손익추정 시스템 제목줄)이 필요 없다: 저장은 사이트 저장 버튼, 파일 연결·다른 이름으로 저장·모바일 내보내기는 PC 파일용.
   // 되돌리기·다시 실행·인쇄만 관리자 도구 줄 오른쪽으로 옮기고 제목줄은 숨긴다. 브라우저 임시저장(저장 상세)·HTML 파일 저장 상태 표시도 웹에선 뜻이 없어 숨긴다.
   // 엔진 파일은 그대로 두고 화면에 띄울 때만 정리한다(웹 전용 표시)
+  // ── 인쇄(웹) ── 엔진 「🖨 인쇄」는 화면 안 틀(iframe)에서 인쇄해서 브라우저에 따라 한 장만 나오거나 잘린다.
+  // 엔진이 인쇄 준비(대상 화면·머리말·폭 맞춤)를 마친 순간 그 모습을 새 창에 그대로 옮겨 인쇄한다(본문 전체가 여러 장으로 나뉘어 나온다).
+  // 머리말에 자료명·기준월을 더한다. Ctrl+P 도 같은 인쇄로 돌린다. 새 창이 막히면 엔진 원래 인쇄를 쓴다
+  function printTitle() {
+    const o = st.open || {};
+    return (o.memo || '(이름 없음)') + ' · 기준월 ' + (o.base_ym || '-') + ' · ' + (o.source === 'pc' ? 'PC 원본' : o.source === 'new' ? '새 ' + KIND(o) : '웹 저장') + ' · 출력 ' + fmtT(new Date().toISOString());
+  }
+  function printCopy(win) {
+    const d = win.document;
+    const hdr = d.getElementById('printHeader');
+    if (hdr && !hdr.querySelector('.sk-print-src')) {
+      const p = d.createElement('div'); p.className = 'sk-print-src';
+      p.style.cssText = 'font-size:12px;color:#555;margin:0 0 4px;font-weight:600;';
+      p.textContent = printTitle(); hdr.insertBefore(p, hdr.firstChild);
+    }
+    const clone = d.documentElement.cloneNode(true);
+    // 입력칸 값·선택은 속성이 아니라서 복사본에 따로 적는다
+    const a = d.querySelectorAll('input,select,textarea'), b = clone.querySelectorAll('input,select,textarea');
+    a.forEach((el, i) => {
+      const c = b[i]; if (!c) return;
+      if (el.tagName === 'SELECT') Array.from(c.options).forEach((op, j) => { if (el.options[j] && el.options[j].selected) op.setAttribute('selected', ''); else op.removeAttribute('selected'); });
+      else if (el.type === 'checkbox' || el.type === 'radio') { if (el.checked) c.setAttribute('checked', ''); else c.removeAttribute('checked'); }
+      else if (el.tagName === 'TEXTAREA') c.textContent = el.value;
+      else c.setAttribute('value', el.value);
+    });
+    // 그래프(canvas)는 그림으로 바꿔 넣는다
+    const ca = d.querySelectorAll('canvas'), cb = clone.querySelectorAll('canvas');
+    ca.forEach((el, i) => { const c = cb[i]; if (!c) return; try { const img = d.createElement('img'); img.src = el.toDataURL('image/png'); img.style.cssText = el.style.cssText; img.width = el.width; img.height = el.height; img.style.width = el.getBoundingClientRect().width + 'px'; c.replaceWith(img); } catch (_) { /* 무시 */ } });
+    clone.querySelectorAll('script,iframe').forEach((n) => n.remove());
+    // 인쇄 대상이 아닌 화면은 빼서 가볍게(인쇄 CSS도 어차피 숨긴다)
+    const tgt = clone.querySelector('.print-target');
+    // 본문(인쇄 대상)과 그 위 줄기만 남기고 나머지(메뉴·창·확인 팝업 등)는 뺀다. 스타일은 남긴다
+    if (tgt) for (let n = tgt; n && n.parentElement && n !== clone; n = n.parentElement) {
+      Array.from(n.parentElement.children).forEach((sib) => { if (sib !== n && !/^(STYLE|LINK|HEAD|META|TITLE)$/.test(sib.tagName)) sib.remove(); });
+    }
+    const tl = clone.querySelector('title'); if (tl) tl.textContent = (st.open && st.open.memo) || '손익추정';
+    return '<!doctype html>\n' + clone.outerHTML;
+  }
+  function hookPrint(win) {
+    try {
+      if (win.__skPrintHooked) return; win.__skPrintHooked = true;
+      const orig = win.print.bind(win);
+      win.print = function () {
+        let w = null;
+        try {
+          const html = printCopy(win);
+          w = window.open('', '_blank');
+          if (w) {
+            w.document.open(); w.document.write(html); w.document.close();
+            const go = () => { try { w.focus(); w.print(); } catch (_) { /* 무시 */ } };
+            w.addEventListener('afterprint', () => { try { w.close(); } catch (_) { /* 무시 */ } });
+            if (w.document.readyState === 'complete') setTimeout(go, 300); else w.addEventListener('load', () => setTimeout(go, 300));
+          }
+        } catch (e) { w = null; }
+        try { const h = win.document.querySelector('#printHeader .sk-print-src'); if (h) h.remove(); } catch (_) { /* 무시 */ }
+        if (w) { try { win.dispatchEvent(new win.Event('afterprint')); } catch (_) { /* 무시 */ } } // 엔진 인쇄 준비 원상복구
+        else orig();
+      };
+      const ctrlP = (e) => {
+        if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'p' || e.key === 'P')) {
+          if (!st.mounted || st.mounted.win !== win || typeof win.printCurrentMenu !== 'function') return;
+          e.preventDefault(); e.stopPropagation(); win.printCurrentMenu();
+        }
+      };
+      win.document.addEventListener('keydown', ctrlP, true);
+      if (!hookPrint.top) { hookPrint.top = true; document.addEventListener('keydown', (e) => { if (st.mounted && !$('vEngine').hidden && st.mounted.win.__skPrintHooked) { const f = st.mounted.win; if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'p' || e.key === 'P') && typeof f.printCurrentMenu === 'function') { e.preventDefault(); f.printCurrentMenu(); } } }, true); }
+    } catch (_) { /* 엔진 구조가 다르면 그대로 둔다 */ }
+  }
   function trimHeader(win) {
     try {
       const d = win.document, bar = d.getElementById('dbAdminBar'), head = d.getElementById('appHeader');
@@ -379,7 +447,7 @@
       await new Promise((r) => setTimeout(r, 50));
       const r = st.mounted.bridge.applyDb(db);
       rebase(st.mounted.win);
-      trimHeader(st.mounted.win); navStart();
+      trimHeader(st.mounted.win); hookPrint(st.mounted.win); navStart();
       const n = r.verify ? r.verify.diffs.length : null;
       log('open', s.id, (backup ? 'rev=' + backup.rev + ' ' : '') + (n == null ? 'verify 없음' : ('diffs=' + n)));
       if (!backup) await linkAfterOpen(s);
