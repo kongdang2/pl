@@ -92,7 +92,7 @@
     st.engine = eng; st.snaps = snaps || [];
     const biz = st.tab === 'bizplan', rows = st.snaps.filter((s) => modeOf(s) === st.tab);
     document.querySelectorAll('#listTabs button').forEach((b) => b.classList.toggle('on', b.getAttribute('data-t') === st.tab));
-    $('lblUpSnap').hidden = biz || !canWrite();
+    $('lblUpSnap').hidden = !canWrite();
     $('btnNewBiz').hidden = !biz || !canWrite();
     $('btnNewBiz').disabled = !eng;
     $('listHint').hidden = biz; $('bizHint').hidden = !biz;
@@ -233,8 +233,11 @@
     const f = ev.target.files[0]; ev.target.value = ''; if (!f) return;
     let db;
     try { db = JSON.parse(await f.text()); } catch (e) { toast('JSON을 읽지 못했습니다: ' + e.message); return; }
-    const bad = E.checkSnapshot(db); if (bad) { toast(bad, 6000); return; }
-    const memo = await askName('PC 파일 올리기', '<p>' + esc(f.name) + '</p><p class="hint">기준월 ' + esc(db.baseYm) + ' · ' + esc(db.author || '') + '</p>');
+    const biz = st.tab === 'bizplan';
+    const bad = E.checkSnapshot(db, biz ? 'bizplan' : 'sonik'); if (bad) { toast(bad, 6000); return; }
+    // 사업계획: 다시 열 때 사업계획 모드로 띄울 계획연도(없으면 기준월의 해)·동봉 전년자료(있으면)를 웹 저장본과 같은 자리에 둔다
+    if (biz && !db.bizplanYear) db.bizplanYear = +String(db.baseYm || '').slice(0, 4) || null;
+    const memo = await askName(biz ? '사업계획 올리기' : 'PC 파일 올리기', '<p>' + esc(f.name) + '</p><p class="hint">' + (biz ? '계획연도 ' + esc(db.bizplanYear) + ' · ' : '') + '기준월 ' + esc(db.baseYm) + ' · ' + esc(db.author || '') + '</p>', biz ? '사업계획명' : undefined);
     if (memo === null) return;
     busy('올리는 중…');
     try { const id = await putSnapshot(db, { source: 'pc', memo }); log('upload_pc', id, f.name); toast('올렸습니다.'); await loadList(); }

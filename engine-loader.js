@@ -64,10 +64,13 @@
     const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
     return Array.from(new Uint8Array(h)).map((b) => b.toString(16).padStart(2, '0')).join('');
   }
-  function checkSnapshot(db) {
+  // want: 'sonik'(손익추정 목록에 올림, 기본) / 'bizplan'(사업계획 목록에 올림)
+  function checkSnapshot(db, want) {
+    want = want || 'sonik';
     if (!db || db.format !== 'pnl-db/1') return 'DB 내보내기(pnl-db/1) 파일이 아닙니다';
     if (!db.payload || !db.confirmed) return '「DB 내보내기 ▸ 전체 (확정 + 추정)」 파일만 올릴 수 있습니다';
-    if (db.mode && db.mode !== 'sonik') return '손익추정 파일이 아닙니다(사업계획 백업)';
+    const mode = db.mode || 'sonik';
+    if (mode !== want) return want === 'sonik' ? '손익추정 파일이 아닙니다(사업계획 백업) — 「사업계획」 탭에서 올리세요' : '사업계획 파일이 아닙니다(손익추정 백업) — 「손익추정」 탭에서 올리세요';
     return null;
   }
 
