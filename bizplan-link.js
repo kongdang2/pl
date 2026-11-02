@@ -82,5 +82,56 @@
     return 'ok';
   }
 
-  window.SonikBizplan = { capture, makeHtml, shell, offlineFlag, extras, applyAnnual, applyPlan, isBiz, planYearOf };
+  // ── 연동 손익추정의 12월 값으로 다시 이어받기(hong 2026-11-02) ──
+  // 손익추정이 갱신되면 사업계획을 처음부터 다시 만들지 않고, 그 손익추정의 직전 12월 값만 다시 넣는다.
+  // 넣는 값은 「📘 새 사업계획」(엔진 「사업계획 시스템 다운로드」)이 처음 만들 때 넣는 것과 같다:
+  //  ① 12월 기말재고 → 계획연도 1월 기초(온산 생산월보·원료/제품 수불부·기초재공, 울산 원료/제품 수불부·기초재공·생산 원단위)
+  //  ② 12월 추정 입력(판매·구매·수율·원가 등) → 손익시뮬레이션 기준(직전 12월)
+  //  ③ 그해 연간 실적·추정 → 버전 비교 「당해」 열
+  // 계획 1~12월 입력·기준가격 입력은 그대로 둔다(기준가격은 빈 달만 12월 값으로 채움, 처음 만들 때와 같음)
+  const SEED_STORES = { onsan: ['confirmedMatflow', 'confirmedProdFlow', 'confirmedFlow', 'confirmedPrice', 'confirmedMfg'], ulsan: ['confirmedUlsanMat', 'confirmedUlsanProdFlow', 'confirmedUlsanMfg'], head: ['confirmedLagSeed158'] };
+  function scriptJson(html, id, prefix) {
+    const tag = '<script id="' + id + '">' + prefix, i = html.indexOf(tag); if (i < 0) return null;
+    const a = i + tag.length, b = html.indexOf(';</script>', a); if (b < 0) return null;
+    try { return JSON.parse(html.slice(a, b)); } catch (_) { return null; }
+  }
+  async function seedPack(win, py) {
+    let pk = null;
+    try { // 새 사업계획 만들기와 똑같이 만든 뒤 그 안의 묶음을 꺼낸다(엔진은 계획연도 = 올해+1 로 만든다)
+      const html = await makeHtml(win), f = scriptJson(html, '__BIZPLAN_FLAG__', 'window.__BIZPLAN__=');
+      if (f && +f.planYear === +py && f.seed) pk = { seed: f.seed, prevYear: f.prevYear || null, confirmed: scriptJson(html, '__SAVED_CONFIRMED__', 'window.__CONFIRMED_DATA__=') };
+    } catch (_) { /* 아래 직접 계산 */ }
+    if (!pk) { // 계획연도가 올해+1 이 아니면 같은 엔진 함수를 그 연도로 직접 부른다
+      const sd = win.bizExportSeed(py), di = win.bizDecInputFrom(win.eval('S'), (py - 1) + '-12');
+      if (win._bizDecHasTxn(di)) sd.anchors.decInput = di;
+      pk = { seed: sd.anchors, prevYear: null, confirmed: sd.confPayload };
+    }
+    try { pk.annual = win.p88PackYear(py - 1); } catch (_) { pk.annual = null; }
+    return pk;
+  }
+  // 열린 사업계획(win)에 넣는다. 돌려주는 값 = 넣은 것 요약
+  function applySeedPack(win, pk, srcLabel) {
+    if (!isBiz(win)) throw new Error('사업계획이 아닙니다');
+    if (win.__LT_ON) throw new Error('중장기계획 화면에서는 할 수 없습니다 — 차년도계획으로 돌아와서 하세요');
+    const py = +win.__BIZPLAN__.planYear, pd = (py - 1) + '-12', out = { inv: 0, dec: 0, annual: false };
+    const sd = pk.seed || {};
+    ['mat', 'flow', 'pf', 'umat', 'upf'].forEach((k) => { out.inv += (sd[k] || []).length; });
+    win._bizApplySeed(sd, py + '-01');
+    // 1월 기초는 엔진이 직전 12월 「확정」 기말을 먼저 보므로 그 칸도 새 값으로 바꾼다(없어진 항목은 지운다)
+    const CD = win.eval('CONFIRMED_DB'), conf = pk.confirmed || {};
+    Object.keys(SEED_STORES).forEach((site) => SEED_STORES[site].forEach((store) => {
+      const nv = conf[site] && conf[site][store] && conf[site][store][pd];
+      CD[site] = CD[site] || {};
+      if (nv) { CD[site][store] = CD[site][store] || {}; CD[site][store][pd] = JSON.parse(JSON.stringify(nv)); }
+      else if (CD[site][store]) delete CD[site][store][pd];
+    }));
+    if (sd.decInput && win._bizDecHasTxn(sd.decInput)) { sd.decInput.src = srcLabel; out.dec = win._bizApplyDecInput(sd.decInput); }
+    if (pk.prevYear && +pk.prevYear.year === py - 1) { win.__BIZPLAN__.prevYear = pk.prevYear; }
+    if (pk.annual) out.annual = applyAnnual(win, pk.annual);
+    try { if (win.__dbBustCalcCaches) win.__dbBustCalcCaches(); if (win.__perfV17Bust) win.__perfV17Bust(); } catch (_) { /* 무시 */ }
+    ['refresh', 'saveToStorage', 'syncUndoBaseline'].forEach((fn) => { try { if (typeof win[fn] === 'function') win[fn](); } catch (_) { /* 무시 */ } });
+    return out;
+  }
+
+  window.SonikBizplan = { capture, makeHtml, shell, offlineFlag, extras, applyAnnual, applyPlan, isBiz, planYearOf, seedPack, applySeedPack };
 })();

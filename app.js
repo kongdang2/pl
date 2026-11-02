@@ -7,7 +7,7 @@
   const sb = window.supabase.createClient(C.url, C.key);
   const $ = (id) => document.getElementById(id);
   const ROLE = { admin: '관리자', writer: '작성자', viewer: '열람자' };
-  const st = { user: null, me: null, engine: null, snaps: [], open: null, mounted: null, tab: 'sonik' };
+  const st = { user: null, me: null, engine: null, snaps: [], open: null, mounted: null, tab: 'sonik', link: null };
   try { if (localStorage.getItem('sk_tab') === 'bizplan') st.tab = 'bizplan'; } catch (_) { /* 기본 손익추정 */ }
   const modeOf = (s) => (s && s.mode) || 'sonik';
   const KIND = (s) => modeOf(s) === 'bizplan' ? '사업계획' : '추정자료';
@@ -58,10 +58,11 @@
     $('btnBack').hidden = !inEngine;
     $('btnSave').hidden = $('btnSaveNew').hidden = !(inEngine && canWrite());
     $('btnReq').hidden = !inEngine;
+    $('btnLink').hidden = !(inEngine && st.open && modeOf(st.open) === 'bizplan' && canWrite());
     $('btnOffline').hidden = !inEngine;
     $('btnZoom').hidden = !inEngine;
     const K = st.open ? KIND(st.open) : '';
-    $('ctx').textContent = inEngine && st.open ? ((K === '사업계획' ? '📘 ' : '') + st.open.base_ym + ' · ' + (st.open.memo || '(이름 없음)') + (st.open.backupOf ? ' · 백업본' : isOwnWeb(st.open) ? ' · 저장하면 이 ' + K + '에 덮어씀' : ' · 첫 저장은 새 ' + K)) : '';
+    $('ctx').textContent = inEngine && st.open ? ((K === '사업계획' ? '📘 ' : '') + st.open.base_ym + ' · ' + (st.open.memo || '(이름 없음)') + (K === '사업계획' && st.link ? ' · 🔗 ' + (st.link.memo || '') : '') + (st.open.backupOf ? ' · 백업본' : isOwnWeb(st.open) ? ' · 저장하면 이 ' + K + '에 덮어씀' : ' · 첫 저장은 새 ' + K)) : '';
   }
   $('btnLogin').onclick = async () => {
     $('loginMsg').textContent = '';
@@ -261,20 +262,34 @@
     if (modeOf(s) !== 'bizplan') return html;
     return B.shell(html, db.bizplanYear || +String(s.base_ym || db.baseYm || '').slice(0, 4), db.bizPrev);
   }
-  // 열고 나서 상대편 최신 웹 저장본의 자료를 넣는다: 손익추정 ← 최신 사업계획 DB, 사업계획 ← 최신 손익추정 연간 비교자료
+  // 열고 나서 상대편 웹 저장본의 자료를 넣는다: 손익추정 ← 최신 사업계획 DB, 사업계획 ← 연동 손익추정(고른 것, 없으면 최신)의 연간 비교자료
+  const bizSrcs = (py) => st.snaps.filter((x) => modeOf(x) === 'sonik' && String(x.base_ym || '').slice(0, 4) === String(py - 1))
+    .sort((a, b) => String(b.updated_at || b.created_at).localeCompare(String(a.updated_at || a.created_at)));
   async function linkAfterOpen(s) {
     const win = st.mounted && st.mounted.win; if (!win) return;
     const biz = modeOf(s) === 'bizplan';
     const py = biz ? +win.__BIZPLAN__.planYear : 0;
-    const cand = st.snaps.filter((x) => x.id !== s.id && modeOf(x) === (biz ? 'sonik' : 'bizplan') && (!biz || String(x.base_ym || '').slice(0, 4) === String(py - 1)))
-      .sort((a, b) => String(b.updated_at || b.created_at).localeCompare(String(a.updated_at || a.created_at)));
-    const src = cand[0]; if (!src) return;
+    let src = null, note = '';
+    if (biz) {
+      const cand = bizSrcs(py);
+      src = st.link && st.snaps.find((x) => x.id === st.link.id && modeOf(x) === 'sonik');
+      if (st.link && !src) note = ' (연동해 둔 손익추정 「' + (st.link.memo || '') + '」이 목록에 없어 최신 것을 썼습니다)';
+      if (!src) src = cand[0];
+    } else {
+      src = st.snaps.filter((x) => x.id !== s.id && modeOf(x) === 'bizplan')
+        .sort((a, b) => String(b.updated_at || b.created_at).localeCompare(String(a.updated_at || a.created_at)))[0];
+    }
+    if (!src) return;
     busy('연동 자료 받는 중…');
     try {
       const db = await fetchSnapDb(src), when = fmtT(src.updated_at || src.created_at), name = '「' + (src.memo || src.base_ym) + '」(' + when + ')';
       if (biz) {
-        if (db.annual && B.applyAnnual(win, db.annual)) { toast('손익추정 ' + name + '의 ' + (py - 1) + '년 실적·추정을 「당해」 비교자료로 넣었습니다.', 6000); log('link_annual', s.id, src.id); }
-        else toast('최신 손익추정 ' + name + '에 연간 비교자료가 없어 넣지 않았습니다. 그 자료를 웹에서 한 번 저장하면 생깁니다.', 7000);
+        if (db.annual && B.applyAnnual(win, db.annual)) { toast('손익추정 ' + name + '의 ' + (py - 1) + '년 실적·추정을 「당해」 비교자료로 넣었습니다.' + note, 6000); log('link_annual', s.id, src.id); }
+        else toast('손익추정 ' + name + '에 연간 비교자료가 없어 넣지 않았습니다. 그 자료를 웹에서 한 번 저장하면 생깁니다.' + note, 7000);
+        // 연동 손익추정이 마지막으로 이어받은 뒤 다시 저장됐으면 알린다(1월 기초·12월 기준은 자동으로 바꾸지 않는다)
+        if (st.link && st.link.id === src.id && st.link.synced && String(src.updated_at || '') > String(st.link.synced)) {
+          setTimeout(() => toast('연동 손익추정 ' + name + '이 이 사업계획이 12월 값을 이어받은 뒤에 다시 저장됐습니다. 「🔗 연동 손익추정」에서 12월 값을 다시 이어받을 수 있습니다.', 9000), 6200);
+        }
       } else if (db.planDb) {
         const r = B.applyPlan(win, db.planDb), y = B.planYearOf(db.planDb);
         if (r === 'ok') { toast('사업계획 ' + name + '의 ' + y + '년 계획을 차이분석 계획으로 넣었습니다.', 6000); log('link_plan', s.id, src.id); }
@@ -283,6 +298,55 @@
     } catch (e) { toast('연동 자료를 넣지 못했습니다: ' + e.message, 7000); }
     busy(null);
   }
+  // 🔗 연동 손익추정: 사업계획이 이어받을 손익추정을 고르고(저장하면 기억), 원하면 그 12월 값으로 다시 이어받는다
+  async function linkDialog() {
+    const win = st.mounted && st.mounted.win; if (!win || !B.isBiz(win)) return;
+    const py = +win.__BIZPLAN__.planYear, cand = bizSrcs(py);
+    if (!cand.length) { toast((py - 1) + '년 기준 손익추정 자료가 웹에 없습니다.', 6000); return; }
+    const cur = st.link && st.link.id;
+    const ok = await ask('🔗 연동 손익추정', '<p class="hint">이 ' + py + '년 사업계획이 이어받을 ' + (py - 1) + '년 손익추정을 고릅니다. 저장하면 기억해서, 다음에 열 때도 이 손익추정의 연간 실적·추정을 「당해」 비교자료로 넣습니다.</p>'
+      + '<label>손익추정<select id="lnkSrc">' + cand.map((x) => '<option value="' + x.id + '"' + (x.id === cur ? ' selected' : '') + '>' + esc(x.base_ym + ' · ' + (x.memo || '(이름 없음)') + ' · ' + fmtT(x.updated_at || x.created_at) + (x.id === cur ? ' (지금 연동)' : '')) + '</option>').join('') + '</select></label>'
+      + (st.link && st.link.synced ? '<p class="hint">지금 연동: 「' + esc(st.link.memo || '') + '」 · 12월 값 이어받은 때 그 자료 저장시각 ' + esc(fmtT(st.link.synced)) + '</p>' : '')
+      + '<label style="display:flex;gap:6px;align-items:flex-start;margin-top:8px"><input type="checkbox" id="lnkSeed" checked style="width:auto;margin-top:3px"><span>이 손익추정의 <b>' + (py - 1) + '년 12월 값으로 다시 이어받기</b><br><span class="hint">12월 기말재고 → ' + py + '년 1월 기초재고(온산·울산 수불부·생산월보·기초재공·울산 원단위), 12월 추정 입력 → 손익시뮬레이션 기준, 연간 실적·추정 → 「당해」 열을 새 값으로 바꿉니다. 계획 1~12월 입력은 그대로입니다(기준가격은 빈 달만 채움). 저장해야 남고, 저장 전이면 「목록으로」로 되돌릴 수 있습니다.</span></span></label>');
+    if (!ok) return;
+    const src = cand.find((x) => x.id === ($('lnkSrc') || {}).value) || cand[0];
+    const seed = !!($('lnkSeed') || {}).checked;
+    const name = '「' + (src.memo || src.base_ym) + '」(' + fmtT(src.updated_at || src.created_at) + ')';
+    if (!seed) {
+      busy('연동 자료 받는 중…');
+      try {
+        const db = await fetchSnapDb(src);
+        st.link = { id: src.id, memo: src.memo || src.base_ym, synced: st.link && st.link.id === src.id ? st.link.synced : null };
+        const a = db.annual && B.applyAnnual(win, db.annual);
+        toast('연동 손익추정을 ' + name + '으로 바꿨습니다' + (a ? '(「당해」 비교자료도 이 자료로 바꿈)' : '') + '. 저장하면 기억합니다.', 7000);
+        log('link_set', st.open.id, src.id);
+      } catch (e) { toast('연동 자료를 받지 못했습니다: ' + e.message, 8000); }
+      busy(null); renderBar(); return;
+    }
+    const box = document.createElement('div'); box.className = 'offscreen-engine'; document.body.appendChild(box);
+    let m = null, pk = null;
+    busy('손익추정 자료를 여는 중… (10~30초)');
+    try {
+      const [eh, db] = await Promise.all([getEngineHtml(), fetchSnapDb(src)]);
+      m = await E.mount(box, eh, () => {});
+      m.bridge.applyDb(db);
+      busy(py - 1 + '년 12월 값 모으는 중…');
+      pk = await B.seedPack(m.win, py);
+    } catch (e) { toast('손익추정 자료를 열지 못했습니다: ' + e.message, 8000); }
+    finally { if (m) m.dispose(); box.remove(); }
+    if (!pk) { busy(null); return; }
+    busy('사업계획에 넣는 중…');
+    try {
+      const r = B.applySeedPack(win, pk, '웹 손익추정 ' + name);
+      st.link = { id: src.id, memo: src.memo || src.base_ym, synced: src.updated_at || src.created_at };
+      toast(name + '의 ' + (py - 1) + '년 12월 값으로 다시 이어받았습니다: 1월 기초 ' + r.inv + '개 항목'
+        + (r.dec ? ' · 12월 추정 입력 ' + r.dec + '건(손익시뮬레이션 기준)' : ' · 12월 판매·구매가 비어 있어 손익시뮬레이션 기준은 그대로')
+        + (r.annual ? ' · 「당해」 비교자료' : '') + '. 저장하면 남습니다.', 10000);
+      log('link_reseed', st.open.id, src.id + ' inv=' + r.inv + ' dec=' + r.dec);
+    } catch (e) { toast('이어받지 못했습니다: ' + e.message, 9000); }
+    busy(null); renderBar();
+  }
+  $('btnLink').onclick = linkDialog;
   // 새 사업계획: 고른 손익추정 자료를 화면 밖에서 열어 「📘 사업계획 시스템 다운로드」와 같은 결과를 받아 바로 연다
   async function newBizplan() {
     const srcs = st.snaps.filter((x) => modeOf(x) === 'sonik');
@@ -304,6 +368,7 @@
     finally { if (m) m.dispose(); box.remove(); }
     if (!html) { busy(null); return; }
     try {
+      st.link = { id: s.id, memo: s.memo || s.base_ym, synced: s.updated_at || s.created_at };
       show('vEngine'); st.open = { id: null, srcId: s.id, mode: 'bizplan', memo: '새 사업계획', base_ym: '', source: 'new', rev: 0 }; renderBar(); fitEngine();
       busy('사업계획 여는 중… (10~30초)');
       st.mounted = await E.mount($('engineBox'), html, onEngineMsg);
@@ -463,6 +528,7 @@
     busy('엔진과 추정자료를 받는 중…');
     try {
       const [html, db] = await Promise.all([getEngineHtml(), fetchSnapDb(s)]);
+      st.link = modeOf(s) === 'bizplan' ? (db.linkSonik || null) : null;
       show('vEngine'); st.open = s; renderBar(); fitEngine();
       busy('엔진 여는 중… (10~30초)');
       st.mounted = await E.mount($('engineBox'), engineFor(s, html, db), onEngineMsg);
@@ -533,6 +599,7 @@
     try {
       // 연동 자료도 함께 싣는다(손익추정: 올해 연간 비교자료 / 사업계획: 사업계획 DB) — 상대편이 열 때 자동으로 넣는다
       const db = Object.assign(st.mounted.bridge.buildDb(), await B.extras(st.mounted.win));
+      if (B.isBiz(st.mounted.win)) db.linkSonik = st.link || null; // 이 사업계획이 이어받는 손익추정(다시 열 때 그것을 쓴다)
       if (memo === null) {
         const s = st.open, path = 'snapshots/' + s.id + '/r' + (s.rev + 1) + '_' + crypto.randomUUID().slice(0, 8) + '.json.gz';
         const gz = await E.gzip(JSON.stringify(db));
