@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 소통 중계 — 웹 「소통」(sk_channel)에서 Codex·Claude 앞 「대기」 글을 찾아 PC의 codex exec / claude -p 로 실행하고 답을 올린다.
+// 챗봇 중계 — 웹 「챗봇」(sk_channel)에서 Codex·Claude 앞 「대기」 글을 찾아 PC의 codex exec / claude -p 로 실행하고 답을 올린다.
 // hong 이 무인 자동 방식을 직접 골랐다(2026-10-30, 프로젝트 대화방 결정 카드). 웹 「멈춤」으로 언제든 세운다.
 // PC 위치: 손익추정시스템\소통\중계.cjs  (실행: node 소통\중계.cjs  · 한 번만: node 소통\중계.cjs --once)
 // 로그인: 사용자 폴더 .sonik-codex.json (채널.cjs 와 같은 Codex 에이전트 계정, sk_agents.can_relay = true)
@@ -247,7 +247,7 @@ function prompt(agent, m, ch, group) {
   return [
     role,
     '작업 폴더: ' + ROOT + ' . 시작 전에 AGENTS.md 를 읽는다.',
-    '아래는 웹 「소통」 채널의 글 흐름이다(마지막 글이 너에게 온 요청).',
+    '아래는 웹 「챗봇」 채널의 글 흐름이다(마지막 글이 너에게 온 요청).',
     '',
     ch.map(fmt).join('\n\n'),
     '',
@@ -259,8 +259,8 @@ function prompt(agent, m, ch, group) {
     '',
     '마지막에 채널에 올릴 답을 정확히 아래 형식으로 출력한다(이 블록만 채널에 올라간다):',
     '<<<채널',
-    group ? '받는이: 모두' : '받는이: hong 또는 ' + other,
-    group ? '상태: 안내' : '상태: 대기 또는 안내   (받는이가 답하거나 처리해야 하면 대기, 알리기만 하면 안내)',
+    group ? (agent === 'Codex' ? '받는이: 모두   (Claude 가 고치거나 처리해야 할 일이 남으면 받는이: Claude)' : '받는이: 모두') : '받는이: hong 또는 ' + other,
+    group ? (agent === 'Codex' ? '상태: 안내   (받는이를 Claude 로 넘길 때만 대기)' : '상태: 안내') : '상태: 대기 또는 안내   (받는이가 답하거나 처리해야 하면 대기, 알리기만 하면 안내)',
     '주제: ' + (m.topic || '짧은 제목'),
     '(본문: 첫 줄에 결론 한 문장 → 빈 줄 → 「- 」 목록으로 핵심만. 항목 이름은 **굵게**, 파일·경로는 `백틱`. hong 이 결정할 일은 맨 끝에 번호 목록. 15줄 이내)',
     '채널>>>',
@@ -283,7 +283,7 @@ function reqLines(m) {
 function followUp(agent, m, fresh, group) {
   const other = agent === 'Codex' ? 'Claude' : 'Codex';
   return [
-    '웹 「소통」 채널에 이 대화의 새 글이 올라왔다(마지막 글이 너에게 온 요청).',
+    '웹 「챗봇」 채널에 이 대화의 새 글이 올라왔다(마지막 글이 너에게 온 요청).',
     '',
     fresh.map(fmt).join('\n\n'),
     '',
@@ -292,8 +292,8 @@ function followUp(agent, m, fresh, group) {
     ...reqLines(m),
     '마지막에 채널에 올릴 답을 앞에서와 같은 형식으로 출력한다:',
     '<<<채널',
-    group ? '받는이: 모두' : '받는이: hong 또는 ' + other,
-    group ? '상태: 안내' : '상태: 대기 또는 안내',
+    group ? (agent === 'Codex' ? '받는이: 모두   (Claude 가 고치거나 처리해야 할 일이 남으면 받는이: Claude)' : '받는이: 모두') : '받는이: hong 또는 ' + other,
+    group ? (agent === 'Codex' ? '상태: 안내   (받는이를 Claude 로 넘길 때만 대기)' : '상태: 안내') : '상태: 대기 또는 안내',
     '주제: ' + (m.topic || '짧은 제목'),
     '(본문: 첫 줄에 결론 한 문장 → 빈 줄 → 「- 」 목록으로 핵심만. 항목 이름은 **굵게**, 파일·경로는 `백틱`. hong 이 결정할 일은 맨 끝에 번호 목록. 15줄 이내)',
     '채널>>>',
@@ -471,9 +471,11 @@ async function handle(m, ctl) {
       if (r.stopped) { stop = true; await stoppedMsg(m, agent); break; }
       if (!r.rep) { await failed(m, agent, r, last.id); continue; }
       await applyProgress(m, agent, r.rep.progress);
-      const [row] = await post({ sender: agent, recipient: '모두', topic: r.rep.topic || m.topic, status: '안내', reply_to: last.id, body: r.rep.body, request_id: m._req ? m._req.id : null });
+      // Codex 가 Claude 에게 고칠 일을 남기면(받는이 Claude · 대기) 그 글만 Claude 에게 대기로 넘긴다 → 다음 차례에 Claude 가 이어 처리(왕복 한도 적용)
+      const hand = agent === 'Codex' && r.rep.to === 'Claude' && r.rep.st === '대기';
+      const [row] = await post({ sender: agent, recipient: hand ? 'Claude' : '모두', topic: r.rep.topic || m.topic, status: hand ? '대기' : '안내', reply_to: last.id, body: r.rep.body, request_id: m._req ? m._req.id : null });
       cur = cur.concat([row]); ctx = ctx.concat([row]); last = row; ok++;
-      log('완료 #' + m.id, agent, '→ 모두');
+      log('완료 #' + m.id, agent, hand ? '→ Claude(대기)' : '→ 모두');
     }
     if (!stop) await patchMsg(m.id, { status: ok ? '답변' : '대기', run_state: ok === 2 ? '완료' : '실패', run_note: ok === 2 ? '' : '일부 실패' });
   }
