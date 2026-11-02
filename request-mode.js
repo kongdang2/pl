@@ -318,11 +318,16 @@
       },
       stop() {
         if (!st.on) return;
-        const d = st.win.document;
-        Object.entries(handlers || {}).forEach(([k, f]) => d.removeEventListener(k, f, true));
-        Object.entries(touchH || {}).forEach(([k, f]) => d.removeEventListener(k, f, { capture: true }));
-        d.body.classList.remove('sk-rq-on', 'sk-rq-area'); drawBox(null); st.area = null; st.mode = 'cell';
-        clearMarks('sk-rq-sel'); clearMarks('sk-rq-done');
+        // 엔진 창이 다시 읽혀 다른 주소(오류 화면 등)가 되면 문서를 읽을 수 없다 — 그래도 끄기는 끝까지 한다(「목록」 무반응 방지)
+        try {
+          const d = st.win.document;
+          Object.entries(handlers || {}).forEach(([k, f]) => d.removeEventListener(k, f, true));
+          Object.entries(touchH || {}).forEach(([k, f]) => d.removeEventListener(k, f, { capture: true }));
+          d.body.classList.remove('sk-rq-on', 'sk-rq-area');
+          clearMarks('sk-rq-sel'); clearMarks('sk-rq-done');
+        } catch (_) { /* 엔진 문서에 닿지 못함 */ }
+        try { drawBox(null); } catch (_) { st.box = null; }
+        st.area = null; st.mode = 'cell';
         st.on = false; st.sel = new Map(); st.table = null;
         opts.onChange && opts.onChange(api);
       },

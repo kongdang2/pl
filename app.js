@@ -491,7 +491,7 @@
       d.head.appendChild(css);
     } catch (_) { /* 엔진 구조가 다르면 그대로 둔다 */ }
   }
-  function unmount() { navStop(); rqClose(true); if (st.mounted) { st.mounted.dispose(); st.mounted = null; } $('engineBox').innerHTML = ''; st.open = null; }
+  function unmount() { navStop(); try { rqClose(true); } catch (e) { console.warn('수정요청 패널 정리 실패', e); } if (st.mounted) { st.mounted.dispose(); st.mounted = null; } $('engineBox').innerHTML = ''; st.open = null; }
   // 추정자료 삭제(관리자만): 저장 파일·이전 저장(백업)까지 지운다. 되돌릴 수 없다
   async function deleteSnap(id) {
     const s = st.snaps.find((x) => x.id === id); if (!s) return;
