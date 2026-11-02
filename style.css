@@ -56,7 +56,7 @@ button.sm{padding:2px 8px;font-size:12px;margin-left:6px}
 .stg{min-width:210px}.stg .bar{display:flex;gap:2px}.stg .bar span{flex:1;text-align:center;font-size:10.5px;padding:2px 0;background:var(--line);color:var(--mut)}
 .stg .bar span:first-child{border-radius:5px 0 0 5px}.stg .bar span:last-child{border-radius:0 5px 5px 0}
 .stg .bar span.on{background:#F79009;color:#fff}.stg.done .bar span.on{background:var(--ok)}.stg .bar span.cur{font-weight:700}
-.stg.held .bar span{opacity:.5}.stg .say{font-size:11.5px;color:var(--mut);margin-top:2px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stg .live{color:#F79009;font-weight:600;animation:skPulse 1.4s ease-in-out infinite}@keyframes skPulse{50%{opacity:.35}}.stg .say{font-size:11.5px;color:var(--mut);margin-top:2px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rq-log{padding-left:18px;font-size:13px}.rq-log li{margin:4px 0}.rq-log div{white-space:pre-wrap}
 .tag.st-접수{color:var(--pri2)}.tag.st-진행{color:var(--warn)}.tag.st-완료{color:var(--ok)}.tag.st-보류{color:var(--mut)}
 .card.chat{padding:0;overflow:hidden;display:flex;flex-direction:column}

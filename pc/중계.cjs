@@ -21,7 +21,7 @@ const LOG_DIR = path.join(__dirname, '중계로그');
 const SESS_PATH = path.join(__dirname, '중계세션.json');
 const ATT_DIR = path.join(__dirname, '첨부');
 const REQ_DIR = path.join(__dirname, '요청'); // 수정요청 원문(항목·셀·메모·화면 캡처)을 요청 번호별로 풀어 두는 곳
-const STAGES = ['접수', '검토', '수정', '검증', '반영']; // 웹에서 올린 이미지·파일을 글 번호별로 내려받는 곳
+const STAGES = ['접수', '작업중', '작업중', '작업중', '완료']; // 단계 값 0 = 접수, 1~3 = 작업중, 4 = 완료(hong 11/02 단순화). // 웹에서 올린 이미지·파일을 글 번호별로 내려받는 곳
 // codex.exe 는 Codex 앱 안(%LOCALAPPDATA%\OpenAI\Codex\bin\<버전>\)에 있고 일반 PATH 에는 없다. 가장 최근 것을 쓴다.
 function findCodex() {
   const base = path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'OpenAI', 'Codex', 'bin');
@@ -206,7 +206,7 @@ async function loadRequest(m, list) {
     const dir = path.join(REQ_DIR, String(id));
     fs.mkdirSync(dir, { recursive: true });
     const L = ['# 수정요청 #' + r.id + ' · ' + r.title, '', '- 구분: ' + r.kind + ' · 작성: ' + (r.author_name || r.author_email) + ' · 접수: ' + r.created_at,
-      '- 스냅샷 기준월 ' + (r.base_ym || '-') + ' · 엔진 ' + (r.engine_ver || '-') + ' · 지금 단계: ' + (r.status === '보류' ? '보류' : STAGES[r.stage || 0]), ''];
+      '- 스냅샷 기준월 ' + (r.base_ym || '-') + ' · 엔진 ' + (r.engine_ver || '-') + ' · 지금 단계: ' + STAGES[r.status === '완료' ? 4 : (r.stage || 0)], ''];
     if (r.body) L.push('## 설명', '', r.body, '');
     (r.items || []).forEach((it, i) => {
       const loc = it.loc || {};
@@ -224,18 +224,34 @@ async function loadRequest(m, list) {
     m._req = { id, title: r.title, stage: r.stage, status: r.status, file };
   } catch (e) { log('요청 읽기 실패 #' + id, e.message); }
 }
-// 답의 「진행:」 줄을 요청의 단계·설명(progress)에 적는다
-async function applyProgress(m, agent, pg) {
-  if (!m._req || !pg) return;
+// 답의 「진행:」 줄을 요청의 단계·설명(progress)에 적는다. 진행 줄이 없어도 답의 첫 줄을 설명으로 남긴다(목록에 늘 최신 상황이 보이게)
+// 단계: 작업중 → 1, 완료 → 4. 옛 말(검토·수정·검증·보류)은 작업중, 반영은 완료로 읽는다
+async function applyProgress(m, agent, pg, body) {
+  if (!m._req) return;
   try {
     const [r] = await api('GET', 'sk_requests', '?select=stage,status,progress&id=eq.' + m._req.id);
-    const stage = pg.step === '보류' ? (r.stage || 0) : STAGES.indexOf(pg.step);
-    const status = pg.step === '보류' ? '보류' : stage === 4 ? '완료' : '진행';
-    const progress = (r.progress || []).concat([{ at: new Date().toISOString(), stage, text: '[' + agent + '] ' + pg.text }]);
-    await api('PATCH', 'sk_requests', '?id=eq.' + m._req.id, { stage, status, progress, updated_at: new Date().toISOString() });
-    m._req.stage = stage; m._req.status = status;
-    log('요청 #' + m._req.id, pg.step, pg.text);
+    const cur = r.status === '완료' ? 4 : (r.stage || 0);
+    const done = pg && /^(완료|반영)$/.test(pg.step);
+    const stage = done ? 4 : Math.max(1, cur);
+    const text = (pg && pg.text) || String(body || '').split(/\r?\n/).find((l) => l.trim()) || '답변을 올렸습니다';
+    const progress = (r.progress || []).concat([{ at: new Date().toISOString(), stage, text: '[' + agent + '] ' + text.trim().slice(0, 300) }]);
+    await api('PATCH', 'sk_requests', '?id=eq.' + m._req.id, { stage, status: stage === 4 ? '완료' : '진행', progress, updated_at: new Date().toISOString() });
+    m._req.stage = stage; m._req.status = stage === 4 ? '완료' : '진행';
+    log('요청 #' + m._req.id, STAGES[stage], text.slice(0, 80));
   } catch (e) { log('요청 진행 기록 실패 #' + m._req.id, e.message); }
+}
+// 실시간 표시: 실행을 시작하면 그 요청에 「● 담당 작업 중」을 켜고(접수 상태면 작업중으로), 끝나면 끈다
+async function reqWorking(m, agent) {
+  if (!m._req) return;
+  try {
+    const patch = { working: agent || null, updated_at: new Date().toISOString() };
+    if (agent && !(m._req.stage >= 1) && m._req.status !== '완료') {
+      const [r] = await api('GET', 'sk_requests', '?select=progress&id=eq.' + m._req.id);
+      Object.assign(patch, { stage: 1, status: '진행', progress: ((r && r.progress) || []).concat([{ at: new Date().toISOString(), stage: 1, text: '[' + agent + '] 요청을 읽고 작업을 시작했습니다' }]) });
+      m._req.stage = 1; m._req.status = '진행';
+    }
+    await api('PATCH', 'sk_requests', '?id=eq.' + m._req.id, patch);
+  } catch (e) { log('요청 작업 표시 실패 #' + m._req.id, e.message); }
 }
 const isImg = (p) => /\.(png|jpe?g|gif|webp|bmp)$/i.test(p);
 
@@ -272,11 +288,11 @@ function reqLines(m) {
   const q = m._req;
   if (!q) return [];
   return ['',
-    '이 대화는 웹 수정요청 #' + q.id + ' 에 관한 것이다(제목: ' + q.title + ' · 지금 단계: ' + (q.status === '보류' ? '보류' : STAGES[q.stage || 0]) + ').',
+    '이 대화는 웹 수정요청 #' + q.id + ' 에 관한 것이다(제목: ' + q.title + ' · 지금 단계: ' + STAGES[q.status === '완료' ? 4 : (q.stage || 0)] + ').',
     '요청 원문(항목 위치·고른 셀과 값·메모·화면 캡처 그림): ' + q.file + '  — 먼저 읽는다. 그림 파일은 같은 폴더에 있다.',
     '엔진 수정은 AGENTS.md 의 버전 흐름(새 번호, 10초본·일반본, 검증자료, Codex 교차검증 통과)을 따르고, 「반영」은 통과 뒤에만 쓴다.',
-    '답 블록 안에 진행 줄을 하나 넣으면 웹 요청 목록의 진행 막대와 설명이 바뀐다(hong 이 읽는 쉬운 한 문장):',
-    '진행: 검토|수정|검증|반영|보류 - 설명'];
+    '답 블록 안에 진행 줄을 하나 넣으면 웹 요청 목록의 설명이 그 문장으로 바뀐다(hong 이 읽는 쉬운 한 문장). 단계는 접수 › 작업중 › 완료 셋뿐이다:',
+    '진행: 작업중 - 설명   (요청이 끝까지 처리됐을 때만 「진행: 완료 - 설명」. 엔진 수정은 Codex 교차검증 통과·웹 반영 뒤에만 완료)'];
 }
 
 // 이어 쓰는 세션에는 그 세션이 아직 못 본 글만 넘긴다
@@ -308,7 +324,7 @@ function parseReply(out, agent) {
   let to = get('받는이'); if (!['hong', 'Codex', 'Claude'].includes(to) || to === agent) to = 'hong';
   let st = get('상태').split(/\s/)[0]; if (!['대기', '안내'].includes(st)) st = '대기';
   const body = blk.split(/\r?\n/).filter((l) => !/^\s*(받는이|상태|주제|진행)\s*:/.test(l)).join('\n').trim();
-  const pg = get('진행').match(/^(검토|수정|검증|반영|보류)\s*[-–—:·]?\s*(.*)$/);
+  const pg = get('진행').match(/^(작업중|완료|검토|수정|검증|반영|보류)\s*[-–—:·]?\s*(.*)$/);
   return { to, st, topic: get('주제'), body, progress: pg ? { step: pg[1], text: pg[2].trim() || body.split('\n')[0] } : null };
 }
 
@@ -451,11 +467,13 @@ async function handle(m, ctl) {
   await loadRequest(m, ch);
   if (m.recipient !== '모두') {
     const ctx = ch.length > 1 ? ch : (await recent(m, [m.recipient], conf.recentMax || 10)).concat([m]);
+    await reqWorking(m, m.recipient);
     const r = await runAgent(m.recipient, m, ch, ctx, false, quick ? null : await rootOf(m, ch, ctx));
+    await reqWorking(m, null);
     if (r.stopped) await stoppedMsg(m, m.recipient);
     else if (!r.rep) await failed(m, m.recipient, r);
     else {
-      await applyProgress(m, m.recipient, r.rep.progress);
+      await applyProgress(m, m.recipient, r.rep.progress, r.rep.body);
       await post({ sender: m.recipient, recipient: r.rep.to, topic: r.rep.topic || m.topic, status: r.rep.st, reply_to: m.id, body: r.rep.body, request_id: m._req ? m._req.id : null });
       await patchMsg(m.id, { status: '답변', run_state: '완료', run_note: '' });
       log('완료 #' + m.id, '→', r.rep.to, r.rep.st);
@@ -467,10 +485,12 @@ async function handle(m, ctl) {
     const root = quick ? null : await rootOf(m, ch, ctx);
     let stop = false;
     for (const agent of ['Claude', 'Codex']) {
+      await reqWorking(m, agent);
       const r = await runAgent(agent, m, cur, ctx, true, root);
+      await reqWorking(m, null);
       if (r.stopped) { stop = true; await stoppedMsg(m, agent); break; }
       if (!r.rep) { await failed(m, agent, r, last.id); continue; }
-      await applyProgress(m, agent, r.rep.progress);
+      await applyProgress(m, agent, r.rep.progress, r.rep.body);
       // Codex 가 Claude 에게 고칠 일을 남기면(받는이 Claude · 대기) 그 글만 Claude 에게 대기로 넘긴다 → 다음 차례에 Claude 가 이어 처리(왕복 한도 적용)
       const hand = agent === 'Codex' && r.rep.to === 'Claude' && r.rep.st === '대기';
       const [row] = await post({ sender: agent, recipient: hand ? 'Claude' : '모두', topic: r.rep.topic || m.topic, status: hand ? '대기' : '안내', reply_to: last.id, body: r.rep.body, request_id: m._req ? m._req.id : null });
@@ -627,6 +647,7 @@ function realtime() {
   for (const m of await api('GET', 'sk_channel', '?select=id&run_state=eq.' + encodeURIComponent('실행중'))) {
     await patchMsg(m.id, { run_state: '실패', run_note: '중계가 실행 중에 꺼짐' });
   }
+  try { await api('PATCH', 'sk_requests', '?working=not.is.null', { working: null }); } catch (_) { /* 옛 DB(작업 중 칸 없음)면 무시 */ }
   await setRelay({ busy_with: null, stop_id: null });
   const once = process.argv.includes('--once');
   // 신호는 따로 30초마다(긴 작업 중에도 웹에 「작동 중」으로 보이게)

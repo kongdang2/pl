@@ -802,39 +802,54 @@
   };
 
   // 요청 목록·보기
-  // 진행 단계는 사람이 고르지 않는다: Claude가 처리하면서 stage·progress(답변 기록)를 갱신한다
-  const STAGES = ['접수', '검토', '수정', '검증', '반영'];
+  // 진행 단계는 사람이 고르지 않는다: Claude·Codex가 일하면서 PC 중계가 stage·progress·working 을 갱신한다
+  // 단계는 셋(hong 11/02): 접수 › 작업중 › 완료. DB 값 0 = 접수, 1~3 = 작업중(옛 검토·수정·검증), 4 = 완료(옛 반영)
+  const STAGES = ['접수', '작업중', '완료'];
+  const stepOf = (stage, status) => status === '완료' || +stage >= 4 ? 2 : +stage >= 1 || status === '보류' ? 1 : 0;
   function stageBar(r, withText) {
-    const held = r.status === '보류', n = held ? -1 : Math.max(0, Math.min(4, r.stage || 0));
+    const n = stepOf(r.stage, r.status);
     const last = (r.progress || [])[(r.progress || []).length - 1];
-    return '<div class="stg' + (held ? ' held' : '') + (n === 4 ? ' done' : '') + '" title="' + esc(held ? '보류' : STAGES[n]) + '">'
+    const live = r.working && n < 2 ? '<span class="live">● ' + esc(r.working) + ' 작업 중</span> ' : '';
+    return '<div class="stg' + (n === 2 ? ' done' : '') + (live ? ' wk' : '') + '" title="' + esc(STAGES[n]) + '">'
       + '<div class="bar">' + STAGES.map((s, i) => '<span class="' + (i <= n ? 'on' : '') + (i === n ? ' cur' : '') + '">' + s + '</span>').join('') + '</div>'
-      + (withText && last ? '<div class="say">' + esc(last.text).slice(0, 80) + '</div>' : held ? '<div class="say">보류</div>' : '') + '</div>';
+      + (withText && (live || last) ? '<div class="say">' + live + (last ? esc(last.text).slice(0, 80) : '') + '</div>' : '') + '</div>';
   }
   async function loadRequests() {
-    const { data, error } = await sb.from('sk_requests').select('id,title,kind,status,stage,progress,author_name,author_email,created_at').order('created_at', { ascending: false }).limit(100);
+    const { data, error } = await sb.from('sk_requests').select('id,title,kind,status,stage,progress,working,author_name,author_email,created_at').order('created_at', { ascending: false }).limit(100);
     if (error) { $('rqRows').innerHTML = '<tr><td colspan="7" class="hint">요청 목록을 읽지 못했습니다: ' + esc(error.message) + '</td></tr>'; return; }
     $('rqRows').innerHTML = (data || []).length ? data.map((r) => '<tr><td>#' + r.id + '</td><td class="memo">' + esc(r.title) + '</td><td>' + esc(r.kind) + '</td><td>' + stageBar(r, true) + '</td><td>'
       + esc(r.author_name || r.author_email) + '</td><td>' + esc(fmtT(r.created_at)) + '</td><td><button data-rv="' + r.id + '">보기</button></td></tr>').join('')
       : '<tr><td colspan="7" class="hint">아직 접수된 요청이 없습니다.</td></tr>';
     $('rqRows').querySelectorAll('[data-rv]').forEach((b) => { b.onclick = () => viewRequest(+b.getAttribute('data-rv')); });
+    liveRequests();
+  }
+  // 실시간: 요청이 바뀌면(PC 중계가 단계·설명·작업 중 표시를 적으면) 목록과 열린 「보기」를 바로 다시 그린다.
+  // Realtime 이 끊겨도 목록 화면에서는 20초마다 한 번 다시 읽는다
+  let rqRt = null, rqTimer = null, rqPoll = null, rqOpenId = null;
+  function liveRequests() {
+    const again = () => { clearTimeout(rqTimer); rqTimer = setTimeout(() => { if (!$('vList').hidden) loadRequests(); if (rqOpenId && !$('rqView').hidden) viewRequest(rqOpenId, true); }, 400); };
+    if (!rqRt) {
+      try { rqRt = sb.channel('sk_requests_web').on('postgres_changes', { event: '*', schema: 'public', table: 'sk_requests' }, again).subscribe(); } catch (_) { rqRt = null; }
+    }
+    if (!rqPoll) rqPoll = setInterval(() => { if (!document.hidden && !$('vList').hidden) loadRequests(); }, 20000);
   }
   function excerptHtml(ex) {
     if (!ex || !ex.rows || !ex.rows.length) return '';
     const sel = new Set((ex.sel || []).map((x) => x[0] + ',' + x[1]));
     return '<div style="overflow-x:auto"><table class="ex">' + ex.rows.map((row, i) => '<tr' + (i < (ex.head || 0) ? ' class="h"' : '') + '>' + row.map((v, j) => '<td' + (sel.has(i + ',' + j) ? ' class="sel"' : '') + '>' + esc(v) + '</td>').join('') + '</tr>').join('') + '</table></div>';
   }
-  async function viewRequest(id) {
-    busy('요청 읽는 중…');
+  async function viewRequest(id, quiet) {
+    if (!quiet) busy('요청 읽는 중…');
     const { data: r, error } = await sb.from('sk_requests').select('*').eq('id', id).single();
-    busy(null);
+    if (!quiet) busy(null);
+    rqOpenId = id;
     if (error) { toast(error.message); return; }
     $('rvBody').innerHTML = '<h3>수정요청 #' + r.id + ' · ' + esc(r.title) + '</h3>'
       + '<p class="hint">' + esc(r.kind) + ' · ' + esc(r.author_name || r.author_email) + ' · ' + esc(fmtT(r.created_at)) + ' · 추정자료 ' + esc(r.base_ym || '') + ' / 엔진 ' + esc(r.engine_ver || '') + '</p>'
       + (r.body ? '<p style="white-space:pre-wrap">' + esc(r.body) + '</p>' : '')
       + stageBar(r, false)
       + '<h4>진행 기록</h4>' + ((r.progress || []).length
-        ? '<ol class="rq-log">' + r.progress.map((p) => '<li><span class="hint">' + esc(fmtT(p.at)) + ' · ' + esc(STAGES[p.stage] || p.stage) + '</span><div>' + esc(p.text) + '</div></li>').join('') + '</ol>'
+        ? '<ol class="rq-log">' + r.progress.map((p) => '<li><span class="hint">' + esc(fmtT(p.at)) + ' · ' + esc(STAGES[stepOf(p.stage)]) + '</span><div>' + esc(p.text) + '</div></li>').join('') + '</ol>'
         : '<p class="hint">아직 답변이 없습니다. 접수 글이 💬 챗봇으로 Claude에게 넘어갔고, PC 중계가 돌고 있으면 곧 여기에 진행 상황이 적힙니다.</p>')
       + '<h4>요청 내용</h4>'
       + (r.items || []).map((it, i) => itemHtml(it, i, false) + excerptHtml(it.excerpt)).join('');
