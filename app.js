@@ -482,13 +482,41 @@
       if (!bar || !head || head.dataset.skTrim) return;
       const undo = d.getElementById('undoBtn'), redo = d.getElementById('redoBtn'), print = head.querySelector('[onclick^="printCurrentMenu"]');
       const at = bar.querySelector('span[style*="flex:1"]');
-      const box = d.createElement('span'); box.style.cssText = 'display:inline-flex;gap:6px;align-items:center;';
-      [undo, redo, print].forEach((b) => { if (b) box.appendChild(b); });
+      const box = d.createElement('span'); box.id = 'skWebBox'; box.style.cssText = 'display:inline-flex;gap:6px;align-items:center;';
+      const homes = [];   // 옮긴 엔진 버튼의 원래 자리 [버튼, 부모, 다음 형제]
+      [undo, redo, print].forEach((b) => { if (b) { homes.push([b, b.parentNode, b.nextSibling]); box.appendChild(b); } });
+      // [웹 요청 #9] PC 파일 저장·연결 — 숨긴 머리줄의 버튼과 같은 엔진 함수를 부른다. Ctrl+S 는 그대로 웹 저장
+      const pcBtn = (txt, title, fn, bg) => {
+        const b = d.createElement('button'); b.type = 'button'; b.className = 'btn'; b.dataset.skPc = '1';
+        b.textContent = txt; b.title = title; b.style.cssText = 'background:' + bg + ';color:#fff;';
+        b.addEventListener('click', () => { try { fn(); } catch (e) { console.warn('PC 파일 저장 실패', e); } });
+        return b;
+      };
+      const sep = d.createElement('span'); sep.style.opacity = '.4'; sep.textContent = '|';
+      const linkTitle = () => { const lb = d.getElementById('fileLinkBadge'); const s = lb ? (lb.textContent || '').trim() : ''; return s ? '현재: ' + s : ''; };
+      const bSave = pcBtn('💾 PC 파일로 저장', '현재 작업을 PC에 HTML 파일로 저장합니다(파일 이름·위치 선택, 저장한 파일에 연결). PC에서 오프라인으로 열 수 있습니다. 웹 저장은 Ctrl+S.', () => win.saveAsHtmlDownload(), '#2E7D5B');
+      const bLink = pcBtn('🔗 PC 파일 연결', '덮어쓸 PC 파일(HTML)을 고릅니다. 이후 「연결 파일에 저장」으로 그 파일에 저장합니다.', () => win.__fileLinkBadgeClick(), '#546E7A');
+      const bTo = pcBtn('📄 연결 파일에 저장', '연결한 PC 파일에 현재 작업을 덮어씁니다(연결이 없으면 파일 이름·위치를 묻습니다).', () => (typeof win.__pcSaveToCurrentFile === 'function' ? win.__pcSaveToCurrentFile : win.saveAsHtmlDownload)(), '#1F5F99');
+      const NL = String.fromCharCode(10);
+      [bLink, bTo].forEach((b) => b.addEventListener('mouseenter', () => { const s = linkTitle(); b.title = b.title.split(NL)[0] + (s ? NL + s : ''); }));
+      [sep, bSave, bLink, bTo].forEach((x) => box.appendChild(x));
       if (at) at.after(box); else bar.appendChild(box);
       head.dataset.skTrim = '1';
       const css = d.createElement('style'); css.id = 'skWebTrim'; // 엔진이 배지를 다시 보이게 해도 숨김 유지
       css.textContent = '#appHeader,#lsUsageBadge,#autoSaveBadge{display:none!important}';
       d.head.appendChild(css);
+      // [웹 요청 #9] 엔진 buildSaveHtml 이 HTML 저장 동안 부른다: 웹 화면 정리(숨김·옮긴 버튼·PC 버튼)를 잠시 되돌려
+      // 저장 파일이 PC에서 원래 화면으로 열리게 하고, 되돌림 함수를 돌려준다
+      win.__skWebUnTrim = function () {
+        const back = homes.slice().reverse().map(([b, p, s]) => { const now = [b, b.parentNode, b.nextSibling]; p.insertBefore(b, s && s.parentNode === p ? s : null); return now; });
+        const bp = box.parentNode, bs = box.nextSibling; box.remove();
+        const cp = css.parentNode; css.remove(); delete head.dataset.skTrim;
+        return function () {
+          if (bp) bp.insertBefore(box, bs && bs.parentNode === bp ? bs : null);
+          back.reverse().forEach(([b, p, s]) => p.insertBefore(b, s && s.parentNode === p ? s : null));
+          if (cp) cp.appendChild(css); head.dataset.skTrim = '1';
+        };
+      };
     } catch (_) { /* 엔진 구조가 다르면 그대로 둔다 */ }
   }
   function unmount() { navStop(); try { rqClose(true); } catch (e) { console.warn('수정요청 패널 정리 실패', e); } if (st.mounted) { st.mounted.dispose(); st.mounted = null; } $('engineBox').innerHTML = ''; st.open = null; }
