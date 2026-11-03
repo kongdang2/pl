@@ -103,12 +103,12 @@
       : '<span class="tag old">웹 엔진이 아직 없습니다</span> 관리자가 빈 엔진을 올려야 열 수 있습니다.';
     $('snapRows').innerHTML = rows.length ? rows.map((s) => {
       const ren = canRename(s) ? ' <button class="ren" data-ren="' + s.id + '" title="이름 바꾸기">✏️</button>' : '';
-      return '<tr><td class="memo"><b>' + esc(s.memo || '(이름 없음)') + '</b>' + ren + '</td><td>' + esc(s.base_ym) + '</td>'
+      return '<tr><td>' + esc(s.base_ym) + '</td><td class="memo"><b>' + esc(s.memo || '(이름 없음)') + '</b>' + ren + '</td>'
         + '<td><span class="tag ' + s.source + '">' + (s.source === 'pc' ? 'PC 원본' : '웹 저장') + '</span></td>'
         + '<td>' + esc(s.author_name || s.author_email) + '</td><td>' + esc(fmtT(s.updated_at || s.created_at)) + (s.rev > 1 ? ' <span class="hint">(' + s.rev + '회 저장)</span>' : '') + '</td>'
         + '<td><button data-open="' + s.id + '"' + (eng ? '' : ' disabled') + '>열기</button>'
         + ' <button data-dl="' + s.id + '" title="DB 내보내기 ▸ 전체와 같은 .json (PC에서 DB 불러오기)">JSON</button>'
-        + ' <button data-html="' + s.id + '"' + (eng ? '' : ' disabled') + ' title="웹 엔진 + 이 추정자료를 합친 HTML 한 파일. PC에서 바로 열립니다">오프라인 파일</button>' + (s.rev > 1 ? ' <button data-bk="' + s.id + '">이전 저장</button>' : '')
+        + ' <button data-html="' + s.id + '"' + (eng ? '' : ' disabled') + ' title="웹 엔진 + 이 추정자료를 합친 HTML 한 파일. PC에서 바로 열립니다">오프라인 파일</button>'
         + (st.me.role === 'admin' ? ' <button data-del="' + s.id + '" class="danger">삭제</button>' : '') + '</td></tr>';
     }).join('') : '<tr><td colspan="6" class="hint">' + (biz ? '아직 웹 사업계획이 없습니다. 「📘 새 사업계획」으로 손익추정 자료에서 만듭니다.' : '아직 추정자료가 없습니다.') + '</td></tr>';
     $('snapRows').querySelectorAll('[data-open]').forEach((b) => { b.onclick = () => openSnap(b.getAttribute('data-open')); });
@@ -211,7 +211,12 @@
   function offlineHtml(win) {
     if (typeof win.__buildEngineHtml !== 'function') throw new Error('이 엔진은 HTML 만들기 기능이 없습니다');
     try { if (typeof win.commitActiveEditBeforeSave === 'function') win.commitActiveEditBeforeSave(); } catch (_) { /* 무시 */ }
-    let html = win.__buildEngineHtml({ embedData: true, emptyEngine: false, stripAdminBar: false });
+    // 엔진은 지금 화면(DOM)을 복제해 HTML 을 만든다. 웹 화면 정리(머리줄 숨김·옮긴 버튼)를 잠시 되돌려야 PC 에서 원래 화면으로 열린다
+    let undo = null;
+    try { if (typeof win.__skWebUnTrim === 'function') undo = win.__skWebUnTrim(); } catch (_) { undo = null; }
+    let html;
+    try { html = win.__buildEngineHtml({ embedData: true, emptyEngine: false, stripAdminBar: false }); }
+    finally { if (undo) try { undo(); } catch (_) { /* 무시 */ } }
     if (!/id=["']__SAVED_DATA__["']/.test(html)) throw new Error('데이터를 넣지 못했습니다');
     if (B.isBiz(win)) html = B.offlineFlag(win, html); // 사업계획 모드 표시를 다시 넣어야 PC에서도 사업계획으로 열린다
     return html;
@@ -535,21 +540,8 @@
       const box = d.createElement('span'); box.id = 'skWebBox'; box.style.cssText = 'display:inline-flex;gap:6px;align-items:center;';
       const homes = [];   // 옮긴 엔진 버튼의 원래 자리 [버튼, 부모, 다음 형제]
       [undo, redo, print].forEach((b) => { if (b) { homes.push([b, b.parentNode, b.nextSibling]); box.appendChild(b); } });
-      // [웹 요청 #9] PC 파일 저장·연결 — 숨긴 머리줄의 버튼과 같은 엔진 함수를 부른다. Ctrl+S 는 그대로 웹 저장
-      const pcBtn = (txt, title, fn, bg) => {
-        const b = d.createElement('button'); b.type = 'button'; b.className = 'btn'; b.dataset.skPc = '1';
-        b.textContent = txt; b.title = title; b.style.cssText = 'background:' + bg + ';color:#fff;';
-        b.addEventListener('click', () => { try { fn(); } catch (e) { console.warn('PC 파일 저장 실패', e); } });
-        return b;
-      };
-      const sep = d.createElement('span'); sep.style.opacity = '.4'; sep.textContent = '|';
-      const linkTitle = () => { const lb = d.getElementById('fileLinkBadge'); const s = lb ? (lb.textContent || '').trim() : ''; return s ? '현재: ' + s : ''; };
-      const bSave = pcBtn('💾 PC 파일로 저장', '현재 작업을 PC에 HTML 파일로 저장합니다(파일 이름·위치 선택, 저장한 파일에 연결). PC에서 오프라인으로 열 수 있습니다. 웹 저장은 Ctrl+S.', () => win.saveAsHtmlDownload(), '#2E7D5B');
-      const bLink = pcBtn('🔗 PC 파일 연결', '덮어쓸 PC 파일(HTML)을 고릅니다. 이후 「연결 파일에 저장」으로 그 파일에 저장합니다.', () => win.__fileLinkBadgeClick(), '#546E7A');
-      const bTo = pcBtn('📄 연결 파일에 저장', '연결한 PC 파일에 현재 작업을 덮어씁니다(연결이 없으면 파일 이름·위치를 묻습니다).', () => (typeof win.__pcSaveToCurrentFile === 'function' ? win.__pcSaveToCurrentFile : win.saveAsHtmlDownload)(), '#1F5F99');
-      const NL = String.fromCharCode(10);
-      [bLink, bTo].forEach((b) => b.addEventListener('mouseenter', () => { const s = linkTitle(); b.title = b.title.split(NL)[0] + (s ? NL + s : ''); }));
-      [sep, bSave, bLink, bTo].forEach((x) => box.appendChild(x));
+      // PC 파일 저장·연결 버튼(웹 요청 #9)은 뺐다(hong 11/03): 웹에서는 파일 연결이 필요 없고 헷갈린다.
+      // 파일 받기는 사이트 위쪽 「오프라인 파일」 하나로 하고, 받은 HTML 에는 PC 원래 머리줄(파일 연결·저장)이 그대로 들어간다
       if (at) at.after(box); else bar.appendChild(box);
       head.dataset.skTrim = '1';
       const css = d.createElement('style'); css.id = 'skWebTrim'; // 엔진이 배지를 다시 보이게 해도 숨김 유지
@@ -558,6 +550,7 @@
       // [웹 요청 #9] 엔진 buildSaveHtml 이 HTML 저장 동안 부른다: 웹 화면 정리(숨김·옮긴 버튼·PC 버튼)를 잠시 되돌려
       // 저장 파일이 PC에서 원래 화면으로 열리게 하고, 되돌림 함수를 돌려준다
       win.__skWebUnTrim = function () {
+        if (!head.dataset.skTrim) return function () {}; // 이미 되돌린 상태면 아무것도 안 한다
         const back = homes.slice().reverse().map(([b, p, s]) => { const now = [b, b.parentNode, b.nextSibling]; p.insertBefore(b, s && s.parentNode === p ? s : null); return now; });
         const bp = box.parentNode, bs = box.nextSibling; box.remove();
         const cp = css.parentNode; css.remove(); delete head.dataset.skTrim;

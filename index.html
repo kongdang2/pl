@@ -55,9 +55,9 @@
       <button id="btnNewBiz" class="pri" hidden>📘 새 사업계획</button>
     </div></div>
     <p class="hint" id="bizHint" hidden>웹에서 바로 여는 사업계획 시스템입니다. 저장하면 사업계획 DB가 함께 저장되어, 손익추정을 열 때 차이분석 계획으로 자동으로 들어갑니다. 사업계획을 열면 같은 해(계획연도 전년)의 최신 손익추정 실적·추정이 「당해」 비교자료로 자동으로 들어갑니다.</p>
-    <p class="hint" id="listHint">PC 원본에서 관리자 도구 ▸ DB 내보내기 ▸ 전체 (확정 + 추정)로 받은 .json 파일을 올립니다. 웹에서 저장하면 내가 웹에서 만든 추정자료에 덮어쓰고(이전 저장 3개 보관), 「새 버전으로 저장」은 따로 남깁니다.</p>
+    <p class="hint" id="listHint">PC 원본에서 관리자 도구 ▸ DB 내보내기 ▸ 전체 (확정 + 추정)로 받은 .json 파일을 올립니다. 웹에서 저장하면 내가 웹에서 만든 추정자료에 덮어쓰고, 「새 버전으로 저장」은 따로 남깁니다.</p>
     <div id="engineLine" class="engine-line"></div>
-    <table class="grid"><thead><tr><th id="snapHead">추정자료명</th><th>기준월</th><th>출처</th><th>작성자</th><th>마지막 저장</th><th></th></tr></thead><tbody id="snapRows"></tbody></table>
+    <table class="grid"><thead><tr><th>기준월</th><th id="snapHead">추정자료명</th><th>출처</th><th>작성자</th><th>마지막 저장</th><th></th></tr></thead><tbody id="snapRows"></tbody></table>
   </section>
   <section class="card" data-fold="req">
     <div class="row between fhead"><h2>수정요청</h2><span class="hint" id="rqListHint">추정자료를 연 뒤 위쪽 「✏️ 수정요청」으로 접수하면 💬 챗봇으로 Claude에게 넘어가고(담당자 요청은 관리자 승인 뒤), 진행 막대는 Claude·Codex가 일하면서 적습니다. 내가 올린 요청만 보이고(관리자는 전체), 완료 전에는 「접수 취소」, 취소·반려된 요청은 「삭제」할 수 있습니다(관리자는 모든 요청 삭제).</span></div>
