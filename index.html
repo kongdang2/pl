@@ -25,6 +25,7 @@
   <button id="btnBack" hidden>목록으로</button>
   <button id="btnHideBar" title="위 메뉴 줄을 숨기고 본문만 크게 봅니다. 왼쪽 아래 「▴ 메뉴」로 다시 엽니다">⤢ 본문만</button>
   <span id="who" class="who"></span>
+  <button id="btnPw" class="more" hidden title="내 비밀번호 바꾸기">🔑 비밀번호</button>
   <button id="btnLogout" class="more" hidden>로그아웃</button>
   <button id="btnMore" class="more-tg" title="나머지 메뉴">⋯</button>
 </header>
@@ -34,9 +35,20 @@
     <h2>로그인</h2>
     <label>이메일<input id="email" type="email" autocomplete="username"></label>
     <label>비밀번호<input id="pw" type="password" autocomplete="current-password"></label>
-    <div class="row"><button id="btnLogin" class="pri">로그인</button><button id="btnSignup">처음 사용(가입)</button></div>
+    <div class="row"><button id="btnLogin" class="pri">로그인</button><button id="btnSignup">처음 사용(가입)</button><button id="btnForgot" class="link">비밀번호를 잊었어요</button></div>
     <p class="hint">명단에 등록된 사람만 데이터를 볼 수 있습니다. 가입 후 확인 메일의 링크를 누른 다음 로그인하세요.</p>
     <p id="loginMsg" class="msg"></p>
+  </section>
+</main>
+
+<main id="vReset" class="page" hidden>
+  <section class="card narrow">
+    <h2>새 비밀번호 정하기</h2>
+    <p class="hint" id="resetWho"></p>
+    <label>새 비밀번호 (8자 이상)<input id="pw1" type="password" autocomplete="new-password"></label>
+    <label>한 번 더<input id="pw2" type="password" autocomplete="new-password"></label>
+    <div class="row"><button id="btnSetPw" class="pri">비밀번호 바꾸기</button><button id="btnResetCancel">취소</button></div>
+    <p id="resetMsg" class="msg"></p>
   </section>
 </main>
 

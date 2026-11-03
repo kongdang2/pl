@@ -204,3 +204,4 @@ body.nobar #bar{display:none}
 .chat-ctx input{margin:0}
 .cm .ctxline{font-size:11.5px;color:var(--mut);margin-top:2px}
 .grid td.memo .ren{padding:0 4px;margin-left:4px;font-size:12px;border:0;background:none;opacity:.55;cursor:pointer}.grid td.memo .ren:hover{opacity:1}
+button.link{background:none;border:0;color:var(--pri2);padding:4px 2px;text-decoration:underline;cursor:pointer}

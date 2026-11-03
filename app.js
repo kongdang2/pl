@@ -14,7 +14,9 @@
   const RO = (k) => k + (k === '사업계획' ? '으로' : '로');
 
   // ── 화면 도우미 ─────────────────────────────────────
-  const views = ['vLogin', 'vDenied', 'vList', 'vEngine'];
+  const views = ['vLogin', 'vReset', 'vDenied', 'vList', 'vEngine'];
+  // 비밀번호 재설정 메일의 링크로 들어오면 주소에 type=recovery 가 붙는다(boot 가 주소를 지우기 전에 기억)
+  let RECOVERY = /type=recovery/.test(location.hash);
   function show(v) { views.forEach((x) => { $(x).hidden = x !== v; }); }
   function toast(t, ms) { const el = $('toast'); el.textContent = t; el.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => { el.hidden = true; }, ms || 3500); }
   function busy(t) { $('busy').hidden = !t; $('busyText').textContent = t || ''; }
@@ -43,6 +45,7 @@
     if (/access_token=|refresh_token=/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
     st.user = data.session ? data.session.user : null;
     if (!st.user) { renderBar(); return show('vLogin'); }
+    if (RECOVERY) { renderBar(); return showReset(); }
     const email = (st.user.email || '').toLowerCase();
     const { data: me } = await sb.from('sk_members').select('*').eq('email', email).maybeSingle();
     st.me = me;
@@ -53,6 +56,7 @@
   function renderBar() {
     $('who').textContent = st.user ? (st.user.email + (st.me ? ' · ' + ROLE[st.me.role] : '')) : '';
     $('btnLogout').hidden = !st.user;
+    $('btnPw').hidden = !st.user || !$('vEngine').hidden;
     $('btnMore').hidden = !st.user;
     const inEngine = !$('vEngine').hidden;
     $('btnBack').hidden = !inEngine;
@@ -78,6 +82,33 @@
     $('loginMsg').textContent = error ? ('가입 실패: ' + error.message) : '확인 메일을 보냈습니다. 메일의 링크를 누른 뒤 여기서 로그인하세요.';
   };
   $('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnLogin').click(); });
+  // ── 비밀번호 재설정(hong 11/03) ── 로그인 화면 「비밀번호를 잊었어요」 → 메일 링크 → 이 사이트로 돌아와 새 비밀번호를 정한다.
+  // 로그인한 사람은 위쪽 「🔑 비밀번호」로 바로 바꾼다
+  $('btnForgot').onclick = async () => {
+    const email = $('email').value.trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { $('loginMsg').textContent = '위 칸에 가입한 이메일을 먼저 입력하세요.'; return; }
+    const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+    $('loginMsg').textContent = error ? '보내지 못했습니다: ' + error.message : '비밀번호 재설정 메일을 보냈습니다. 메일의 링크를 누르면 이 사이트에서 새 비밀번호를 정합니다(스팸함도 확인하세요).';
+  };
+  function showReset() {
+    $('resetWho').textContent = st.user ? st.user.email : '';
+    $('pw1').value = $('pw2').value = ''; $('resetMsg').textContent = '';
+    $('btnPw').hidden = true;
+    show('vReset'); $('pw1').focus();
+  }
+  $('btnPw').onclick = showReset;
+  $('btnSetPw').onclick = async () => {
+    const a = $('pw1').value, b = $('pw2').value;
+    if (a.length < 8) { $('resetMsg').textContent = '8자 이상으로 정하세요.'; return; }
+    if (a !== b) { $('resetMsg').textContent = '두 칸이 다릅니다.'; return; }
+    const { error } = await sb.auth.updateUser({ password: a });
+    if (error) { $('resetMsg').textContent = '바꾸지 못했습니다: ' + error.message; return; }
+    RECOVERY = false;
+    toast('비밀번호를 바꿨습니다. 다음 로그인부터 새 비밀번호를 쓰세요.', 5000);
+    boot();
+  };
+  $('btnResetCancel').onclick = () => { RECOVERY = false; boot(); };
+  $('pw2').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnSetPw').click(); });
   $('btnLogout').onclick = async () => { await sb.auth.signOut(); location.reload(); };
 
   // ── 목록 ───────────────────────────────────────────
@@ -1057,6 +1088,6 @@
     $('mEmail').value = $('mName').value = ''; loadMembers();
   };
 
-  sb.auth.onAuthStateChange((ev) => { if (ev === 'SIGNED_OUT') { st.user = st.me = null; } });
+  sb.auth.onAuthStateChange((ev, ses) => { if (ev === 'SIGNED_OUT') { st.user = st.me = null; } if (ev === 'PASSWORD_RECOVERY') { RECOVERY = true; st.user = ses ? ses.user : st.user; showReset(); } });
   boot();
 })();
