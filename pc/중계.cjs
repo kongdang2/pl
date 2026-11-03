@@ -393,9 +393,28 @@ async function reqWorking(m, agent) {
 }
 const isImg = (p) => /\.(png|jpe?g|gif|webp|bmp)$/i.test(p);
 
+// 챗봇 안내서·기억(hong 2026-11-04): 손익추정시스템\챗봇\안내.md(질문별 볼 곳·용어) + 기억.md(확정 결정·자주 묻는 답)를 질문마다 맨 앞에 붙인다.
+// 실행할 때마다 새로 읽으므로 파일만 고치면 바로 반영된다. 너무 크면 앞부분만 싣고 파일 경로를 알려 준다.
+const GUIDE_DIR = path.join(ROOT, '챗봇');
+function guideLines(canWrite) {
+  const L = [];
+  for (const [f, lim] of [['안내.md', 12000], ['기억.md', 12000]]) {
+    let t = '';
+    try { t = fs.readFileSync(path.join(GUIDE_DIR, f), 'utf8').replace(/^\uFEFF/, ''); } catch (_) { continue; }
+    if (t.length > lim) t = t.slice(0, lim) + '\n…(뒷부분 생략 — 전체는 챗봇\\' + f + ' 를 직접 읽는다)';
+    L.push('[챗봇\\' + f + ']', t.trim(), '');
+  }
+  if (!L.length) return [];
+  L.push(canWrite
+    ? '위 안내서로 볼 곳을 먼저 정하고 답한다. hong 이 이번 대화에서 새로 결정·확정한 것이나 두 번 이상 나온 질문의 답은 챗봇\\기억.md 의 알맞은 절 끝에 그 파일 머리의 형식대로 한 줄 덧붙인다(담당자에게도 보이는 파일이라 시스템·업무 규칙만).'
+    : '위 안내서로 볼 곳을 먼저 정하고 답한다. 이 실행에서는 안내서·기억 파일을 고치지 않는다.', '');
+  return L;
+}
+
 // 담당자 질의응답 프롬프트: 읽기 전용, hong 의 다른 대화·진행 작업은 알려 주지 않는다
 function memberPrompt(agent, m, ch, group) {
   return [
+    ...guideLines(false),
     '[담당자 질의응답 · 읽기 전용] 질문한 사람은 hong 이 아닌 팀 담당자(' + m.owner + ')다. 이 실행은 읽기 전용이다.',
     '파일을 고치거나 만들거나 지우지 않는다. 명령을 실행하지 않는다. 버전을 만들거나 Codex·hong 에게 작업을 넘기지 않는다.',
     '손익추정 시스템의 사용법·메뉴·계산 방식·자료의 뜻을 작업 폴더(' + ROOT + ')의 문서(AGENTS.md, 코드지도, _brain 등)와 운영본을 읽고 쉽게 설명한다.',
@@ -428,6 +447,7 @@ function prompt(agent, m, ch, group) {
     ? '너는 Codex(검증 담당)다. AGENTS.md 와 ../협업규칙.md §5 를 따른다.'
     : '너는 Claude(빌드 담당)다. AGENTS.md 와 ../협업규칙.md §4 를 따른다.';
   return [
+    ...guideLines(!m.quick),
     role,
     '작업 폴더: ' + ROOT + ' . 시작 전에 AGENTS.md 를 읽는다.',
     '아래는 웹 「챗봇」 채널의 글 흐름이다(마지막 글이 너에게 온 요청).',

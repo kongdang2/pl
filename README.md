@@ -19,6 +19,7 @@
   한 번에 한 글, hong 없이 6번 넘게 주고받으면 멈추고 hong에게 묻는다, 웹 「⏸ 멈춤」(`sk_relay.paused`), 실행 출력은 PC `소통\중계로그`. 표·권한 `supabase/006_relay.sql`
   대화마다 담당별 세션을 이어 쓴다(답글 사슬, 또는 답글이 아니어도 직전 글과 2시간 안이면 같은 대화. `claude -p --resume` / `codex exec resume`, 세션 번호는 PC `소통\중계세션.json`). 이어 쓰기가 실패하거나 20번·3일을 넘으면 새 세션.
   hong 이 「모두」로 보내면 Claude → Codex 순서로 둘 다 답한다(둘의 답은 받는이 모두 · 안내, Codex 는 Claude 의 답까지 본다). 「모두」 대화에 답글을 달면 셋이 이어 간다.
+  질문마다 PC `챗봇\안내.md`(질문별 볼 문서·용어)와 `챗봇\기억.md`(확정 결정·자주 묻는 답)를 프롬프트 맨 앞에 붙인다(hong 11-04). hong 대화에서는 새 결정을 기억.md 에 한 줄씩 쌓는다.
   첨부는 PC `소통\첨부\<글번호>\` 에 내려받아 경로를 프롬프트에 넣는다(Codex 새 세션은 이미지를 `-i` 로도 붙인다).
   웹 제어: ⚙ 모델(`sk_relay.claude_model·codex_model·codex_effort`), 작업 중 말풍선의 ■ 중지(`stop_id`, 5초 안에 프로세스 나무째 종료), ⚡ 빠른 질문(`sk_channel.quick`, 본 작업과 따로 읽기 전용 실행). `supabase/009_relay_controls.sql`
   작업 과정: claude `--output-format stream-json --verbose`, codex `exec --json` 의 진행 이벤트를 한 줄 요약(읽기·고침·명령·찾기·말·생각)으로 바꿔 실행 중인 글의 `live` 에 2.5초마다 올린다(`supabase/010_channel_live.sql`). 웹은 작업 중 말풍선에 최근 5줄, 끝난 뒤 「작업 과정 N단계」로 펼쳐 본다. 에이전트 답은 문단·목록·굵게·코드 서식으로 보인다.
