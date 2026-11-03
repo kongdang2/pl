@@ -480,12 +480,12 @@ async function uploadOut(blocks, m, agent) {
       if (!OUT_EXT[ext]) { ext = 'txt'; name += '.txt'; }
       const buf = Buffer.from((ext === 'csv' || ext === 'tsv' ? '\ufeff' : '') + b.text, 'utf8'); // 엑셀이 한글을 읽도록 BOM
       if (buf.length > 2 * 1048576) throw new Error('2MB 초과');
-      const key = (isMember(m) ? '담당/' + m.owner : agent) + '/' + new Date().toISOString().replace(/[-:.TZ]/g, '') + '_' + Math.random().toString(36).slice(2, 8) + '.' + ext;
+      const key = (isMember(m) ? 'member/' + String(m.owner).toLowerCase().replace(/[^a-z0-9._-]/g, '_') : agent) + '/' + new Date().toISOString().replace(/[-:.TZ]/g, '') + '_' + Math.random().toString(36).slice(2, 8) + '.' + ext;
       if (!auth.tok || Date.now() > auth.exp) await login();
       const r = await fetch(URL_ + '/storage/v1/object/sonik-channel/' + key.split('/').map(encodeURIComponent).join('/'), { method: 'POST', headers: { apikey: KEY, Authorization: 'Bearer ' + auth.tok, 'Content-Type': OUT_EXT[ext] + '; charset=utf-8' }, body: buf });
       if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
       files.push({ path: key, name, size: buf.length, type: OUT_EXT[ext] });
-    } catch (e) { log('답 파일 올리기 실패 #' + m.id, b.name, e.message); }
+    } catch (e) { log('답 파일 올리기 실패 #' + m.id, b.name, e.message); files.failed = (files.failed || []).concat(b.name); }
   }
   return files;
 }
@@ -640,6 +640,7 @@ async function handle(m, ctl) {
       await applyProgress(m, m.recipient, r.rep.progress, r.rep.body);
       const mem = isMember(m);
       const files = await uploadOut(r.rep.fileBlocks, m, m.recipient);
+      if (files.failed) r.rep.body += '\n\n(중계: 파일 ' + files.failed.join(', ') + ' 을 올리지 못했습니다. 다시 요청해 주세요.)';
       await post({ sender: m.recipient, recipient: mem ? '담당' : r.rep.to, topic: r.rep.topic || m.topic, status: mem ? '안내' : r.rep.st, reply_to: m.id, body: r.rep.body, files, request_id: m._req ? m._req.id : null, owner: mem ? m.owner : null });
       await patchMsg(m.id, { status: '답변', run_state: '완료', run_note: '' });
       log('완료 #' + m.id, '→', r.rep.to, r.rep.st);
@@ -661,6 +662,7 @@ async function handle(m, ctl) {
       const mem = isMember(m);
       const hand = !mem && agent === 'Codex' && r.rep.to === 'Claude' && r.rep.st === '대기';
       const files = await uploadOut(r.rep.fileBlocks, m, agent);
+      if (files.failed) r.rep.body += '\n\n(중계: 파일 ' + files.failed.join(', ') + ' 을 올리지 못했습니다. 다시 요청해 주세요.)';
       const [row] = await post({ sender: agent, recipient: mem ? '담당' : hand ? 'Claude' : '모두', topic: r.rep.topic || m.topic, status: hand ? '대기' : '안내', reply_to: last.id, body: r.rep.body, files, request_id: m._req ? m._req.id : null, owner: mem ? m.owner : null });
       cur = cur.concat([row]); ctx = ctx.concat([row]); last = row; ok++;
       log('완료 #' + m.id, agent, hand ? '→ Claude(대기)' : '→ 모두');

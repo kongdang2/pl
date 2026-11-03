@@ -316,7 +316,7 @@
   // 저장 이름은 영문·숫자만(한글 이름은 저장소 키로 쓸 수 없다). 원래 이름은 글의 files 에 남긴다
   async function upload(f) {
     const ext = ((f.name || '').match(/\.([A-Za-z0-9]{1,8})$/) || [, (f.type.split('/')[1] || 'bin').replace(/[^a-z0-9]/gi, '')])[1].toLowerCase();
-    const path = (ch.member ? '담당/' + ch.email : ME) + '/' + new Date().toISOString().replace(/[-:.TZ]/g, '') + '_' + Math.random().toString(36).slice(2, 8) + '.' + ext;
+    const path = (ch.member ? 'member/' + ch.email.replace(/[^a-z0-9._-]/g, '_') : ME) + '/' + new Date().toISOString().replace(/[-:.TZ]/g, '') + '_' + Math.random().toString(36).slice(2, 8) + '.' + ext;
     const { error } = await ch.sb.storage.from(BUCKET).upload(path, f, { contentType: f.type || 'application/octet-stream' });
     if (error) throw new Error((f.name || '이미지') + ' 올리기 실패: ' + error.message);
     return { path, name: f.name || ('붙여넣은 이미지.' + ext), size: f.size, type: f.type || '' };
