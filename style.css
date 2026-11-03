@@ -214,3 +214,4 @@ button.link{background:none;border:0;color:var(--pri2);padding:4px 2px;text-deco
 .chat-pop .chat-head{padding-left:36px;min-height:48px}
 .chat-pop .ch-rz-se,.chat-pop .ch-rz-sw{width:34px;height:34px}}
 @media (max-width:600px){.chat-pop .ch-rz-n{height:26px}.chat-pop .chat-head{min-height:46px}}
+@media (max-width:600px){.chat-pop .ch-rz-n::after{width:56px;margin-left:-28px;opacity:.75}}

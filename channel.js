@@ -64,8 +64,8 @@
       g.ondblclick = () => { box.set(null); mh.set(0); place(null); };
       g.onpointerdown = (e) => {
         if (e.button !== 0) return;
-        if (!wide()) { // 휴대폰: 위쪽 손잡이로 높이만
-          if (d !== 'n') return;
+        if (!wide()) { // 휴대폰: 위쪽 손잡이로 높이만(손가락은 touchGrip 이 맡는다)
+          if (d !== 'n' || e.pointerType === 'touch') return;
           e.preventDefault(); g.setPointerCapture(e.pointerId);
           const bottom = card.getBoundingClientRect().bottom;
           const mv = (ev) => { const h = Math.min(Math.max(bottom - ev.clientY, 220), window.innerHeight - 90); card.style.height = h + 'px'; };
@@ -108,8 +108,26 @@
       const up = () => { el.removeEventListener('pointermove', mv); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); mh.set(Math.round(card.getBoundingClientRect().height)); };
       el.addEventListener('pointermove', mv); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
     };
+    // 휴대폰 예비 경로: 일부 휴대폰 브라우저는 손가락 끌기를 화면 스크롤로 가로채 pointer 이벤트를 끊는다(pointercancel).
+    // touch 이벤트로 직접 받아 스크롤을 막고 높이를 바꾼다(hong 11/03 「휴대폰은 챗창이 안 잡힘」)
+    const touchGrip = (el) => {
+      let y0 = null, bottom = 0;
+      el.addEventListener('touchstart', (e) => {
+        if (wide() || e.touches.length !== 1 || e.target.closest('button,select,input,textarea,a,label')) { y0 = null; return; }
+        y0 = e.touches[0].clientY; bottom = card.getBoundingClientRect().bottom;
+      }, { passive: true });
+      el.addEventListener('touchmove', (e) => {
+        if (y0 == null) return;
+        e.preventDefault();
+        card.style.height = Math.min(Math.max(bottom - e.touches[0].clientY, 220), window.innerHeight - 90) + 'px';
+      }, { passive: false });
+      const end = () => { if (y0 == null) return; y0 = null; mh.set(Math.round(card.getBoundingClientRect().height)); };
+      el.addEventListener('touchend', end); el.addEventListener('touchcancel', end);
+    };
+    touchGrip(head); touchGrip(card.querySelector('.ch-rz-n'));
     head.onpointerdown = (e) => {
       if (e.button !== 0 || e.target.closest('button,select,input,textarea,a,label')) return;
+      if (e.pointerType === 'touch' && !wide()) return; // 휴대폰 손가락은 위 touch 경로가 맡는다
       if (!wide()) return phoneDrag(e, head);
       e.preventDefault(); head.setPointerCapture(e.pointerId);
       const r = card.getBoundingClientRect(), x0 = e.clientX, y0 = e.clientY;
