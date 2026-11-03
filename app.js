@@ -66,7 +66,7 @@
     $('btnOffline').hidden = !inEngine;
     $('btnZoom').hidden = !inEngine;
     const K = st.open ? KIND(st.open) : '';
-    $('ctx').textContent = inEngine && st.open ? ((K === '사업계획' ? '📘 ' : '') + st.open.base_ym + ' · ' + (st.open.memo || '(이름 없음)') + (K === '사업계획' && st.link ? ' · 🔗 ' + (st.link.memo || '') : '') + (st.open.backupOf ? ' · 백업본' : isOwnWeb(st.open) ? ' · 저장하면 이 ' + K + '에 덮어씀' : ' · 첫 저장은 새 ' + K)) : '';
+    $('ctx').textContent = inEngine && st.open ? ((K === '사업계획' ? '📘 ' : '') + st.open.base_ym + ' · ' + (st.open.memo || '(이름 없음)') + (K === '사업계획' && st.link ? ' · 🔗 ' + (st.link.memo || '') : '') + (st.open.preview ? ' · 저장 안 됨' : st.open.backupOf ? ' · 백업본' : isOwnWeb(st.open) ? ' · 저장하면 이 ' + K + '에 덮어씀' : ' · 첫 저장은 새 ' + K)) : '';
   }
   $('btnLogin').onclick = async () => {
     $('loginMsg').textContent = '';
@@ -647,16 +647,17 @@
     busy(null);
     await loadList();
   }
-  async function openSnap(id, backup) {
+  async function openSnap(id, backup, pv) {
     const s0 = st.snaps.find((x) => x.id === id); if (!s0 || !st.engine) return;
-    const s = backup ? Object.assign({}, s0, { storage_path: backup.storage_path, backupOf: s0.id, memo: s0.memo + ' (' + backup.rev + '번째 저장)', updated_at: backup.saved_at }) : s0;
-    if (s.engine_ver && sameBase(s.engine_ver) !== sameBase(st.engine.ver)) {
+    let s = backup ? Object.assign({}, s0, { storage_path: backup.storage_path, backupOf: s0.id, memo: s0.memo + ' (' + backup.rev + '번째 저장)', updated_at: backup.saved_at }) : s0;
+    if (pv) s = Object.assign({}, s0, { preview: true, memo: (s0.memo || '') + ' · ' + pv.label });
+    if (!pv && s.engine_ver && sameBase(s.engine_ver) !== sameBase(st.engine.ver)) {
       const go = await ask('엔진 버전이 다릅니다', '<p>이 추정자료는 <b>' + esc(s.engine_ver) + '</b>에서 만들었고 웹 엔진은 <b>' + esc(st.engine.ver) + '</b>입니다.</p><p class="hint">계산 로직이 바뀐 버전이면 재현검증에서 차이가 표시될 수 있습니다. 열까요?</p>');
       if (!go) return;
     }
     busy('엔진과 추정자료를 받는 중…');
     try {
-      const [html, db] = await Promise.all([getEngineHtml(), fetchSnapDb(s)]);
+      const [html, db] = await Promise.all([pv ? Promise.resolve(pv.html) : getEngineHtml(), fetchSnapDb(s)]);
       st.link = modeOf(s) === 'bizplan' ? (db.linkSonik || null) : null;
       show('vEngine'); st.open = s; renderBar(); fitEngine();
       busy('엔진 여는 중… (10~30초)');
@@ -669,7 +670,8 @@
       trimHeader(st.mounted.win); hookPrint(st.mounted.win); navStart();
       const n = r.verify ? r.verify.diffs.length : null;
       log('open', s.id, (backup ? 'rev=' + backup.rev + ' ' : '') + (n == null ? 'verify 없음' : ('diffs=' + n)));
-      if (!backup) await linkAfterOpen(s);
+      if (!backup && !pv) await linkAfterOpen(s);
+      if (pv) toast('수정 엔진 미리보기입니다. 저장되지 않습니다.', 6000);
     } catch (e) { toast(e.message, 8000); await loadList(); }
     busy(null);
   }
@@ -716,6 +718,7 @@
   async function saveFromEngine(asNew) {
     if (!st.mounted || !st.open || saveFromEngine.busy) return;
     if (!canWrite()) { toast('열람 권한이라 저장할 수 없습니다.'); return; }
+    if (st.open.preview) { toast('수정 엔진 미리보기는 저장할 수 없습니다.', 5000); return; }
     let memo = null;
     if (asNew || !isOwnWeb(st.open)) {
       const K = KIND(st.open);
@@ -931,6 +934,110 @@
     busy(null);
   };
 
+  // ── 수정 엔진 올리기(hong 11/03) ── 담당자가 직접 고친 엔진(빈 엔진)을 수정요청으로 올린다.
+  // 실데이터 블록이 있으면 거부, 바탕 버전(SYS_CHANGELOG 첫 제목)과 웹 최신 엔진 대비 바뀐 줄 수를 기록한다.
+  // 파일은 챗봇 첨부와 같은 비공개 저장소(sonik-channel, 담당자는 member/<이메일>/ 아래)에 gzip 으로 둔다
+  const CH_BUCKET = 'sonik-channel';
+  const chFolder = () => st.me.role === 'admin' ? 'hong' : 'member/' + String(st.me.email).toLowerCase().replace(/[^a-z0-9._-]/g, '_');
+  function lineDiff(a, b) { // 순서 무시, 줄 묶음 차이(대략적인 규모만)
+    const cnt = new Map();
+    for (const l of a.split('\n')) cnt.set(l, (cnt.get(l) || 0) + 1);
+    let add = 0;
+    for (const l of b.split('\n')) { const n = cnt.get(l) || 0; if (n) cnt.set(l, n - 1); else add++; }
+    let del = 0; cnt.forEach((n) => { del += n; });
+    return { add, del };
+  }
+  $('btnEngDl2').onclick = downloadEngine;
+  $('btnEngUp').onclick = () => {
+    const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.html,text/html';
+    inp.onchange = () => { if (inp.files[0]) submitEngine(inp.files[0]); };
+    inp.click();
+  };
+  async function submitEngine(f) {
+    busy('엔진 파일 확인 중…');
+    let html, chk, sha, diff = null, same = false;
+    try {
+      html = await f.text();
+      chk = E.checkEmptyEngine(html);
+      chk.bridge = html.indexOf('__sonikWebBridge') >= 0;
+      chk.errs = chk.errs.filter((e) => !/웹 연결 엔진/.test(e)); // 오프라인 운영본에서 고친 엔진도 받는다(웹 미리보기만 안 됨)
+      sha = await E.sha256(html);
+      if (!chk.errs.length && st.engine) {
+        const base = await getEngineHtml();
+        same = sha === st.engine.sha256;
+        if (sameBase(chk.ver) === sameBase(st.engine.ver)) diff = lineDiff(base, html);
+      }
+    } catch (e) { busy(null); toast('파일을 읽지 못했습니다: ' + e.message, 8000); return; }
+    busy(null);
+    if (chk.errs.length) { toast('올릴 수 없습니다: ' + chk.errs.join(' / '), 9000); return; }
+    if (same) { toast('웹 최신 엔진과 똑같은 파일입니다. 고친 파일인지 확인하세요.', 7000); return; }
+    const old = st.engine && sameBase(chk.ver) !== sameBase(st.engine.ver);
+    const go = await ask('수정 엔진 올리기', '<div class="eng-sub"><b>' + esc(f.name) + '</b> · ' + Math.round(html.length / 1048576 * 10) / 10 + 'MB · 데이터 없음<br>'
+      + '바탕 버전 <b>' + esc(chk.ver || '알 수 없음') + '</b>' + (st.engine ? ' · 웹 최신 ' + esc(st.engine.ver) : '')
+      + (old ? '<br><span class="bad">바탕 버전이 웹 최신과 다릅니다. 병합이 어려울 수 있으니 가능하면 「최신 엔진 받기」 파일에서 다시 고쳐 주세요.</span>' : '')
+      + (diff ? '<br>최신 엔진 대비 바뀐 줄: 추가 ' + diff.add + ' · 삭제 ' + diff.del : '')
+      + (chk.bridge ? '' : '<br><span class="hint">웹 연결 통로가 없는 오프라인 엔진이라 웹 미리보기는 안 됩니다(병합은 됩니다).</span>') + '</div>'
+      + '<label>제목<input id="esTitle" maxlength="80" placeholder="예: 차이분석 신규 화면 1차"></label>'
+      + '<label>무엇을 바꿨는지(메뉴·계산·화면)<textarea id="esBody" rows="5"></textarea></label>');
+    if (!go) return;
+    const title = (($('esTitle') || {}).value || '').trim() || ('수정 엔진 ' + (chk.ver || '') + ' · ' + f.name).slice(0, 80);
+    const body = (($('esBody') || {}).value || '').trim();
+    busy('엔진 올리는 중…');
+    try {
+      const gz = await E.gzip(html);
+      const path = chFolder() + '/eng_' + new Date().toISOString().replace(/[-:.TZ]/g, '') + '_' + sha.slice(0, 8) + '.html.gz';
+      const up = await sb.storage.from(CH_BUCKET).upload(path, gz, { contentType: 'application/gzip' });
+      if (up.error) throw new Error(up.error.message);
+      const item = { kind: 'engine', path, name: f.name, size: html.length, gz_size: gz.size, sha256: sha, base_ver: chk.ver, web_ver: st.engine ? st.engine.ver : null, bridge: chk.bridge, diff, old_base: !!old };
+      const { data, error } = await sb.from('sk_requests').insert({ title, kind: '수정 엔진', body, items: [item], engine_ver: chk.ver,
+        author_email: st.me.email, author_name: st.me.name || '' }).select('id').single();
+      if (error) throw new Error(error.message);
+      log('request_engine', null, '#' + data.id + ' ' + chk.ver + ' ' + sha.slice(0, 8));
+      toast(st.me.role === 'admin' ? '수정 엔진 요청 #' + data.id + '을(를) 접수했습니다.' : '수정 엔진 요청 #' + data.id + '을(를) 올렸습니다. 관리자가 확인·승인하면 다음 운영본에 병합합니다.', 7000);
+      loadRequests();
+    } catch (e) { toast('올리기 실패: ' + e.message, 8000); }
+    busy(null);
+  }
+  function engineItemHtml(it, rid) {
+    const admin = st.me && st.me.role === 'admin';
+    return '<div class="rq-item eng-sub"><b>🧩 수정 엔진</b> · ' + esc(it.name) + ' · ' + Math.round((it.size || 0) / 1048576 * 10) / 10 + 'MB<br>'
+      + '바탕 버전 <b>' + esc(it.base_ver || '?') + '</b>' + (it.web_ver ? ' (올릴 때 웹 최신 ' + esc(it.web_ver) + ')' : '')
+      + (it.old_base ? ' <span class="bad">· 옛 바탕</span>' : '') + (it.diff ? '<br>바뀐 줄: 추가 ' + it.diff.add + ' · 삭제 ' + it.diff.del : '')
+      + '<div class="row" style="margin-top:6px"><button data-engdl="' + rid + '">⬇ 이 엔진 받기</button>'
+      + (admin && it.bridge ? '<button data-engpv="' + rid + '">🧪 웹 자료로 미리 열기</button>' : '')
+      + (admin && !it.bridge ? '<span class="hint">오프라인 엔진이라 웹 미리보기는 안 됩니다.</span>' : '') + '</div></div>';
+  }
+  async function fetchSubEngine(it) {
+    const { data, error } = await sb.storage.from(CH_BUCKET).download(it.path);
+    if (error) throw new Error('엔진을 받지 못했습니다: ' + error.message);
+    egress(data.size, 'sub engine');
+    const html = await E.gunzipToText(data);
+    if (it.sha256 && (await E.sha256(html)) !== it.sha256) throw new Error('파일 해시가 기록과 다릅니다');
+    return html;
+  }
+  async function subEngineDl(r) {
+    const it = (r.items || []).find((x) => x.kind === 'engine'); if (!it) return;
+    busy('엔진 받는 중…');
+    try { const html = await fetchSubEngine(it); saveBlob(new Blob([html], { type: 'text/html;charset=utf-8' }), '수정엔진_요청' + r.id + '_' + (it.base_ver || '') + '.html'); }
+    catch (e) { toast(e.message, 8000); }
+    busy(null);
+  }
+  // 관리자 미리보기: 웹 자료 하나를 이 수정 엔진으로 연다. 저장은 막는다(st.open.preview)
+  async function subEnginePreview(r) {
+    const it = (r.items || []).find((x) => x.kind === 'engine'); if (!it) return;
+    const list = st.snaps.filter((x) => modeOf(x) === 'sonik');
+    if (!list.length) { toast('미리 열 손익추정 자료가 없습니다.'); return; }
+    const go = await ask('수정 엔진 미리보기 · 요청 #' + r.id, '<label>열 자료<select id="pvSnap">' + list.map((x) => '<option value="' + x.id + '">' + esc(x.base_ym + ' · ' + (x.memo || '')) + '</option>').join('') + '</select></label>'
+      + '<p class="hint">이 수정 엔진으로 자료를 엽니다. 미리보기라 저장은 되지 않습니다. 확인이 끝나면 「목록으로」를 누르세요.</p>');
+    if (!go) return;
+    const sid = $('pvSnap').value;
+    busy('수정 엔진 받는 중…');
+    let html;
+    try { html = await fetchSubEngine(it); } catch (e) { busy(null); toast(e.message, 8000); return; }
+    busy(null);
+    $('rqView').hidden = true;
+    await openSnap(sid, null, { html, label: '🧪 요청 #' + r.id + ' 수정 엔진 미리보기' });
+  }
   // 요청 목록·보기
   // 진행 단계는 사람이 고르지 않는다: Claude·Codex가 일하면서 PC 중계가 stage·progress·working 을 갱신한다
   // 단계는 셋(hong 11/02): 접수 › 작업중 › 완료. DB 값 0 = 접수, 1~3 = 작업중(옛 검토·수정·검증), 4 = 완료(옛 반영)
@@ -1035,9 +1142,11 @@
         ? '<ol class="rq-log">' + r.progress.map((p) => '<li><span class="hint">' + esc(fmtT(p.at)) + ' · ' + esc(STAGES[stepOf(p.stage)]) + '</span><div>' + esc(p.text) + '</div></li>').join('') + '</ol>'
         : '<p class="hint">아직 답변이 없습니다. 접수 글이 💬 챗봇으로 Claude에게 넘어갔고, PC 중계가 돌고 있으면 곧 여기에 진행 상황이 적힙니다.</p>')
       + '<h4>요청 내용</h4>'
-      + (r.items || []).map((it, i) => itemHtml(it, i, false) + excerptHtml(it.excerpt)).join('');
+      + (r.items || []).map((it, i) => it.kind === 'engine' ? engineItemHtml(it, r.id) : itemHtml(it, i, false) + excerptHtml(it.excerpt)).join('');
     $('rqView').hidden = false;
     if ($('rvCancel')) $('rvCancel').onclick = () => cancelRequest(r.id);
+    $('rvBody').querySelectorAll('[data-engdl]').forEach((b) => { b.onclick = () => subEngineDl(r); });
+    $('rvBody').querySelectorAll('[data-engpv]').forEach((b) => { b.onclick = () => subEnginePreview(r); });
     $('rvClose').onclick = () => { $('rqView').hidden = true; };
     $('rvXlsx').onclick = () => downloadXlsx(r);
   }

@@ -215,3 +215,4 @@ button.link{background:none;border:0;color:var(--pri2);padding:4px 2px;text-deco
 .chat-pop .ch-rz-se,.chat-pop .ch-rz-sw{width:34px;height:34px}}
 @media (max-width:600px){.chat-pop .ch-rz-n{height:26px}.chat-pop .chat-head{min-height:46px}}
 @media (max-width:600px){.chat-pop .ch-rz-n::after{width:56px;margin-left:-28px;opacity:.75}}
+.rq-eng{margin:2px 0 8px}.rq-eng .hint{flex:1;min-width:240px}.eng-sub{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:8px 0}.eng-sub .bad{color:var(--warn)}

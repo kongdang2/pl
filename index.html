@@ -73,6 +73,8 @@
   </section>
   <section class="card" data-fold="req">
     <div class="row between fhead"><h2>수정요청</h2><span class="hint" id="rqListHint">추정자료를 연 뒤 위쪽 「✏️ 수정요청」으로 접수하면 💬 챗봇으로 Claude에게 넘어가고(담당자 요청은 관리자 승인 뒤), 진행 막대는 Claude·Codex가 일하면서 적습니다. 내가 올린 요청만 보이고(관리자는 전체), 완료 전에는 「접수 취소」, 취소·반려된 요청은 「삭제」할 수 있습니다(관리자는 모든 요청 삭제).</span></div>
+    <div class="row rq-eng"><button id="btnEngDl2" title="웹에서 쓰는 최신 엔진(데이터 없음). 직접 개발할 때는 늘 이 파일에서 시작하세요">⬇ 최신 엔진 받기</button><button id="btnEngUp">🧩 수정 엔진 올리기</button>
+      <span class="hint">직접 고친 엔진은 그 파일의 관리자 도구 ▸ 「빈 엔진 다운로드」로 뽑아 올립니다(실데이터가 든 파일은 거부). 바탕 버전이 자동으로 기록되고, 관리자 확인·승인 뒤 다음 운영본에 병합합니다.</span></div>
     <table class="grid"><thead><tr><th>번호</th><th>제목</th><th>구분</th><th>진행</th><th>작성자</th><th>접수</th><th></th></tr></thead><tbody id="rqRows"></tbody></table>
   </section>
   <section class="card" id="adminCard" data-fold="admin" hidden>
