@@ -117,13 +117,40 @@
     $('snapRows').querySelectorAll('[data-bk]').forEach((b) => { b.onclick = () => showBackups(b.getAttribute('data-bk')); });
     $('snapRows').querySelectorAll('[data-del]').forEach((b) => { b.onclick = () => deleteSnap(b.getAttribute('data-del')); });
     if (st.me.role === 'admin') loadMembers();
+    loadUsage();
     loadRequests();
     if (window.SonikChannel) window.SonikChannel.mount(sb, st.me);
   }
 
+  // ── 무료 한도 현황(hong 11/03) ── 파일 보관·DB 는 실제 크기, 내려받기(egress)는 사이트·중계가 받은 파일 크기를 적어 둔 추정치(sk_egress)
+  const LIMIT = { egress: 5 * 1024 ** 3, storage: 1024 ** 3, db: 500 * 1024 ** 2 };
+  function egress(bytes, what) {
+    if (!st.me || !bytes) return;
+    sb.from('sk_egress').insert({ email: st.me.email, bytes: Math.round(bytes), what: what || '' }).then(() => loadUsage(), () => {});
+  }
+  const fmtB = (b) => b >= 1024 ** 3 ? (b / 1024 ** 3).toFixed(2) + 'GB' : Math.round(b / 1024 ** 2) + 'MB';
+  async function loadUsage() {
+    clearTimeout(loadUsage.t); loadUsage.t = setTimeout(loadUsage, 60000);
+    if ($('vList').hidden || document.hidden) return;
+    const { data: u, error } = await sb.rpc('sk_usage');
+    if (error || !u) { $('usageCard').hidden = true; return; }
+    const bar = (label, v, lim, sub) => {
+      const p = Math.min(100, v / lim * 100), c = p >= 90 ? 'bad' : p >= 70 ? 'warn' : 'ok';
+      return '<div class="u-item"><div class="u-top"><b>' + label + '</b><span>' + fmtB(v) + ' / ' + fmtB(lim) + ' · ' + (p < 1 ? p.toFixed(1) : Math.round(p)) + '%</span></div>'
+        + '<div class="u-bar"><i class="' + c + '" style="width:' + Math.max(p, 0.5) + '%"></i></div>' + (sub ? '<div class="hint">' + sub + '</div>' : '') + '</div>';
+    };
+    $('usageRows').innerHTML = bar('내려받기 (이번 달)', u.egress_month, LIMIT.egress, '오늘 ' + fmtB(u.egress_today) + ' · 매월 1일 새로 셈(추정)')
+      + bar('파일 보관', u.storage, LIMIT.storage, '추정자료·엔진·챗봇 첨부')
+      + bar('데이터베이스', u.db, LIMIT.db, '목록·요청·챗봇 글');
+    $('usageAt').textContent = fmtT(u.at) + ' 기준';
+    $('usageCard').hidden = false;
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && st.me) loadUsage(); });
+
   async function fetchSnapDb(snap) {
     const { data, error } = await sb.storage.from(C.bucket).download(snap.storage_path);
     if (error) throw new Error('추정자료를 받지 못했습니다: ' + error.message);
+    egress(data.size, 'snapshot ' + snap.id);
     return JSON.parse(await E.gunzipToText(data));
   }
   async function downloadSnap(id) {
@@ -252,6 +279,7 @@
     if (getEngineHtml.cache && getEngineHtml.cache.key === key) return getEngineHtml.cache.html;
     const { data, error } = await sb.storage.from(C.bucket).download(st.engine.storage_path);
     if (error) throw new Error('엔진을 받지 못했습니다: ' + error.message);
+    egress(data.size, 'engine ' + st.engine.ver);
     const html = await E.gunzipToText(data);
     if (st.engine.sha256 && (await E.sha256(html)) !== st.engine.sha256) throw new Error('엔진 파일 해시가 목록과 다릅니다');
     getEngineHtml.cache = { key, html };
@@ -824,7 +852,7 @@
       if (error) throw new Error(error.message);
       log('request', d.snapshot_id, '#' + data.id);
       RQ.reset(); $('rqTitle').value = $('rqBody').value = ''; $('rqKind').value = '기타'; renderRqItems();
-      toast('수정요청 #' + data.id + '을(를) 접수했습니다. 💬 챗봇으로 Claude에게 넘겼습니다.', 6000);
+      toast(st.me.role === 'admin' ? '수정요청 #' + data.id + '을(를) 접수했습니다. 💬 챗봇으로 Claude에게 넘겼습니다.' : '수정요청 #' + data.id + '을(를) 올렸습니다. 관리자가 승인하면 Claude에게 넘어가 작업이 시작됩니다.', 7000);
     } catch (e) { toast('접수 실패: ' + e.message, 8000); }
     busy(null);
   };
@@ -835,6 +863,11 @@
   const STAGES = ['접수', '작업중', '완료'];
   const stepOf = (stage, status) => status === '완료' || +stage >= 4 ? 2 : +stage >= 1 || status === '보류' ? 1 : 0;
   function stageBar(r, withText) {
+    if (r.status === '승인대기' || r.status === '반려') {
+      const wait = r.status === '승인대기';
+      return '<div class="stg"><span class="tag ' + (wait ? 'old' : '') + '">' + (wait ? '⏳ 관리자 승인 대기' : '반려') + '</span>'
+        + (wait && st.me && st.me.role === 'admin' && withText ? ' <button data-ok="' + r.id + '" class="pri">승인</button> <button data-no="' + r.id + '">반려</button>' : '') + '</div>';
+    }
     const n = stepOf(r.stage, r.status);
     const last = (r.progress || [])[(r.progress || []).length - 1];
     const live = r.working && n < 2 ? '<span class="live">● ' + esc(r.working) + ' 작업 중</span> ' : '';
@@ -849,7 +882,24 @@
       + esc(r.author_name || r.author_email) + '</td><td>' + esc(fmtT(r.created_at)) + '</td><td><button data-rv="' + r.id + '">보기</button></td></tr>').join('')
       : '<tr><td colspan="7" class="hint">아직 접수된 요청이 없습니다.</td></tr>';
     $('rqRows').querySelectorAll('[data-rv]').forEach((b) => { b.onclick = () => viewRequest(+b.getAttribute('data-rv')); });
+    $('rqRows').querySelectorAll('[data-ok]').forEach((b) => { b.onclick = () => judgeRequest(+b.getAttribute('data-ok'), true); });
+    $('rqRows').querySelectorAll('[data-no]').forEach((b) => { b.onclick = () => judgeRequest(+b.getAttribute('data-no'), false); });
     liveRequests();
+  }
+  // 담당자(관리자가 아닌 사람)가 올린 요청은 승인 대기로 들어온다. 승인하면 접수로 바뀌고 그때 Claude 앞 대기 글이 생긴다(DB 트리거)
+  async function judgeRequest(id, ok) {
+    const go = await ask(ok ? '수정요청 #' + id + ' 승인' : '수정요청 #' + id + ' 반려', ok
+      ? '<p>승인하면 💬 챗봇으로 Claude에게 넘어가 작업이 시작됩니다.</p><p class="hint">여러 요청을 한 버전으로 묶으려면 승인한 뒤 챗봇에서 「#번호·#번호 같이」라고 알려 주세요.</p>'
+      : '<p>반려하면 작업하지 않습니다. 요청 기록은 남습니다.</p><label>반려 이유(선택)<textarea id="rjWhy"></textarea></label>');
+    if (!go) return;
+    const why = ok ? '' : (($('rjWhy') || {}).value || '').trim();
+    const { data: r } = await sb.from('sk_requests').select('progress').eq('id', id).single();
+    const progress = ((r && r.progress) || []).concat([{ at: new Date().toISOString(), stage: 0, text: '[hong] ' + (ok ? '승인했습니다' : '반려했습니다' + (why ? ': ' + why : '')) }]);
+    const { error } = await sb.from('sk_requests').update({ status: ok ? '접수' : '반려', progress, updated_at: new Date().toISOString() }).eq('id', id);
+    if (error) { toast((ok ? '승인' : '반려') + ' 실패: ' + error.message, 7000); return; }
+    log(ok ? 'request_ok' : 'request_no', null, '#' + id);
+    toast('수정요청 #' + id + (ok ? ' 승인 — Claude에게 넘겼습니다.' : ' 반려했습니다.'), 5000);
+    loadRequests();
   }
   // 실시간: 요청이 바뀌면(PC 중계가 단계·설명·작업 중 표시를 적으면) 목록과 열린 「보기」를 바로 다시 그린다.
   // Realtime 이 끊겨도 목록 화면에서는 20초마다 한 번 다시 읽는다

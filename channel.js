@@ -1,4 +1,5 @@
-// 소통 채널 — hong · Codex · Claude 가 주고받는 글(sk_channel)을 채팅 형태로 보여준다. 관리자(hong)와 에이전트 계정만 읽고 쓴다.
+// 소통 채널 — hong · Codex · Claude 가 주고받는 글(sk_channel)을 채팅 형태로 보여준다. 관리자(hong)와 에이전트 계정은 모든 글을 읽고 쓴다.
+// 담당자(작성자·조회자, hong 11/03): 자기 대화(owner = 내 이메일)만 보고, ⚡ 읽기 전용 질의응답으로만 묻는다(첨부·중계 조작 없음). DB 정책(migration 014)이 막고, 화면은 그에 맞춰 숨긴다.
 // 상태: 대기(받는이가 답해야 함) → 답변 → 완료, 알림만이면 안내. hong 이 「모두」로 보내면 Claude → Codex 순서로 둘 다 답한다(셋이 대화). 글 내용은 고치지 않고 상태만 바꾼다.
 // 화면 오른쪽 아래 💬 버튼으로 여닫는 팝업이라 목록·시스템 화면 어디서나 쓴다. 닫혀 있으면 새 글 수를 버튼에 표시한다.
 // PC 중계(소통\중계.cjs)가 Codex·Claude 앞 「대기」 글을 실행하고 답을 올린다(sk_relay: 신호·멈춤).
@@ -7,7 +8,10 @@
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const hm = (s) => new Date(s).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
   const day = (s) => new Date(s).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' });
-  const ME = 'hong', MINE = (m) => m.sender !== ME && (m.recipient === ME || m.recipient === '모두');
+  let ME = 'hong';
+  const MINE = (m) => m.sender !== ME && (m.recipient === ME || m.recipient === '모두');
+  // 담당자 글·담당자에게 온 답은 그 사람 이메일 앞부분으로 보여 준다(관리자 화면)
+  const NAME = (who, m) => who === '담당' ? '담당 ' + String((m && m.owner) || '').split('@')[0] : who;
   const RUN = { 실행중: '⏳ 작업 중', 완료: '✓ 자동 처리', 실패: '✗ 자동 실패', 건너뜀: '⏸ 왕복 한도' };
   const ch = { sb: null, rows: [], replyTo: null, timer: null, onlyMine: false, to: 'Claude', relay: null, lastTop: 0, open: false, tick: 0, pending: [], urls: {}, quick: false, stopAsked: 0, liveOpen: {} };
   const BUCKET = 'sonik-channel', MAXB = 20 * 1024 * 1024; // 첨부: 비공개 버킷, 파일당 20MB
@@ -194,11 +198,11 @@
     const mine = m.sender === ME, re = m.reply_to && byId.get(m.reply_to);
     const wait = MINE(m) && m.status === '대기';
     return '<div class="cm ' + (mine ? 'me' : 'them s-' + esc(m.sender)) + (wait ? ' wait' : '') + '" id="ch' + m.id + '">'
-      + (mine ? '' : '<div class="who">' + esc(m.sender) + (m.recipient !== ME ? ' <span class="hint">→ ' + esc(m.recipient) + '</span>' : '') + '</div>')
+      + (mine ? '' : '<div class="who">' + esc(NAME(m.sender, m)) + (m.recipient !== ME ? ' <span class="hint">→ ' + esc(NAME(m.recipient, m)) + '</span>' : '') + '</div>')
       + '<div class="line">'
       + '<div class="bub">'
-      + (mine ? '<div class="to">→ ' + esc(m.recipient) + (m.topic ? ' · ' + esc(m.topic) : '') + '</div>' : m.topic ? '<div class="to">' + esc(m.topic) + '</div>' : '')
-      + (re ? '<a class="quote" href="#ch' + re.id + '">' + esc(re.sender) + ': ' + esc(re.body.slice(0, 50)) + (re.body.length > 50 ? '…' : '') + '</a>' : '')
+      + (mine ? '<div class="to">→ ' + esc(NAME(m.recipient, m)) + (m.topic ? ' · ' + esc(m.topic) : '') + '</div>' : m.topic ? '<div class="to">' + esc(m.topic) + '</div>' : '')
+      + (re ? '<a class="quote" href="#ch' + re.id + '">' + esc(NAME(re.sender, re)) + ': ' + esc(re.body.slice(0, 50)) + (re.body.length > 50 ? '…' : '') + '</a>' : '')
       + (m.body ? '<div class="txt">' + (mine ? esc(m.body) : md(m.body)) + '</div>' : '') + atts(m) + '</div>'
       + '<div class="meta">' + (m.status !== '안내' ? '<span class="st st-' + esc(m.status) + '">' + esc(m.status) + '</span>' : '')
       + (m.quick ? '<span class="q">⚡ 빠른 질문</span>' : '')
@@ -262,7 +266,7 @@
   function setTo(to) {
     ch.to = to;
     document.querySelectorAll('#chTo button').forEach((b) => b.classList.toggle('on', b.getAttribute('data-to') === to));
-    $('chBody').placeholder = ch.quick ? '⚡ 빠른 질문: 진행 중인 작업과 따로, 파일을 고치지 않고 바로 답합니다' : to === '모두' ? 'Claude·Codex 모두에게 (Claude → Codex 순서로 답합니다)' : to + '에게 보내기 (Shift+Enter 줄바꿈)';
+    $('chBody').placeholder = ch.member ? (to === '모두' ? 'Claude·Codex 모두에게 질문 (읽기 전용 답변)' : to + '에게 질문 (읽기 전용 답변 · Shift+Enter 줄바꿈)') : ch.quick ? '⚡ 빠른 질문: 진행 중인 작업과 따로, 파일을 고치지 않고 바로 답합니다' : to === '모두' ? 'Claude·Codex 모두에게 (Claude → Codex 순서로 답합니다)' : to + '에게 보내기 (Shift+Enter 줄바꿈)';
   }
   function setQuick(v) {
     ch.quick = v;
@@ -320,13 +324,14 @@
     const owed = ch.rows.filter((m) => MINE(m) && m.status === '대기' && m.sender !== ME && (ch.to === '모두' || m.sender === ch.to));
     const re = ch.replyTo || owed[owed.length - 1] || null;
     const row = { sender: ME, recipient: ch.to, topic: re && re.topic ? re.topic : '', status: '대기',
-      reply_to: re ? re.id : null, body, files, quick: ch.quick, author_email: (s.session.user.email || '').toLowerCase() };
+      reply_to: re ? re.id : null, body, files, quick: ch.member || ch.quick, author_email: (s.session.user.email || '').toLowerCase() };
+    if (ch.member) row.owner = row.author_email; // 담당자 대화: 내 대화로 표시(답도 나에게만 보인다)
     const { error } = await ch.sb.from('sk_channel').insert(row);
     $('chSend').disabled = false;
     if (error) { alertMsg('보내지 못했습니다: ' + error.message); return; }
     // 나에게 온 대기 글에 답하면 원글은 「답변」
     for (const m of (re && MINE(re) && re.status === '대기' && !owed.includes(re) ? owed.concat(re) : owed)) await setStatus(m.id, '답변');
-    $('chBody').value = ''; grow(); setReply(null); ch.pending = []; showPending(); setQuick(false);
+    $('chBody').value = ''; grow(); setReply(null); ch.pending = []; showPending(); setQuick(ch.member);
     await load(); render(true);
   }
 
@@ -334,10 +339,16 @@
     // app.js 가 목록 화면을 그릴 때 부른다. 관리자가 아니면 카드를 숨긴다.
     mount(sb, me) {
       ch.sb = sb;
-      const ok = me && me.role === 'admin';
+      const ok = !!(me && me.role);
       $('chFab').hidden = !ok;
       clearInterval(ch.timer);
       if (!ok) { $('chCard').hidden = true; return; }
+      // 담당자: 내 대화만, 읽기 전용 질의응답. 첨부·⚡ 전환·중계 멈춤/모델 설정은 숨긴다
+      ch.member = me.role !== 'admin'; ME = ch.member ? '담당' : 'hong';
+      ['chQuick', 'chPause', 'chSet', 'chAttach'].forEach((id) => { $(id).hidden = ch.member; });
+      if (ch.member) $('chSetBox').hidden = true;
+      $('chWho').textContent = ch.member ? '나 · Claude · Codex (읽기 전용 질의응답)' : 'hong · Claude · Codex';
+      ch.quick = ch.member;
       $('chFab').onclick = () => setOpen(!ch.open);
       $('chClose').onclick = () => setOpen(false);
       if (!ch.keyed) { ch.keyed = true; document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ch.open && $('modal').hidden) setOpen(false); }); }
@@ -354,12 +365,12 @@
       $('chAttach').onclick = () => $('chFile').click();
       $('chFile').onchange = () => { addFiles($('chFile').files); $('chFile').value = ''; };
       // 캡처 이미지 붙여넣기(Ctrl+V)와 끌어놓기
-      $('chBody').onpaste = (e) => { const fs = [...(e.clipboardData && e.clipboardData.files || [])]; if (fs.length) { e.preventDefault(); addFiles(fs); } };
+      $('chBody').onpaste = (e) => { if (ch.member) return; const fs = [...(e.clipboardData && e.clipboardData.files || [])]; if (fs.length) { e.preventDefault(); addFiles(fs); } };
       const card = $('chCard');
       resizable();
-      card.ondragover = (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { e.preventDefault(); card.classList.add('drop'); } };
+      card.ondragover = (e) => { if (!ch.member && e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { e.preventDefault(); card.classList.add('drop'); } };
       card.ondragleave = (e) => { if (e.target === card) card.classList.remove('drop'); };
-      card.ondrop = (e) => { e.preventDefault(); card.classList.remove('drop'); addFiles(e.dataTransfer.files); };
+      card.ondrop = (e) => { e.preventDefault(); card.classList.remove('drop'); if (!ch.member) addFiles(e.dataTransfer.files); };
       // 한글 입력 중(조합 중) Enter 는 글자 확정이므로 보내지 않는다
       $('chBody').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); send(); } };
       load();

@@ -45,6 +45,10 @@
 </main>
 
 <main id="vList" class="page" hidden>
+  <section class="card usage" id="usageCard" hidden>
+    <div class="row between"><h2>무료 한도 현황</h2><span class="hint"><span id="usageAt"></span> · 내려받기는 사이트·중계가 받은 파일 크기로 센 추정치입니다. 정확한 값은 Supabase ▸ Usage. 무료 프로젝트는 1주일 동안 아무도 안 쓰면 일시정지됩니다.</span></div>
+    <div id="usageRows" class="u-rows"></div>
+  </section>
   <section class="card">
     <div class="row between"><div class="row"><h2>자료 목록</h2><div class="seg" id="listTabs"><button data-t="sonik" class="on">손익추정</button><button data-t="bizplan">📘 사업계획</button></div></div><div class="row">
       <label class="btn" id="lblUpSnap" hidden>PC 파일 올리기<input id="upSnap" type="file" accept=".json,application/json" hidden></label>
@@ -56,7 +60,7 @@
     <table class="grid"><thead><tr><th id="snapHead">추정자료명</th><th>기준월</th><th>출처</th><th>작성자</th><th>마지막 저장</th><th></th></tr></thead><tbody id="snapRows"></tbody></table>
   </section>
   <section class="card">
-    <div class="row between"><h2>수정요청</h2><span class="hint">추정자료를 연 뒤 위쪽 「✏️ 수정요청」으로 접수하면 💬 챗봇으로 Claude에게 바로 넘어가고, 진행 막대는 Claude·Codex가 일하면서 적습니다.</span></div>
+    <div class="row between"><h2>수정요청</h2><span class="hint">추정자료를 연 뒤 위쪽 「✏️ 수정요청」으로 접수하면 💬 챗봇으로 Claude에게 넘어가고(담당자 요청은 관리자 승인 뒤), 진행 막대는 Claude·Codex가 일하면서 적습니다.</span></div>
     <table class="grid"><thead><tr><th>번호</th><th>제목</th><th>구분</th><th>진행</th><th>작성자</th><th>접수</th><th></th></tr></thead><tbody id="rqRows"></tbody></table>
   </section>
   <section class="card" id="adminCard" hidden>
@@ -90,7 +94,7 @@
 <!-- 소통: 어느 화면에서나 오른쪽 아래 버튼으로 여닫는 채팅 팝업(관리자만) -->
 <button id="chFab" class="chat-fab" title="챗봇 (hong · Claude · Codex)" hidden>💬<span id="chBadge" class="chat-badge" hidden></span></button>
 <section class="card chat chat-pop" id="chCard" hidden>
-  <div class="chat-head"><b>💬 챗봇</b><span class="hint">hong · Claude · Codex</span><span class="grow"></span>
+  <div class="chat-head"><b>💬 챗봇</b><span class="hint" id="chWho">hong · Claude · Codex</span><span class="grow"></span>
     <span id="chRelay" class="ch-relay"></span><button id="chSet" title="모델 설정">⚙</button><button id="chPause">⏸ 멈춤</button><button id="chMine" title="나에게 온 대기 글만 보기">내 대기 0</button><button id="chClose" title="닫기 (Esc)">✕</button></div>
   <div id="chSetBox" class="chat-set" hidden>
     <label>Claude 모델<select id="chClaudeModel"><option value="">기본 (PC 설정)</option><option value="claude-opus-5-5">Opus 5.5</option><option value="claude-sonnet-5-5">Sonnet 5.5</option><option value="claude-fable-5-1">Fable 5.1</option><option value="claude-haiku-5-5">Haiku 5.5</option></select></label>

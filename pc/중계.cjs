@@ -78,6 +78,10 @@ async function api(method, table, q, body) {
   if (!r.ok) throw new Error(method + ' ' + table + ' ' + r.status + ': ' + t);
   return t ? JSON.parse(t) : null;
 }
+// 무료 한도 현황용: 중계가 받은 파일 크기(내려받기 추정치, migration 014). 실패해도 무시
+const egress = (bytes, what) => { if (bytes) api('POST', 'sk_egress', '', { email: auth.email, bytes, what }).catch(() => {}); };
+// 담당자(작성자·조회자) 대화: owner = 그 사람 이메일. 읽기 전용 질의응답만, 답은 그 사람에게만(hong 11/03)
+const isMember = (m) => m && m.sender === '담당' && !!m.owner;
 const getMsg = async (id) => (await api('GET', 'sk_channel', '?select=*&id=eq.' + id))[0];
 const patchMsg = (id, v) => api('PATCH', 'sk_channel', '?id=eq.' + id, v);
 const post = (v) => api('POST', 'sk_channel', '', Object.assign({ author_email: auth.email }, v));
@@ -89,17 +93,18 @@ const setRelay = (v) => api('PATCH', 'sk_relay', '?id=eq.1', Object.assign({ upd
 async function chain(m, max) {
   const out = [m];
   let cur = m;
-  while (cur.reply_to && out.length < max) { cur = await getMsg(cur.reply_to); if (!cur) break; out.unshift(cur); }
+  while (cur.reply_to && out.length < max) { cur = await getMsg(cur.reply_to); if (!cur || (cur.owner || null) !== (m.owner || null)) break; out.unshift(cur); }
   return out;
 }
 // 답글이 아닌 새 글이면, 그 전에 hong 과 이 담당이 나눈 최근 글을 앞 맥락으로 붙인다
 async function recent(m, agents, n) {
+  if (isMember(m)) return (await api('GET', 'sk_channel', '?select=*&id=lt.' + m.id + '&owner=eq.' + encodeURIComponent(m.owner) + '&order=id.desc&limit=' + n)).reverse();
   const who = '(hong,' + agents.join(',') + ')';
   const q = '?select=*&id=lt.' + m.id + '&sender=in.' + who + '&recipient=in.' + encodeURIComponent('(hong,' + agents.join(',') + ',모두)') + '&order=id.desc&limit=' + n;
   return (await api('GET', 'sk_channel', q)).reverse();
 }
 // 마지막 hong 글 이후 Codex·Claude 끼리 이어진 글 수
-function hopsSinceHong(ch) { let n = 0; for (let i = ch.length - 1; i >= 0 && ch[i].sender !== 'hong'; i--) n++; return n; }
+function hopsSinceHong(ch) { let n = 0; for (let i = ch.length - 1; i >= 0 && ch[i].sender !== 'hong' && ch[i].sender !== '담당'; i--) n++; return n; }
 
 // ── 세션 기록: { "Claude:12": { id, turns, lastId, at } } (12 = 답글 사슬의 첫 글) ──
 function loadSess() { try { return JSON.parse(fs.readFileSync(SESS_PATH, 'utf8')); } catch (_) { return {}; } }
@@ -180,7 +185,9 @@ async function fetchFiles(list) {
           if (!auth.tok || Date.now() > auth.exp) await login();
           const r = await fetch(URL_ + '/storage/v1/object/sonik-channel/' + f.path.split('/').map(encodeURIComponent).join('/'), { headers: { apikey: KEY, Authorization: 'Bearer ' + auth.tok } });
           if (!r.ok) throw new Error('HTTP ' + r.status);
-          fs.writeFileSync(to, Buffer.from(await r.arrayBuffer()));
+          const buf = Buffer.from(await r.arrayBuffer());
+          fs.writeFileSync(to, buf);
+          egress(buf.length, 'relay attach #' + m.id);
         }
         m._local.push(to);
       } catch (e) { log('첨부 받기 실패 #' + m.id, f.name, e.message); m._local.push(to + ' (받기 실패: ' + e.message + ')'); }
@@ -255,7 +262,31 @@ async function reqWorking(m, agent) {
 }
 const isImg = (p) => /\.(png|jpe?g|gif|webp|bmp)$/i.test(p);
 
+// 담당자 질의응답 프롬프트: 읽기 전용, hong 의 다른 대화·진행 작업은 알려 주지 않는다
+function memberPrompt(agent, m, ch, group) {
+  return [
+    '[담당자 질의응답 · 읽기 전용] 질문한 사람은 hong 이 아닌 팀 담당자(' + m.owner + ')다. 이 실행은 읽기 전용이다.',
+    '파일을 고치거나 만들거나 지우지 않는다. 명령을 실행하지 않는다. 버전을 만들거나 Codex·hong 에게 작업을 넘기지 않는다.',
+    '손익추정 시스템의 사용법·메뉴·계산 방식·자료의 뜻을 작업 폴더(' + ROOT + ')의 문서(AGENTS.md, 코드지도, _brain 등)와 운영본을 읽고 쉽게 설명한다.',
+    '시스템을 고쳐 달라는 요청이면 고치지 말고, 웹에서 추정자료를 연 뒤 「✏️ 수정요청」으로 접수하면 관리자 승인 뒤 처리된다고 안내한다.',
+    'hong 의 다른 대화, 진행 중인 작업, 중계 기록, 비밀번호·계정 정보는 알려 주지 않는다.',
+    '',
+    '대화(마지막 글이 질문):',
+    '',
+    ch.map(fmt).join('\n\n'),
+    '',
+    group ? '이 질문은 Claude·Codex 모두에게 왔다. Claude 가 먼저, Codex 가 이어서 답한다. 같은 말은 되풀이하지 않는다.' : '',
+    '마지막에 답을 정확히 아래 형식으로 출력한다(이 블록만 채널에 올라간다):',
+    '<<<채널',
+    '받는이: 담당',
+    '상태: 안내',
+    '주제: ' + (m.topic || '짧은 제목'),
+    '(본문: 첫 줄에 결론 한 문장 → 빈 줄 → 「- 」 목록으로 핵심만. 15줄 이내)',
+    '채널>>>',
+  ].join('\n');
+}
 function prompt(agent, m, ch, group) {
+  if (isMember(m)) return memberPrompt(agent, m, ch, group);
   const other = agent === 'Codex' ? 'Claude' : 'Codex';
   const role = agent === 'Codex'
     ? '너는 Codex(검증 담당)다. AGENTS.md 와 ../협업규칙.md §5 를 따른다.'
@@ -444,7 +475,7 @@ const ENGINE_RETRY = /웹\s*엔진\s*(자동\s*)?갱신[^\n]{0,10}다시/;
 
 async function handle(m, ctl) {
   const quick = !!m.quick;
-  if (m.recipient !== 'Codex' && ENGINE_RETRY.test(m.body || '')) {
+  if (m.sender === 'hong' && m.recipient !== 'Codex' && ENGINE_RETRY.test(m.body || '')) {
     const ok = engineCheck(true);
     await post({ sender: 'Claude', recipient: 'hong', topic: m.topic || '웹 엔진 자동 갱신', status: '안내', reply_to: m.id,
       body: ok ? '[중계] 웹 엔진 갱신을 다시 시작했습니다. 끝나면 결과를 이 채널에 올립니다(웹 자동검증까지 보통 10~20분).'
@@ -474,7 +505,8 @@ async function handle(m, ctl) {
     else if (!r.rep) await failed(m, m.recipient, r);
     else {
       await applyProgress(m, m.recipient, r.rep.progress, r.rep.body);
-      await post({ sender: m.recipient, recipient: r.rep.to, topic: r.rep.topic || m.topic, status: r.rep.st, reply_to: m.id, body: r.rep.body, request_id: m._req ? m._req.id : null });
+      const mem = isMember(m);
+      await post({ sender: m.recipient, recipient: mem ? '담당' : r.rep.to, topic: r.rep.topic || m.topic, status: mem ? '안내' : r.rep.st, reply_to: m.id, body: r.rep.body, request_id: m._req ? m._req.id : null, owner: mem ? m.owner : null });
       await patchMsg(m.id, { status: '답변', run_state: '완료', run_note: '' });
       log('완료 #' + m.id, '→', r.rep.to, r.rep.st);
     }
@@ -492,8 +524,9 @@ async function handle(m, ctl) {
       if (!r.rep) { await failed(m, agent, r, last.id); continue; }
       await applyProgress(m, agent, r.rep.progress, r.rep.body);
       // Codex 가 Claude 에게 고칠 일을 남기면(받는이 Claude · 대기) 그 글만 Claude 에게 대기로 넘긴다 → 다음 차례에 Claude 가 이어 처리(왕복 한도 적용)
-      const hand = agent === 'Codex' && r.rep.to === 'Claude' && r.rep.st === '대기';
-      const [row] = await post({ sender: agent, recipient: hand ? 'Claude' : '모두', topic: r.rep.topic || m.topic, status: hand ? '대기' : '안내', reply_to: last.id, body: r.rep.body, request_id: m._req ? m._req.id : null });
+      const mem = isMember(m);
+      const hand = !mem && agent === 'Codex' && r.rep.to === 'Claude' && r.rep.st === '대기';
+      const [row] = await post({ sender: agent, recipient: mem ? '담당' : hand ? 'Claude' : '모두', topic: r.rep.topic || m.topic, status: hand ? '대기' : '안내', reply_to: last.id, body: r.rep.body, request_id: m._req ? m._req.id : null, owner: mem ? m.owner : null });
       cur = cur.concat([row]); ctx = ctx.concat([row]); last = row; ok++;
       log('완료 #' + m.id, agent, hand ? '→ Claude(대기)' : '→ 모두');
     }
@@ -512,7 +545,10 @@ async function stoppedMsg(m, agent) {
 
 async function failed(m, agent, r, replyTo) {
   const tail = r.out.trim().split(/\r?\n/).slice(-12).join('\n');
-  await post({ sender: agent, recipient: 'hong', topic: m.topic, status: '대기', reply_to: replyTo || m.id,
+  if (isMember(m)) { // 담당자에게는 실행 기록을 보이지 않는다
+    await post({ sender: agent, recipient: '담당', owner: m.owner, topic: m.topic, status: '안내', reply_to: replyTo || m.id,
+      body: '[중계] ' + agent + ' 가 답을 만들지 못했습니다. 잠시 뒤 다시 물어봐 주세요.' });
+  } else await post({ sender: agent, recipient: 'hong', topic: m.topic, status: '대기', reply_to: replyTo || m.id,
     body: '[중계] ' + agent + ' 실행이 답 형식 없이 끝났습니다(종료 코드 ' + r.code + '). 마지막 출력:\n' + tail + '\n전체 기록: 소통\\중계로그' });
   if (m.recipient !== '모두') await patchMsg(m.id, { status: '답변', run_state: '실패', run_note: '종료 코드 ' + r.code });
   log('실패 #' + m.id, agent, 'code', r.code);
@@ -538,7 +574,8 @@ async function rootOf(m, ch, ctx) {
 }
 
 // ⚡ 빠른 질문 머리말: 읽기 전용, 지금 진행 중인 작업과 오늘 중계 기록 끝부분을 알려 준다(「지금 뭐 해?」에 답할 수 있게)
-async function quickHead() {
+async function quickHead(m) {
+  if (isMember(m)) return '';
   let busy = '';
   try { if (CTL.busy_with) { const b = await getMsg(CTL.busy_with); if (b) busy = '#' + b.id + ' ' + b.sender + ' → ' + b.recipient + ' (' + (b.run_note || '') + ' 실행 중): ' + b.body.slice(0, 300); } } catch (_) { /* 없음 */ }
   let tail = '';
@@ -570,7 +607,7 @@ async function runAgent(agent, m, ch, ctx, group, root) {
   }
   if (!resumed) {
     log('실행 #' + m.id, agent, '새 세션');
-    r = await run(agent, (quick ? await quickHead() : '') + prompt(agent, m, ctx, group), null, imgs, opt);
+    r = await run(agent, (quick ? await quickHead(m) : '') + prompt(agent, m, ctx, group), null, imgs, opt);
     if (r.stopped) { await sink.end(); keepLog(m, agent + '_중지', r.out); return r; }
     rep = parseReply(r.reply, agent);
   }

@@ -184,3 +184,11 @@ body.nobar #bar{display:none}
 .modal-card.wide{padding:12px}
 }
 #listTabs{margin:0 0 0 12px}#listTabs button{flex:none;padding:4px 12px}#listTabs button.on{background:#244A70;border-color:#244A70;color:#fff}
+
+/* 무료 한도 현황 */
+.u-rows{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:6px}
+.u-item .u-top{display:flex;justify-content:space-between;gap:8px;font-size:13px}.u-item .u-top span{color:var(--mut);white-space:nowrap}
+.u-bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:4px}.u-bar i{display:block;height:100%}
+.u-bar i.ok{background:var(--ok)}.u-bar i.warn{background:#F79009}.u-bar i.bad{background:#C83C52}
+.usage .hint{margin:2px 0}
+@media (max-width:899px){.u-rows{grid-template-columns:1fr}}
