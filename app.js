@@ -200,27 +200,11 @@
       + bar('데이터베이스', u.db, LIMIT.db, '목록·요청·챗봇 글');
     $('usageAt').textContent = fmtT(u.at) + ' 기준';
     $('usageCard').hidden = false;
-    showLc();
   }
   document.addEventListener('visibilitychange', () => { if (!document.hidden && st.me) loadUsage(); });
-  // 기기 보관 표시·설정 (엔진은 늘 보관, 추정자료는 끌 수 있음 · 로그아웃하면 모두 지움)
-  async function showLc() {
-    const cb = $('lcSnap'); if (!cb) return;
-    cb.checked = snapCacheOn();
-    const s = await E.LocalCache.stats();
-    $('lcInfo').textContent = '보관 중: 엔진 ' + (s.engine || 0) + ' · 추정자료 ' + (s.snap || 0) + ' (' + fmtB(s.bytes) + ')';
-  }
-  if ($('lcSnap')) {
-    $('lcSnap').onchange = async (e) => {
-      try { localStorage.setItem('sk_cache_snap', e.target.checked ? 'on' : 'off'); } catch (_) { /* 저장 불가 */ }
-      if (!e.target.checked) await E.LocalCache.clear('snap');
-      showLc();
-    };
-    $('btnLcClear').onclick = async () => { await E.LocalCache.clear(); showLc(); toast('이 기기에 보관한 엔진·추정자료를 지웠습니다.'); };
-  }
 
   // 기기 보관(hong 11/03): 경로가 같으면 이 브라우저에 둔 것을 쓴다(서버에서 받지 않음 → 내려받기 사용량 0)
-  const snapCacheOn = () => { try { return localStorage.getItem('sk_cache_snap') !== 'off'; } catch (_) { return true; } };
+  const snapCacheOn = () => true; // hong 11/03: 끄기 설정 없이 늘 보관(개수 제한·로그아웃 시 삭제)
   async function fetchStored(path, kind, what) {
     const on = kind === 'engine' || snapCacheOn();
     if (on) { const hit = await E.LocalCache.get(path); if (hit) return hit; }
