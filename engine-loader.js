@@ -76,8 +76,8 @@
 
   // ── 기기 보관(hong 11/03): 서버 파일(엔진·추정자료 .gz)을 이 브라우저 IndexedDB 에 경로 그대로 둔다.
   // 서버 경로는 저장할 때마다 새 이름(엔진 ver_sha8, 저장본 rN_uuid)이라 경로가 같으면 내용도 같다 → 같은 경로는 다시 받지 않는다.
-  // kind 별 최근 것만 남긴다(엔진 2개, 추정자료 40개). 로그아웃하면 clear() 로 모두 지운다.
-  const LC_KEEP = { engine: 2, snap: 40 };
+  // kind 별 최근 것만 남긴다(엔진 3개, 추정자료 100개). 로그아웃하면 clear() 로 모두 지운다.
+  const LC_KEEP = { engine: 3, snap: 100 };
   let lcDb = null;
   function lcOpen() {
     if (lcDb) return lcDb;
