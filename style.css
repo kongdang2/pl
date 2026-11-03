@@ -192,3 +192,10 @@ body.nobar #bar{display:none}
 .u-bar i.ok{background:var(--ok)}.u-bar i.warn{background:#F79009}.u-bar i.bad{background:#C83C52}
 .usage .hint{margin:2px 0}
 @media (max-width:899px){.u-rows{grid-template-columns:1fr}}
+/* 메뉴 접기(11/03) */
+.fold-t{cursor:pointer;user-select:none}
+.fold-t::before{content:'▾';display:inline-block;width:1em;color:var(--mut);transition:transform .15s}
+.card.folded .fold-t::before{transform:rotate(-90deg)}
+.card.folded > :not(.fhead){display:none}
+.card.folded .fhead .hint,.card.folded .fhead > .row:not(:first-child),.card.folded .fhead .seg{display:none}
+.card.folded{padding-bottom:6px}

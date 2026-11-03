@@ -122,6 +122,25 @@
     if (window.SonikChannel) window.SonikChannel.mount(sb, st.me);
   }
 
+  // ── 메뉴 접기(hong 11/03) ── 저장소 한도·자료 목록·수정요청·관리자 카드 제목을 누르면 접고 편다. 접힘 상태는 이 브라우저에 기억
+  (function setupFold() {
+    const KEY = 'sk_fold';
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (_) { saved = {}; }
+    document.querySelectorAll('section[data-fold]').forEach((sec) => {
+      const k = sec.getAttribute('data-fold');
+      const h2 = sec.querySelector('.fhead h2') || sec.querySelector('h2.fhead');
+      if (!h2) return;
+      h2.classList.add('fold-t');
+      h2.setAttribute('role', 'button'); h2.tabIndex = 0;
+      const set = (f) => { sec.classList.toggle('folded', f); h2.title = f ? '눌러서 펴기' : '눌러서 접기'; };
+      set(!!saved[k]);
+      const flip = () => { const f = !sec.classList.contains('folded'); set(f); saved[k] = f; try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch (_) {} };
+      h2.onclick = flip;
+      h2.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); } };
+    });
+  })();
+
   // ── 무료 한도 현황(hong 11/03) ── 파일 보관·DB 는 실제 크기, 내려받기(egress)는 사이트·중계가 받은 파일 크기를 적어 둔 추정치(sk_egress)
   const LIMIT = { egress: 5 * 1024 ** 3, storage: 1024 ** 3, db: 500 * 1024 ** 2 };
   function egress(bytes, what) {
@@ -863,6 +882,7 @@
   const STAGES = ['접수', '작업중', '완료'];
   const stepOf = (stage, status) => status === '완료' || +stage >= 4 ? 2 : +stage >= 1 || status === '보류' ? 1 : 0;
   function stageBar(r, withText) {
+    if (r.status === '취소') return '<div class="stg"><span class="tag">접수 취소됨</span></div>';
     if (r.status === '승인대기' || r.status === '반려') {
       const wait = r.status === '승인대기';
       return '<div class="stg"><span class="tag ' + (wait ? 'old' : '') + '">' + (wait ? '⏳ 관리자 승인 대기' : '반려') + '</span>'
@@ -879,12 +899,26 @@
     const { data, error } = await sb.from('sk_requests').select('id,title,kind,status,stage,progress,working,author_name,author_email,created_at').order('created_at', { ascending: false }).limit(100);
     if (error) { $('rqRows').innerHTML = '<tr><td colspan="7" class="hint">요청 목록을 읽지 못했습니다: ' + esc(error.message) + '</td></tr>'; return; }
     $('rqRows').innerHTML = (data || []).length ? data.map((r) => '<tr><td>#' + r.id + '</td><td class="memo">' + esc(r.title) + '</td><td>' + esc(r.kind) + '</td><td>' + stageBar(r, true) + '</td><td>'
-      + esc(r.author_name || r.author_email) + '</td><td>' + esc(fmtT(r.created_at)) + '</td><td><button data-rv="' + r.id + '">보기</button></td></tr>').join('')
+      + esc(r.author_name || r.author_email) + '</td><td>' + esc(fmtT(r.created_at)) + '</td><td><button data-rv="' + r.id + '">보기</button>' + (canCancel(r) ? ' <button data-cx="' + r.id + '">접수 취소</button>' : '') + '</td></tr>').join('')
       : '<tr><td colspan="7" class="hint">아직 접수된 요청이 없습니다.</td></tr>';
     $('rqRows').querySelectorAll('[data-rv]').forEach((b) => { b.onclick = () => viewRequest(+b.getAttribute('data-rv')); });
+    $('rqRows').querySelectorAll('[data-cx]').forEach((b) => { b.onclick = () => cancelRequest(+b.getAttribute('data-cx')); });
     $('rqRows').querySelectorAll('[data-ok]').forEach((b) => { b.onclick = () => judgeRequest(+b.getAttribute('data-ok'), true); });
     $('rqRows').querySelectorAll('[data-no]').forEach((b) => { b.onclick = () => judgeRequest(+b.getAttribute('data-no'), false); });
     liveRequests();
+  }
+  // 접수 취소(hong 11/03): 내 요청(관리자는 모든 요청)이고 아직 완료·반려·취소가 아니면 취소할 수 있다.
+  // DB 함수 sk_cancel_request 가 상태를 「취소」로 바꾸고, Claude 앞에 아직 안 넘어간 대기 글도 닫는다
+  const canCancel = (r) => !!st.me && (r.author_email === st.me.email || st.me.role === 'admin') && !['완료', '반려', '취소'].includes(r.status) && stepOf(r.stage, r.status) < 2;
+  async function cancelRequest(id) {
+    const go = await ask('수정요청 #' + id + ' 접수 취소', '<p>이 요청을 취소합니다. 아직 Claude가 시작하지 않았다면 작업하지 않습니다.</p><p class="hint">이미 작업 중이면 지금 하던 한 번의 답변은 끝까지 진행된 뒤 멈춥니다. 요청 기록은 남습니다.</p>');
+    if (!go) return;
+    const { data, error } = await sb.rpc('sk_cancel_request', { p_id: id });
+    if (error) { toast('접수 취소 실패: ' + error.message, 7000); return; }
+    log('request_cancel', null, '#' + id);
+    toast('수정요청 #' + id + ' 접수를 취소했습니다.' + (data === 'running' ? ' (지금 하던 답변 하나는 끝까지 진행됩니다)' : ''), 6000);
+    loadRequests();
+    if (rqOpenId === id && !$('rqView').hidden) viewRequest(id, true);
   }
   // 담당자(관리자가 아닌 사람)가 올린 요청은 승인 대기로 들어온다. 승인하면 접수로 바뀌고 그때 Claude 앞 대기 글이 생긴다(DB 트리거)
   async function judgeRequest(id, ok) {
@@ -926,12 +960,14 @@
       + '<p class="hint">' + esc(r.kind) + ' · ' + esc(r.author_name || r.author_email) + ' · ' + esc(fmtT(r.created_at)) + ' · 추정자료 ' + esc(r.base_ym || '') + ' / 엔진 ' + esc(r.engine_ver || '') + '</p>'
       + (r.body ? '<p style="white-space:pre-wrap">' + esc(r.body) + '</p>' : '')
       + stageBar(r, false)
+      + (canCancel(r) ? '<div class="row"><button id="rvCancel">접수 취소</button></div>' : '')
       + '<h4>진행 기록</h4>' + ((r.progress || []).length
         ? '<ol class="rq-log">' + r.progress.map((p) => '<li><span class="hint">' + esc(fmtT(p.at)) + ' · ' + esc(STAGES[stepOf(p.stage)]) + '</span><div>' + esc(p.text) + '</div></li>').join('') + '</ol>'
         : '<p class="hint">아직 답변이 없습니다. 접수 글이 💬 챗봇으로 Claude에게 넘어갔고, PC 중계가 돌고 있으면 곧 여기에 진행 상황이 적힙니다.</p>')
       + '<h4>요청 내용</h4>'
       + (r.items || []).map((it, i) => itemHtml(it, i, false) + excerptHtml(it.excerpt)).join('');
     $('rqView').hidden = false;
+    if ($('rvCancel')) $('rvCancel').onclick = () => cancelRequest(r.id);
     $('rvClose').onclick = () => { $('rqView').hidden = true; };
     $('rvXlsx').onclick = () => downloadXlsx(r);
   }
