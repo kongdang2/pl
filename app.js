@@ -653,6 +653,7 @@
   }
   async function openSnap(id, backup, pv) {
     const s0 = st.snaps.find((x) => x.id === id); if (!s0 || !st.engine) return;
+    st.cleanSig = null;
     let s = backup ? Object.assign({}, s0, { storage_path: backup.storage_path, backupOf: s0.id, memo: s0.memo + ' (' + backup.rev + '번째 저장)', updated_at: backup.saved_at }) : s0;
     if (pv) s = Object.assign({}, s0, { preview: true, memo: (s0.memo || '') + ' · ' + pv.label });
     if (!pv && s.engine_ver && sameBase(s.engine_ver) !== sameBase(st.engine.ver)) {
@@ -672,6 +673,8 @@
       const r = st.mounted.bridge.applyDb(db);
       rebase(st.mounted.win);
       trimHeader(st.mounted.win); hookPrint(st.mounted.win); navStart();
+      quietVerify(st.mounted.win, r.verify);
+      markClean(1500);
       const n = r.verify ? r.verify.diffs.length : null;
       log('open', s.id, (backup ? 'rev=' + backup.rev + ' ' : '') + (n == null ? 'verify 없음' : ('diffs=' + n)));
       if (!backup && !pv) await linkAfterOpen(s);
@@ -751,11 +754,13 @@
         if (r.data && r.data.prune && r.data.prune.length) await sb.storage.from(C.bucket).remove(r.data.prune);
         st.open = Object.assign({}, s, { rev: r.data.rev, storage_path: path, size_bytes: gz.size, updated_at: new Date().toISOString(), engine_ver: db.sysVer || s.engine_ver });
         log('save_web', s.id, 'rev=' + r.data.rev);
+        markClean(0);
         toast('저장했습니다.');
       } else {
         const parent = st.open.backupOf || st.open.id || st.open.srcId || null;
         const id = await putSnapshot(db, { source: 'web', memo, parent_id: parent });
         log('save_web_new', id, 'parent=' + parent);
+        markClean(0);
         const now = new Date().toISOString();
         st.open = Object.assign({}, st.open, { id, memo, rev: 1, created_at: now, updated_at: now, source: 'web', author_email: st.me.email, author_name: st.me.name || '', engine_ver: db.sysVer, backupOf: null });
         toast('새 ' + RO(KIND(st.open)) + ' 저장했습니다. 다음 저장부터는 여기에 덮어씁니다.', 5000);
@@ -782,8 +787,31 @@
     });
     if (pick) openSnap(id, pick);
   }
+  // 저장 뒤 바뀐 게 있는지(hong 11/03): 엔진 자료(DB 내보내기와 같은 내용)에서 화면 위치 같은 보기 상태를 빼고 비교한다
+  const VIEW_KEYS = ['_zone', '_zoneMode', '_siteMenu', '_zoneMenu', '_sub', '_sysLogReset', '_sysLogHideV2'];
+  function dataSig() {
+    try {
+      const d = st.mounted.bridge.buildDb(), p = Object.assign({}, d.payload);
+      VIEW_KEYS.forEach((k) => delete p[k]);
+      if (p.menuMemoAttach) p.menuMemoAttach = Object.fromEntries(Object.entries(p.menuMemoAttach).filter(([, v]) => v && (v.memo || (v.files && v.files.length))));
+      return JSON.stringify([d.baseYm, d.mode, d.months, p, d.confirmed, d.plan]);
+    } catch (_) { return null; }
+  }
+  function markClean(ms) {
+    const m = st.mounted;
+    setTimeout(() => { if (st.mounted === m) st.cleanSig = dataSig(); }, ms);
+  }
+  // 여는 순간의 「손익 완전 재현 확인」 팝업: 모두 일치하면 띄우지 않고 짧은 알림만, 차이가 있으면 그대로 둔다
+  function quietVerify(win, v) {
+    if (!v || (v.diffs || []).length || (v.skipped || []).length) return;
+    const kill = () => { const el = win.document.getElementById('pnlVerifyModal'); if (el && /완전 재현 확인/.test(el.textContent)) { el.remove(); return true; } return false; };
+    kill();
+    let n = 0; const t = setInterval(() => { if (kill() || ++n > 20) clearInterval(t); }, 250);
+    toast('✅ 손익 재현 확인: 저장 시점과 모두 일치합니다.', 3000);
+  }
   async function leaveOk() {
     const draft = RQ.items.length ? ' 접수하지 않은 수정요청 항목 ' + RQ.items.length + '개도 사라집니다.' : '';
+    if (!draft && st.cleanSig && st.mounted && dataSig() === st.cleanSig) return true;
     return !(canWrite() || draft) || await ask('목록으로', '<p>저장하지 않은 작업은 사라집니다.' + draft + ' 목록으로 갈까요?</p>');
   }
   // 목록으로: 엔진에서 쌓인 브라우저 기록만큼 되돌아가 목록 자리로 간다(그래야 앞으로·뒤로가 꼬이지 않는다)
