@@ -438,7 +438,7 @@ function prompt(agent, m, ch, group) {
     '되돌리기 어려운 일(운영본 교체·보관 이동·파일 삭제·외부 전송)은 하지 말고 받는이를 hong 으로 해서 확인을 요청한다.',
     ...reqLines(m),
     ...ctxLines(m),
-    ...(m.quick ? FILE_HINT : []),
+    ...FILE_HINT,
     '다른 담당에게 넘길 일이 있으면 받는이를 ' + other + ' 로, hong 이 결정할 일이면 hong 으로 한다.',
     '',
     '마지막에 채널에 올릴 답을 정확히 아래 형식으로 출력한다(이 블록만 채널에 올라간다):',
@@ -491,6 +491,9 @@ function parseReply(out, agent) {
   // 파일 답(hong 11/03): <<<파일 이름.csv … 파일>>> 블록은 채널 블록 안팎 어디에 있어도 파일로 떼어 낸다
   const fileBlocks = [...String(out).matchAll(/<<<파일[ \t]+([^\r\n>]+?)[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*파일>>>/g)].map((x) => ({ name: x[1].trim(), text: x[2] }));
   out = String(out).replace(/<<<파일[ \t]+[^\r\n>]+?\r?\n[\s\S]*?\r?\n[ \t]*파일>>>/g, '');
+  // 만들어 둔 파일(엑셀 등) 첨부(hong 11/03): <<<첨부 경로>>> 한 줄. 중계가 PC 파일을 그대로 올린다
+  for (const x of String(out).matchAll(/<<<첨부[ \t]+([^\r\n>]+?)[ \t]*>>>/g)) fileBlocks.push({ name: x[1].trim().split(/[\\/]/).filter(Boolean).pop(), local: x[1].trim() });
+  out = String(out).replace(/<<<첨부[ \t]+[^\r\n>]+?[ \t]*>>>/g, '');
   const all = [...String(out).matchAll(/<<<채널\s*\r?\n([\s\S]*?)\r?\n\s*채널>>>/g)];
   if (!all.length) return null;
   const blk = all[all.length - 1][1];
@@ -504,26 +507,50 @@ function parseReply(out, agent) {
 
 // 답에 붙은 파일 블록을 sonik-channel 에 올리고 글의 files 로 돌려준다. 담당자 답은 담당/<그 사람 이메일>/ 아래(그 사람만 읽음)
 const OUT_EXT = { csv: 'text/csv', tsv: 'text/tab-separated-values', txt: 'text/plain', md: 'text/markdown', json: 'application/json' };
+const BIN_EXT = { xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', xlsm: 'application/vnd.ms-excel.sheet.macroEnabled.12', xls: 'application/vnd.ms-excel', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', zip: 'application/zip' };
+const OUT_DIR = path.join(__dirname, '산출물');
+// 첨부 경로: 손익추정시스템 폴더 안만. 담당자 질문의 답은 소통\산출물 안 파일만
+function localOut(p, m) {
+  const f = path.resolve(path.isAbsolute(p) ? p : path.join(ROOT, p));
+  const lim = isMember(m) ? OUT_DIR : ROOT;
+  if (f !== lim && !f.startsWith(lim + path.sep)) throw new Error((isMember(m) ? '소통\\산출물' : '손익추정시스템') + ' 폴더 밖 파일');
+  if (!fs.existsSync(f) || !fs.statSync(f).isFile()) throw new Error('파일 없음');
+  return f;
+}
 async function uploadOut(blocks, m, agent) {
   const files = [];
   for (const b of (blocks || []).slice(0, 5)) {
     try {
       let name = b.name.replace(/[\\/:*?"<>|]/g, '_').slice(0, 80);
       let ext = (name.match(/\.([a-z0-9]+)$/i) || [, ''])[1].toLowerCase();
-      if (!OUT_EXT[ext]) { ext = 'txt'; name += '.txt'; }
-      const buf = Buffer.from((ext === 'csv' || ext === 'tsv' ? '\ufeff' : '') + b.text, 'utf8'); // 엑셀이 한글을 읽도록 BOM
-      if (buf.length > 2 * 1048576) throw new Error('2MB 초과');
+      let buf, type;
+      if (b.local) {
+        const f = localOut(b.local, m);
+        type = BIN_EXT[ext] || OUT_EXT[ext];
+        if (!type) throw new Error('올릴 수 없는 형식 .' + ext);
+        buf = fs.readFileSync(f);
+        if (buf.length > 10 * 1048576) throw new Error('10MB 초과');
+      } else {
+        if (!OUT_EXT[ext]) { ext = 'txt'; name += '.txt'; }
+        type = OUT_EXT[ext];
+        buf = Buffer.from((ext === 'csv' || ext === 'tsv' ? '\ufeff' : '') + b.text, 'utf8'); // 엑셀이 한글을 읽도록 BOM
+        if (buf.length > 2 * 1048576) throw new Error('2MB 초과');
+      }
       const key = (isMember(m) ? 'member/' + String(m.owner).toLowerCase().replace(/[^a-z0-9._-]/g, '_') : agent) + '/' + new Date().toISOString().replace(/[-:.TZ]/g, '') + '_' + Math.random().toString(36).slice(2, 8) + '.' + ext;
       if (!auth.tok || Date.now() > auth.exp) await login();
-      const r = await fetch(URL_ + '/storage/v1/object/sonik-channel/' + key.split('/').map(encodeURIComponent).join('/'), { method: 'POST', headers: { apikey: KEY, Authorization: 'Bearer ' + auth.tok, 'Content-Type': OUT_EXT[ext] + '; charset=utf-8' }, body: buf });
+      const r = await fetch(URL_ + '/storage/v1/object/sonik-channel/' + key.split('/').map(encodeURIComponent).join('/'), { method: 'POST', headers: { apikey: KEY, Authorization: 'Bearer ' + auth.tok, 'Content-Type': type + (b.local ? '' : '; charset=utf-8') }, body: buf });
       if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
-      files.push({ path: key, name, size: buf.length, type: OUT_EXT[ext] });
+      files.push({ path: key, name, size: buf.length, type });
     } catch (e) { log('답 파일 올리기 실패 #' + m.id, b.name, e.message); files.failed = (files.failed || []).concat(b.name); }
   }
   return files;
 }
-const FILE_HINT = ['질문한 사람이 표·목록을 파일로 받기 원하면(또는 숫자가 많아 표가 길면) 채널 블록과 따로 아래 형식으로 파일을 붙인다. 파일은 직접 만들지 않는다(중계가 만들어 올린다). 한 답에 5개, 파일마다 2MB 까지.',
+const FILE_HINT = ['질문한 사람이 표·목록을 파일로 받기 원하면(또는 숫자가 많아 표가 길면) 채널 블록과 따로 아래 형식으로 파일을 붙인다. 글자 표는 파일을 따로 만들 필요 없이 블록으로 쓰면 중계가 파일로 올린다. 한 답에 5개, 파일마다 2MB 까지. 웹 소통 채널에 붙이는 것은 외부 전송이 아니다(질문한 사람만 받는다).',
   '<<<파일 이름.csv', '(CSV 본문: 첫 줄 머리글, 쉼표 구분, 쉼표가 든 값은 큰따옴표. .tsv·.txt·.md·.json 도 된다)', '파일>>>',
+  '이미 만든 파일(엑셀·PPT·PDF·그림 등)은 내용을 옮겨 적지 말고 한 줄로 붙인다(중계가 그 파일을 그대로 올린다. 손익추정시스템 폴더 안, 10MB 까지. 새로 만드는 파일은 소통\\산출물\\ 아래에 둔다):',
+  '<<<첨부 소통\\산출물\\파일이름.xlsx>>>',
+  '네가 직접 웹에 올리려 하지 않는다(채널 도구·Edge·브라우저 제어 금지, 제어 권한을 달라고도 하지 않는다). 파일 전달은 위 첨부 줄이면 된다.',
+  '웹 추정자료에 엑셀을 넣어 달라는 요청은 직접 하지 못한다: 필요한 파일을 첨부하고, 웹에서 그 자료를 열어 어느 메뉴의 어떤 업로드 버튼에 넣으면 되는지 순서를 안내한다.',
   '파일을 붙이면 채널 본문에는 요약과 「첨부 파일 이름」만 적는다.'];
 // resumeId 가 있으면 그 세션에 이어서 실행한다
 // opt: { quick: 읽기 전용, stopId: 이 글 번호로 중지 요청이 오면 끊는다 }
