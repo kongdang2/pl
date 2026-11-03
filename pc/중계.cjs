@@ -10,7 +10,7 @@
 // 안전장치: 한 번에 한 글만 · 실행 시간 한도 · hong 없이 이어지는 자동 왕복 한도(sk_relay.max_hops) · 웹 「멈춤」(sk_relay.paused)
 //           · 되돌리기 어려운 일(운영본 교체·보관 이동·삭제·외부 전송)은 하지 말고 hong 에게 묻도록 지시 · 모든 실행 출력은 소통\중계로그 에 남김
 'use strict';
-const fs = require('fs'), path = require('path'), os = require('os'), cp = require('child_process'), zlib = require('zlib');
+const fs = require('fs'), path = require('path'), os = require('os'), cp = require('child_process'), zlib = require('zlib'), crypto = require('crypto');
 
 const URL_ = 'https://znqaxyqayxkgqnqnwyez.supabase.co';
 const KEY = 'sb_publishable_2dCd3uLHA80B3hY_DflgKA_xMtj4Itl'; // 공개 키. 접근은 로그인 + RLS
@@ -303,6 +303,21 @@ function reqIdOf(list) {
   }
   return null;
 }
+// 수정 엔진 요청(hong 11/03): 웹에 올린 빈 엔진(gz)을 받아 풀고 해시를 확인해 소통\요청\<번호>\수정엔진_<바탕>.html 로 둔다
+async function engineFile(it, dir) {
+  const to = path.join(dir, '수정엔진_' + String(it.base_ver || '바탕모름').replace(/[\\/:*?"<>|]/g, '_') + '.html');
+  if (fs.existsSync(to)) return to;
+  if (!auth.tok || Date.now() > auth.exp) await login();
+  const r = await fetch(URL_ + '/storage/v1/object/sonik-channel/' + it.path.split('/').map(encodeURIComponent).join('/'), { headers: { apikey: KEY, Authorization: 'Bearer ' + auth.tok } });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const gz = Buffer.from(await r.arrayBuffer());
+  egress(gz.length, 'relay engine ' + it.path);
+  const buf = gz[0] === 0x1f && gz[1] === 0x8b ? zlib.gunzipSync(gz) : gz;
+  const sha = crypto.createHash('sha256').update(buf).digest('hex');
+  if (it.sha256 && sha !== it.sha256) throw new Error('해시가 기록과 다름(' + sha.slice(0, 8) + ' ≠ ' + it.sha256.slice(0, 8) + ')');
+  fs.writeFileSync(to, buf);
+  return to;
+}
 // 요청 원문을 소통\요청\<번호>\요청.md(+ 캡처 그림)로 풀어 두고 m._req 에 요약을 단다
 async function loadRequest(m, list) {
   const id = reqIdOf(list);
@@ -315,6 +330,7 @@ async function loadRequest(m, list) {
     const L = ['# 수정요청 #' + r.id + ' · ' + r.title, '', '- 구분: ' + r.kind + ' · 작성: ' + (r.author_name || r.author_email) + ' · 접수: ' + r.created_at,
       '- 스냅샷 기준월 ' + (r.base_ym || '-') + ' · 엔진 ' + (r.engine_ver || '-') + ' · 지금 단계: ' + STAGES[r.status === '완료' ? 4 : (r.stage || 0)], ''];
     if (r.body) L.push('## 설명', '', r.body, '');
+    let eng = null;
     (r.items || []).forEach((it, i) => {
       const loc = it.loc || {};
       L.push('## 항목 ' + (i + 1), '', '- 위치: ' + [loc.zone, loc.site, loc.menu, (loc.subs || []).join(' > '), loc.ym, loc.table].filter(Boolean).join(' · ') + (it.kind === 'area' ? ' (영역 지정)' : ''));
@@ -322,13 +338,28 @@ async function loadRequest(m, list) {
       if (it.note) L.push('- 메모: ' + it.note);
       if (it.texts && it.texts.length) L.push('- 영역 글자: ' + it.texts.slice(0, 80).join(' | '));
       if (it.excerpt && it.excerpt.rows) L.push('', '표 발췌:', '', ...it.excerpt.rows.slice(0, 40).map((row) => '| ' + row.map((v) => String(v == null ? '' : v).replace(/\|/g, '/')).join(' | ') + ' |'));
+      if (it.kind === 'engine') { eng = it; L.push('- 수정 엔진 파일: ' + (it.name || '') + ' · 바탕 버전 ' + (it.base_ver || '?') + ' · 올릴 때 웹 엔진 ' + (it.web_ver || '?') + (it.diff ? ' · 웹 엔진 대비 추가 ' + it.diff.add + '줄 / 삭제 ' + it.diff.del + '줄' : ' · 바탕이 웹 엔진과 달라 줄 비교 없음') + (it.old_base ? ' (예전 버전 바탕)' : '')); }
       const im = /^data:image\/(png|jpeg);base64,(.+)$/.exec(it.image || '');
       if (im) { const f = path.join(dir, '항목' + (i + 1) + '.' + (im[1] === 'jpeg' ? 'jpg' : 'png')); fs.writeFileSync(f, Buffer.from(im[2], 'base64')); L.push('', '화면 캡처: ' + f); }
       L.push('');
     });
+    let engFile = null, mergeFile = null;
+    if (eng) {
+      try {
+        engFile = await engineFile(eng, dir);
+        // 관리자가 승인(접수)한 뒤에만 PC 합류대기\ 에 내려놓는다
+        if (!['승인대기', '반려', '취소'].includes(r.status)) {
+          const md = path.join(ROOT, '합류대기');
+          fs.mkdirSync(md, { recursive: true });
+          mergeFile = path.join(md, 'R' + id + '_' + String(eng.base_ver || '바탕모름').replace(/[\\/:*?"<>|]/g, '_') + '.html');
+          if (!fs.existsSync(mergeFile)) fs.copyFileSync(engFile, mergeFile);
+        }
+        L.push('', '## 수정 엔진', '', '- 받은 파일: ' + engFile, '- 합류대기: ' + (mergeFile || '아직 승인 전이라 내려놓지 않음'));
+      } catch (e) { L.push('', '## 수정 엔진', '', '- 받지 못함: ' + e.message); log('수정 엔진 받기 실패 #' + id, e.message); }
+    }
     const file = path.join(dir, '요청.md');
     fs.writeFileSync(file, L.join('\n'));
-    m._req = { id, title: r.title, stage: r.stage, status: r.status, file };
+    m._req = { id, title: r.title, stage: r.stage, status: r.status, file, eng: eng && engFile ? { base: eng.base_ver, file: engFile, merge: mergeFile, diff: eng.diff } : null };
   } catch (e) { log('요청 읽기 실패 #' + id, e.message); }
 }
 // 답의 「진행:」 줄을 요청의 단계·설명(progress)에 적는다. 진행 줄이 없어도 답의 첫 줄을 설명으로 남긴다(목록에 늘 최신 상황이 보이게)
@@ -427,7 +458,9 @@ function reqLines(m) {
   return ['',
     '이 대화는 웹 수정요청 #' + q.id + ' 에 관한 것이다(제목: ' + q.title + ' · 지금 단계: ' + STAGES[q.status === '완료' ? 4 : (q.stage || 0)] + ').',
     '요청 원문(항목 위치·고른 셀과 값·메모·화면 캡처 그림): ' + q.file + '  — 먼저 읽는다. 그림 파일은 같은 폴더에 있다.',
-    '엔진 수정은 AGENTS.md 의 버전 흐름(새 번호, 10초본·일반본, 검증자료, Codex 교차검증 통과)을 따르고, 「반영」은 통과 뒤에만 쓴다.',
+    '엔진 수정은 AGENTS.md 의 버전 흐름(다음 운영본 번호, 검증자료, 자동검증, Codex 교차검증 통과)을 따르고, 「반영」은 통과 뒤에만 쓴다.',
+    ...(q.eng ? ['[수정 엔진 요청] 담당자가 고친 엔진 통파일을 올렸다: ' + q.eng.file + ' (바탕 버전 ' + (q.eng.base || '?') + (q.eng.diff ? ', 웹 엔진 대비 +' + q.eng.diff.add + '/-' + q.eng.diff.del + '줄' : '') + ').',
+      q.eng.merge ? '승인돼 PC 합류대기에도 두었다: ' + q.eng.merge + '. 병합은 3방향으로 한다: 바탕 = 같은 번호의 운영본(루트·보관\\버전) 또는 웹테스트의 같은 웹 엔진, 바뀐 쪽 = 올린 파일, 받는 쪽 = 지금 운영본. 바탕→올린 파일의 차이만 떼어 지금 운영본에 얹어 다음 운영본 번호로 만든다. 데이터 블록은 옮기지 않는다. 충돌·바탕을 못 찾음·로직이 겹침은 hong 에게 묻는다.' : '아직 관리자 승인 전이므로 병합하지 말고 바뀐 내용을 읽어 요약·검토만 한다.'] : []),
     '답 블록 안에 진행 줄을 하나 넣으면 웹 요청 목록의 설명이 그 문장으로 바뀐다(hong 이 읽는 쉬운 한 문장). 단계는 접수 › 작업중 › 완료 셋뿐이다:',
     '진행: 작업중 - 설명   (요청이 끝까지 처리됐을 때만 「진행: 완료 - 설명」. 엔진 수정은 Codex 교차검증 통과·웹 반영 뒤에만 완료)'];
 }
