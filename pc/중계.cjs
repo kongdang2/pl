@@ -370,6 +370,8 @@ function memberPrompt(agent, m, ch, group) {
     '손익추정 시스템의 사용법·메뉴·계산 방식·자료의 뜻을 작업 폴더(' + ROOT + ')의 문서(AGENTS.md, 코드지도, _brain 등)와 운영본을 읽고 쉽게 설명한다.',
     '시스템을 고쳐 달라는 요청이면 고치지 말고, 웹에서 추정자료를 연 뒤 「✏️ 수정요청」으로 접수하면 관리자 승인 뒤 처리된다고 안내한다.',
     'hong 의 다른 대화, 진행 중인 작업, 중계 기록, 비밀번호·계정 정보는 알려 주지 않는다.',
+    '질문에 캡처 그림이 붙어 있으면 그림을 먼저 보고, 그림 속 화면·숫자를 기준으로 답한다.',
+    ...FILE_HINT,
     '',
     ...ctxLines(m),
     '',
@@ -405,6 +407,7 @@ function prompt(agent, m, ch, group) {
     '되돌리기 어려운 일(운영본 교체·보관 이동·파일 삭제·외부 전송)은 하지 말고 받는이를 hong 으로 해서 확인을 요청한다.',
     ...reqLines(m),
     ...ctxLines(m),
+    ...(m.quick ? FILE_HINT : []),
     '다른 담당에게 넘길 일이 있으면 받는이를 ' + other + ' 로, hong 이 결정할 일이면 hong 으로 한다.',
     '',
     '마지막에 채널에 올릴 답을 정확히 아래 형식으로 출력한다(이 블록만 채널에 올라간다):',
@@ -452,6 +455,9 @@ function followUp(agent, m, fresh, group) {
 }
 
 function parseReply(out, agent) {
+  // 파일 답(hong 11/03): <<<파일 이름.csv … 파일>>> 블록은 채널 블록 안팎 어디에 있어도 파일로 떼어 낸다
+  const fileBlocks = [...String(out).matchAll(/<<<파일[ \t]+([^\r\n>]+?)[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*파일>>>/g)].map((x) => ({ name: x[1].trim(), text: x[2] }));
+  out = String(out).replace(/<<<파일[ \t]+[^\r\n>]+?\r?\n[\s\S]*?\r?\n[ \t]*파일>>>/g, '');
   const all = [...String(out).matchAll(/<<<채널\s*\r?\n([\s\S]*?)\r?\n\s*채널>>>/g)];
   if (!all.length) return null;
   const blk = all[all.length - 1][1];
@@ -460,9 +466,32 @@ function parseReply(out, agent) {
   let st = get('상태').split(/\s/)[0]; if (!['대기', '안내'].includes(st)) st = '대기';
   const body = blk.split(/\r?\n/).filter((l) => !/^\s*(받는이|상태|주제|진행)\s*:/.test(l)).join('\n').trim();
   const pg = get('진행').match(/^(작업중|완료|검토|수정|검증|반영|보류)\s*[-–—:·]?\s*(.*)$/);
-  return { to, st, topic: get('주제'), body, progress: pg ? { step: pg[1], text: pg[2].trim() || body.split('\n')[0] } : null };
+  return { fileBlocks, to, st, topic: get('주제'), body, progress: pg ? { step: pg[1], text: pg[2].trim() || body.split('\n')[0] } : null };
 }
 
+// 답에 붙은 파일 블록을 sonik-channel 에 올리고 글의 files 로 돌려준다. 담당자 답은 담당/<그 사람 이메일>/ 아래(그 사람만 읽음)
+const OUT_EXT = { csv: 'text/csv', tsv: 'text/tab-separated-values', txt: 'text/plain', md: 'text/markdown', json: 'application/json' };
+async function uploadOut(blocks, m, agent) {
+  const files = [];
+  for (const b of (blocks || []).slice(0, 5)) {
+    try {
+      let name = b.name.replace(/[\\/:*?"<>|]/g, '_').slice(0, 80);
+      let ext = (name.match(/\.([a-z0-9]+)$/i) || [, ''])[1].toLowerCase();
+      if (!OUT_EXT[ext]) { ext = 'txt'; name += '.txt'; }
+      const buf = Buffer.from((ext === 'csv' || ext === 'tsv' ? '\ufeff' : '') + b.text, 'utf8'); // 엑셀이 한글을 읽도록 BOM
+      if (buf.length > 2 * 1048576) throw new Error('2MB 초과');
+      const key = (isMember(m) ? '담당/' + m.owner : agent) + '/' + new Date().toISOString().replace(/[-:.TZ]/g, '') + '_' + Math.random().toString(36).slice(2, 8) + '.' + ext;
+      if (!auth.tok || Date.now() > auth.exp) await login();
+      const r = await fetch(URL_ + '/storage/v1/object/sonik-channel/' + key.split('/').map(encodeURIComponent).join('/'), { method: 'POST', headers: { apikey: KEY, Authorization: 'Bearer ' + auth.tok, 'Content-Type': OUT_EXT[ext] + '; charset=utf-8' }, body: buf });
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
+      files.push({ path: key, name, size: buf.length, type: OUT_EXT[ext] });
+    } catch (e) { log('답 파일 올리기 실패 #' + m.id, b.name, e.message); }
+  }
+  return files;
+}
+const FILE_HINT = ['질문한 사람이 표·목록을 파일로 받기 원하면(또는 숫자가 많아 표가 길면) 채널 블록과 따로 아래 형식으로 파일을 붙인다. 파일은 직접 만들지 않는다(중계가 만들어 올린다). 한 답에 5개, 파일마다 2MB 까지.',
+  '<<<파일 이름.csv', '(CSV 본문: 첫 줄 머리글, 쉼표 구분, 쉼표가 든 값은 큰따옴표. .tsv·.txt·.md·.json 도 된다)', '파일>>>',
+  '파일을 붙이면 채널 본문에는 요약과 「첨부 파일 이름」만 적는다.'];
 // resumeId 가 있으면 그 세션에 이어서 실행한다
 // opt: { quick: 읽기 전용, stopId: 이 글 번호로 중지 요청이 오면 끊는다 }
 function run(agent, input, resumeId, images, opt) {
@@ -610,7 +639,8 @@ async function handle(m, ctl) {
     else {
       await applyProgress(m, m.recipient, r.rep.progress, r.rep.body);
       const mem = isMember(m);
-      await post({ sender: m.recipient, recipient: mem ? '담당' : r.rep.to, topic: r.rep.topic || m.topic, status: mem ? '안내' : r.rep.st, reply_to: m.id, body: r.rep.body, request_id: m._req ? m._req.id : null, owner: mem ? m.owner : null });
+      const files = await uploadOut(r.rep.fileBlocks, m, m.recipient);
+      await post({ sender: m.recipient, recipient: mem ? '담당' : r.rep.to, topic: r.rep.topic || m.topic, status: mem ? '안내' : r.rep.st, reply_to: m.id, body: r.rep.body, files, request_id: m._req ? m._req.id : null, owner: mem ? m.owner : null });
       await patchMsg(m.id, { status: '답변', run_state: '완료', run_note: '' });
       log('완료 #' + m.id, '→', r.rep.to, r.rep.st);
     }
@@ -630,7 +660,8 @@ async function handle(m, ctl) {
       // Codex 가 Claude 에게 고칠 일을 남기면(받는이 Claude · 대기) 그 글만 Claude 에게 대기로 넘긴다 → 다음 차례에 Claude 가 이어 처리(왕복 한도 적용)
       const mem = isMember(m);
       const hand = !mem && agent === 'Codex' && r.rep.to === 'Claude' && r.rep.st === '대기';
-      const [row] = await post({ sender: agent, recipient: mem ? '담당' : hand ? 'Claude' : '모두', topic: r.rep.topic || m.topic, status: hand ? '대기' : '안내', reply_to: last.id, body: r.rep.body, request_id: m._req ? m._req.id : null, owner: mem ? m.owner : null });
+      const files = await uploadOut(r.rep.fileBlocks, m, agent);
+      const [row] = await post({ sender: agent, recipient: mem ? '담당' : hand ? 'Claude' : '모두', topic: r.rep.topic || m.topic, status: hand ? '대기' : '안내', reply_to: last.id, body: r.rep.body, files, request_id: m._req ? m._req.id : null, owner: mem ? m.owner : null });
       cur = cur.concat([row]); ctx = ctx.concat([row]); last = row; ok++;
       log('완료 #' + m.id, agent, hand ? '→ Claude(대기)' : '→ 모두');
     }

@@ -277,7 +277,7 @@
   function setTo(to) {
     ch.to = to;
     document.querySelectorAll('#chTo button').forEach((b) => b.classList.toggle('on', b.getAttribute('data-to') === to));
-    $('chBody').placeholder = ch.member ? (to === '모두' ? 'Claude·Codex 모두에게 질문 (읽기 전용 답변)' : to + '에게 질문 (읽기 전용 답변 · Shift+Enter 줄바꿈)') : ch.quick ? '⚡ 빠른 질문: 진행 중인 작업과 따로, 파일을 고치지 않고 바로 답합니다' : to === '모두' ? 'Claude·Codex 모두에게 (Claude → Codex 순서로 답합니다)' : to + '에게 보내기 (Shift+Enter 줄바꿈)';
+    $('chBody').placeholder = ch.member ? (to === '모두' ? 'Claude·Codex 모두에게 질문 (읽기 전용 답변)' : to + '에게 질문 (캡처 붙여넣기 가능 · 「파일로 줘」하면 CSV로 받습니다)') : ch.quick ? '⚡ 빠른 질문: 진행 중인 작업과 따로, 파일을 고치지 않고 바로 답합니다' : to === '모두' ? 'Claude·Codex 모두에게 (Claude → Codex 순서로 답합니다)' : to + '에게 보내기 (Shift+Enter 줄바꿈)';
   }
   function setQuick(v) {
     ch.quick = v;
@@ -316,7 +316,7 @@
   // 저장 이름은 영문·숫자만(한글 이름은 저장소 키로 쓸 수 없다). 원래 이름은 글의 files 에 남긴다
   async function upload(f) {
     const ext = ((f.name || '').match(/\.([A-Za-z0-9]{1,8})$/) || [, (f.type.split('/')[1] || 'bin').replace(/[^a-z0-9]/gi, '')])[1].toLowerCase();
-    const path = ME + '/' + new Date().toISOString().replace(/[-:.TZ]/g, '') + '_' + Math.random().toString(36).slice(2, 8) + '.' + ext;
+    const path = (ch.member ? '담당/' + ch.email : ME) + '/' + new Date().toISOString().replace(/[-:.TZ]/g, '') + '_' + Math.random().toString(36).slice(2, 8) + '.' + ext;
     const { error } = await ch.sb.storage.from(BUCKET).upload(path, f, { contentType: f.type || 'application/octet-stream' });
     if (error) throw new Error((f.name || '이미지') + ' 올리기 실패: ' + error.message);
     return { path, name: f.name || ('붙여넣은 이미지.' + ext), size: f.size, type: f.type || '' };
@@ -360,7 +360,8 @@
       if (!ok) { $('chCard').hidden = true; return; }
       // 담당자: 내 대화만, 읽기 전용 질의응답. 첨부·⚡ 전환·중계 멈춤/모델 설정은 숨긴다
       ch.member = me.role !== 'admin'; ME = ch.member ? '담당' : 'hong';
-      ['chQuick', 'chPause', 'chSet', 'chAttach'].forEach((id) => { $(id).hidden = ch.member; });
+      ['chQuick', 'chPause', 'chSet'].forEach((id) => { $(id).hidden = ch.member; }); // 담당자도 캡처·파일 첨부 가능(hong 11/03)
+      ch.email = String(me.email || '').toLowerCase();
       if (ch.member) $('chSetBox').hidden = true;
       $('chWho').textContent = ch.member ? '나 · Claude · Codex (읽기 전용 질의응답)' : 'hong · Claude · Codex';
       ch.quick = ch.member;
@@ -381,12 +382,12 @@
       $('chAttach').onclick = () => $('chFile').click();
       $('chFile').onchange = () => { addFiles($('chFile').files); $('chFile').value = ''; };
       // 캡처 이미지 붙여넣기(Ctrl+V)와 끌어놓기
-      $('chBody').onpaste = (e) => { if (ch.member) return; const fs = [...(e.clipboardData && e.clipboardData.files || [])]; if (fs.length) { e.preventDefault(); addFiles(fs); } };
+      $('chBody').onpaste = (e) => { const fs = [...(e.clipboardData && e.clipboardData.files || [])]; if (fs.length) { e.preventDefault(); addFiles(fs); } };
       const card = $('chCard');
       resizable();
-      card.ondragover = (e) => { if (!ch.member && e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { e.preventDefault(); card.classList.add('drop'); } };
+      card.ondragover = (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { e.preventDefault(); card.classList.add('drop'); } };
       card.ondragleave = (e) => { if (e.target === card) card.classList.remove('drop'); };
-      card.ondrop = (e) => { e.preventDefault(); card.classList.remove('drop'); if (!ch.member) addFiles(e.dataTransfer.files); };
+      card.ondrop = (e) => { e.preventDefault(); card.classList.remove('drop'); addFiles(e.dataTransfer.files); };
       // 한글 입력 중(조합 중) Enter 는 글자 확정이므로 보내지 않는다
       $('chBody').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); send(); } };
       load();
