@@ -205,3 +205,12 @@ body.nobar #bar{display:none}
 .cm .ctxline{font-size:11.5px;color:var(--mut);margin-top:2px}
 .grid td.memo .ren{padding:0 4px;margin-left:4px;font-size:12px;border:0;background:none;opacity:.55;cursor:pointer}.grid td.memo .ren:hover{opacity:1}
 button.link{background:none;border:0;color:var(--pri2);padding:4px 2px;text-decoration:underline;cursor:pointer}
+/* 챗봇 터치 조작 개선(11/03): 머리줄은 어디서나 끌기(휴대폰은 높이), 터치 화면은 왼쪽 위 모서리에 큰 크기 손잡이, ⤢ 단추로 한 번에 크게 */
+.chat-pop .chat-head{touch-action:none}
+.ch-size{font-size:14px!important;line-height:1}
+@media (pointer:coarse) and (min-width:601px){
+.chat-pop .ch-rz-nw{width:34px;height:34px;z-index:6}
+.chat-pop .ch-rz-nw::after{content:'';position:absolute;left:6px;top:6px;width:12px;height:12px;border-left:3px solid var(--mut);border-top:3px solid var(--mut);border-radius:4px 0 0 0;opacity:.6}
+.chat-pop .chat-head{padding-left:36px;min-height:48px}
+.chat-pop .ch-rz-se,.chat-pop .ch-rz-sw{width:34px;height:34px}}
+@media (max-width:600px){.chat-pop .ch-rz-n{height:26px}.chat-pop .chat-head{min-height:46px}}

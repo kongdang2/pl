@@ -100,8 +100,17 @@
     const head = card.querySelector('.chat-head');
     head.classList.add('ch-drag');
     head.ondblclick = (e) => { if (!e.target.closest('button,select,input,textarea,a,label')) { box.set(null); place(null); } };
+    // 휴대폰: 머리줄을 위아래로 끌면 높이가 바뀐다(위쪽 얇은 손잡이만으로는 손가락이 잘 안 잡혀서, hong 11/03)
+    const phoneDrag = (e, el) => {
+      e.preventDefault(); el.setPointerCapture(e.pointerId);
+      const bottom = card.getBoundingClientRect().bottom;
+      const mv = (ev) => { card.style.height = Math.min(Math.max(bottom - ev.clientY, 220), window.innerHeight - 90) + 'px'; };
+      const up = () => { el.removeEventListener('pointermove', mv); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); mh.set(Math.round(card.getBoundingClientRect().height)); };
+      el.addEventListener('pointermove', mv); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+    };
     head.onpointerdown = (e) => {
-      if (e.button !== 0 || !wide() || e.target.closest('button,select,input,textarea,a,label')) return;
+      if (e.button !== 0 || e.target.closest('button,select,input,textarea,a,label')) return;
+      if (!wide()) return phoneDrag(e, head);
       e.preventDefault(); head.setPointerCapture(e.pointerId);
       const r = card.getBoundingClientRect(), x0 = e.clientX, y0 = e.clientY;
       document.body.classList.add('ch-resizing'); document.body.style.cursor = 'move';
@@ -115,6 +124,25 @@
       head.addEventListener('pointermove', mv); head.addEventListener('pointerup', up); head.addEventListener('pointercancel', up);
     };
   }
+  // ⤢ 크기 단추(hong 11/03): 터치 화면에서 끌기가 어려우면 한 번 눌러 크게, 다시 누르면 원래대로
+  function toggleSize() {
+    const card = $('chCard');
+    if (!wide()) {
+      const big = mh.get() >= window.innerHeight - 100;
+      mh.set(big ? 0 : window.innerHeight - 90); place(null);
+    } else {
+      const r = card.getBoundingClientRect(), vw = window.innerWidth, vh = window.innerHeight;
+      const big = r.width >= vw * 0.85 && r.height >= vh * 0.85;
+      if (big) { const prev = box.get(); box.set(prev && prev.prev ? prev.prev : null); place(box.get()); }
+      else { const now = box.get(); const b = { l: 8, t: 8, w: vw - 16, h: vh - 16, prev: now && !now.prev ? now : null }; box.set(b); place(b); }
+    }
+    sizeLabel();
+  }
+  function sizeLabel() {
+    const card = $('chCard'), r = card.getBoundingClientRect();
+    const big = wide() ? r.width >= window.innerWidth * 0.85 && r.height >= window.innerHeight * 0.85 : r.height >= window.innerHeight - 100;
+    $('chSize').textContent = big ? '⤡' : '⤢'; $('chSize').title = big ? '원래 크기로' : '크게 보기';
+  }
   // 자료를 열어 둔 상태면 「📄 지금 화면 기준」 체크를 보인다(기본 켬)
   function refreshCtx() {
     let c = null;
@@ -124,7 +152,7 @@
   }
   function setOpen(v) {
     ch.open = v;
-    if (v) place(box.get());
+    if (v) { place(box.get()); setTimeout(sizeLabel, 0); }
     $('chCard').hidden = !v;
     $('chFab').classList.toggle('open', v);
     if (v) refreshCtx();
@@ -369,6 +397,7 @@
       ch.quick = ch.member;
       $('chFab').onclick = () => setOpen(!ch.open);
       $('chClose').onclick = () => setOpen(false);
+      $('chSize').onclick = toggleSize;
       if (!ch.keyed) { ch.keyed = true; document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ch.open && $('modal').hidden) setOpen(false); }); }
       $('chSend').onclick = send;
       $('chPause').onclick = togglePause;
