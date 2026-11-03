@@ -196,37 +196,79 @@ async function fetchFiles(list) {
   }
 }
 // 열린 자료 기준 질문(hong 11/03): 웹에서 자료를 열어 둔 채 물으면 글에 ctx(자료 id·저장본·보던 화면의 표)가 붙어 온다.
-// 화면 글자는 첨부\<글번호>\화면.txt, 자료 전체(DB 내보내기 JSON)는 자료\<id>_r<저장본>.json 으로 둔다
+// 화면 글자는 첨부\<글번호>\화면.txt, 자료 전체(DB 내보내기 JSON)는 자료\<id>_r<저장본>.json 으로 둔다.
+// 스냅샷 범위 안 자유 열람·비교(hong 11/03): 자료\목록.json 에 웹 자료 전체 목록을 두고, 질문에 이름이 나온 자료는 받아서
+// 열린 자료와의 값 차이를 자료\비교_*.txt 로 미리 뽑아 둔다
+const normName = (t) => String(t || '').toLowerCase().replace(/[^0-9a-z가-힣]/g, '');
+async function snapFile(s) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const base = String(s.id).replace(/[^\w-]/g, '_') + '_r';
+  const f = path.join(DATA_DIR, base + s.rev + '.json');
+  if (fs.existsSync(f)) return f;
+  if (!auth.tok || Date.now() > auth.exp) await login();
+  const r = await fetch(URL_ + '/storage/v1/object/sonik/' + s.storage_path.split('/').map(encodeURIComponent).join('/'), { headers: { apikey: KEY, Authorization: 'Bearer ' + auth.tok } });
+  if (!r.ok) throw new Error('자료 받기 HTTP ' + r.status);
+  const buf = Buffer.from(await r.arrayBuffer());
+  egress(buf.length, 'relay ctx ' + s.id);
+  fs.writeFileSync(f, buf[0] === 0x1f && buf[1] === 0x8b ? zlib.gunzipSync(buf) : buf);
+  // 같은 자료의 옛 저장본은 지운다
+  for (const o of fs.readdirSync(DATA_DIR)) if (o.startsWith(base) && o !== path.basename(f)) try { fs.unlinkSync(path.join(DATA_DIR, o)); } catch (_) { /* 무시 */ }
+  return f;
+}
+// 두 자료(JSON)의 값 차이: 경로 \t 앞 \t 뒤. 숫자는 차이(뒤−앞)도 적는다
+function diffJson(a, b, pfx, out, lim) {
+  if (out.length >= lim) return;
+  const isO = (x) => x && typeof x === 'object';
+  if (isO(a) && isO(b)) {
+    for (const k of new Set(Object.keys(a).concat(Object.keys(b)))) { diffJson(a[k], b[k], pfx ? pfx + '.' + k : k, out, lim); if (out.length >= lim) return; }
+    return;
+  }
+  if (a === b || (a == null && b == null)) return;
+  if (typeof a === 'number' && typeof b === 'number') { if (Math.abs(a - b) > 1e-9) out.push(pfx + '\t' + a + '\t' + b + '\t' + (+(b - a).toFixed(6))); return; }
+  const sh = (x) => x === undefined ? '(없음)' : isO(x) ? '{…' + Object.keys(x).length + '개}' : JSON.stringify(x).slice(0, 120);
+  out.push(pfx + '\t' + sh(a) + '\t' + sh(b));
+}
+function diffFile(fa, sa, fb, sb2) {
+  const f = path.join(DATA_DIR, '비교_' + String(sa.id).slice(0, 8) + '_r' + sa.rev + '__' + String(sb2.id).slice(0, 8) + '_r' + sb2.rev + '.txt');
+  if (fs.existsSync(f)) return f;
+  const out = [];
+  diffJson(JSON.parse(fs.readFileSync(fa, 'utf8')), JSON.parse(fs.readFileSync(fb, 'utf8')), '', out, 20000);
+  fs.writeFileSync(f, '앞 = 「' + sa.memo + '」 저장본 ' + sa.rev + ' · 뒤 = 「' + sb2.memo + '」 저장본 ' + sb2.rev + '\n'
+    + '경로\t앞\t뒤\t차이(뒤−앞, 숫자만)' + (out.length >= 20000 ? '  ※ 차이가 많아 앞 20000줄만' : '') + '\n' + out.join('\n'));
+  for (const o of fs.readdirSync(DATA_DIR)) if (o.startsWith('비교_') && path.join(DATA_DIR, o) !== f && (Date.now() - fs.statSync(path.join(DATA_DIR, o)).mtimeMs > 7 * 864e5)) try { fs.unlinkSync(path.join(DATA_DIR, o)); } catch (_) { /* 무시 */ }
+  return f;
+}
 async function fetchCtx(m, ch) {
   if (m._ctx !== undefined) return;
-  const src = m.ctx ? m : (ch || []).slice().reverse().find((x) => x.ctx && x.sender === m.sender && (x.owner || null) === (m.owner || null));
   m._ctx = null;
-  if (!src) return;
-  const c = src.ctx, out = { c, from: src.id };
+  const src = m.ctx ? m : (ch || []).slice().reverse().find((x) => x.ctx && x.sender === m.sender && (x.owner || null) === (m.owner || null));
+  const c = src ? src.ctx : null, out = { c, from: src && src.id, more: [] };
   try {
-    if (c.screen) {
+    if (c && c.screen) {
       const dir = path.join(ATT_DIR, String(src.id));
       fs.mkdirSync(dir, { recursive: true });
       out.screen = path.join(dir, '화면.txt');
       fs.writeFileSync(out.screen, '위치: ' + (c.loc || '') + (c.cut ? '\n(표가 많아 앞부분만)' : '') + '\n\n' + c.screen);
     }
-    if (c.snap_id) {
-      const s = (await api('GET', 'sk_snapshots', '?select=id,storage_path,rev&id=eq.' + encodeURIComponent(c.snap_id)))[0];
-      if (s && s.storage_path) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
-        const f = path.join(DATA_DIR, String(s.id).replace(/[^\w-]/g, '_') + '_r' + s.rev + '.json');
-        if (!fs.existsSync(f)) {
-          if (!auth.tok || Date.now() > auth.exp) await login();
-          const r = await fetch(URL_ + '/storage/v1/object/sonik/' + s.storage_path.split('/').map(encodeURIComponent).join('/'), { headers: { apikey: KEY, Authorization: 'Bearer ' + auth.tok } });
-          if (!r.ok) throw new Error('자료 받기 HTTP ' + r.status);
-          const buf = Buffer.from(await r.arrayBuffer());
-          egress(buf.length, 'relay ctx ' + s.id);
-          fs.writeFileSync(f, buf[0] === 0x1f && buf[1] === 0x8b ? zlib.gunzipSync(buf) : buf);
-          // 같은 자료의 옛 저장본은 지운다
-          for (const o of fs.readdirSync(DATA_DIR)) if (o.startsWith(path.basename(f).replace(/_r\d+\.json$/, '_r')) && o !== path.basename(f)) try { fs.unlinkSync(path.join(DATA_DIR, o)); } catch (_) { /* 무시 */ }
-        }
-        out.db = f; out.rev = s.rev;
-      } else throw new Error('중계 계정이 이 자료를 읽을 수 없습니다(권한)');
+    const all = await api('GET', 'sk_snapshots', '?select=id,memo,mode,base_ym,source,author_name,rev,storage_path,updated_at&order=updated_at.desc');
+    if (!all.length) throw new Error('중계 계정이 자료 목록을 읽을 수 없습니다(권한)');
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    out.list = path.join(DATA_DIR, '목록.json');
+    fs.writeFileSync(out.list, JSON.stringify(all.map((x) => ({ 이름: x.memo, 종류: x.mode === 'bizplan' ? '사업계획' : '손익추정', 기준월: x.base_ym, 출처: x.source === 'pc' ? 'PC 원본' : '웹', 작성자: x.author_name, 저장본: x.rev, 마지막저장: x.updated_at, id: x.id })), null, 1));
+    out.all = all;
+    const open = c && c.snap_id ? all.find((x) => x.id === c.snap_id) : null;
+    if (open) { out.open = open; out.db = await snapFile(open); out.rev = open.rev; }
+    // 질문(이 대화의 사람 글)에 이름이 나온 자료: 긴 이름부터 맞추고 맞춘 부분은 지워서 「수급회의」가 「수급회의_1040」 안에서 또 걸리지 않게
+    let q = normName((ch || []).filter((x) => x.sender === m.sender).map((x) => x.body).concat([m.body]).join(' '));
+    for (const x of all.slice().sort((p, r) => normName(r.memo).length - normName(p.memo).length)) {
+      const n = normName(x.memo);
+      if (n.length < 2 || !q.includes(n)) continue;
+      q = q.split(n).join(' ');
+      if (open && x.id === open.id) continue;
+      if (out.more.length >= 3) break;
+      const e = { s: x };
+      try { e.file = await snapFile(x); if (out.db) e.diff = diffFile(out.db, open, e.file, x); } catch (er) { e.err = er.message; }
+      out.more.push(e);
     }
   } catch (e) { log('열린 자료 받기 실패 #' + m.id, e.message); out.err = e.message; }
   m._ctx = out;
@@ -234,14 +276,23 @@ async function fetchCtx(m, ch) {
 function ctxLines(m) {
   const x = m._ctx;
   if (!x) return [];
-  const c = x.c;
-  return ['',
-    '[열린 자료 기준] 질문한 사람은 웹에서 「' + (c.snap_memo || '') + '」(' + (c.kind === 'bizplan' ? '사업계획' : '손익추정') + ', 기준월 ' + (c.base_ym || '') + ', 엔진 ' + (c.engine_ver || '') + ')를 열어 둔 채 물었다.',
-    '이 자료 기준으로 숫자를 찾아 답한다. PC 운영본이나 다른 자료의 값을 쓰지 않는다. 답 첫 줄에 「' + (c.snap_memo || '열린 자료') + ' 기준」이라고 밝힌다.',
-    x.screen ? '- 물을 때 보던 화면(' + (c.loc || '') + ')의 표, 탭 구분 글자: ' + x.screen + '  — 엔진이 계산해 보여 준 값은 여기서 먼저 찾는다.' + (c.dirty ? ' 저장하지 않은 수정이 있으니 화면 값이 저장본보다 우선이다.' : '') : '',
-    x.db ? '- 그 자료 전체(DB 내보내기 JSON, 저장본 ' + x.rev + (c.rev && c.rev !== x.rev ? ', 물을 때 연 것은 저장본 ' + c.rev + '이라 그 뒤 저장이 있었다' : '') + '): ' + x.db + '  — 크므로 필요한 키만 찾아 읽는다.' : (x.err ? '- 자료 전체는 받지 못했다(' + x.err + '). 화면 표로 답하고, 없으면 그렇다고 말한다.' : ''),
-    '화면에 없는 계산값은 자료 JSON 의 입력값과 운영본 계산 방식으로 구하고 어떻게 구했는지 한 줄로 적는다. 끝내 못 구하면 그 값을 볼 수 있는 메뉴를 안내한다.',
-  ].filter((l) => l !== '');
+  const c = x.c, nm = (s) => '「' + s.memo + '」(' + (s.mode === 'bizplan' ? '사업계획' : '손익추정') + ', 기준월 ' + s.base_ym + ', 저장본 ' + s.rev + ')';
+  const L = [''];
+  if (c) {
+    L.push('[열린 자료 기준] 질문한 사람은 웹에서 「' + (c.snap_memo || '') + '」(' + (c.kind === 'bizplan' ? '사업계획' : '손익추정') + ', 기준월 ' + (c.base_ym || '') + ', 엔진 ' + (c.engine_ver || '') + ')를 열어 둔 채 물었다.',
+      '따로 말하지 않으면 이 자료 기준으로 숫자를 찾아 답한다. PC 운영본의 값을 쓰지 않는다. 답 첫 줄에 어느 자료 기준인지 밝힌다.');
+    if (x.screen) L.push('- 물을 때 보던 화면(' + (c.loc || '') + ')의 표, 탭 구분 글자: ' + x.screen + '  — 엔진이 계산해 보여 준 값은 여기서 먼저 찾는다.' + (c.dirty ? ' 저장하지 않은 수정이 있으니 화면 값이 저장본보다 우선이다.' : ''));
+    if (x.db) L.push('- 열린 자료 전체(DB 내보내기 JSON, 저장본 ' + x.rev + (c.rev && c.rev !== x.rev ? ', 물을 때 연 것은 저장본 ' + c.rev + '이라 그 뒤 저장이 있었다' : '') + '): ' + x.db + '  — 크므로 필요한 키만 찾아 읽는다.');
+  }
+  if (x.list) L.push('[웹 자료 범위 안에서 자유 열람·비교] 웹에 저장된 자료 전체 목록: ' + x.list + ' (' + x.all.length + '개). 질문이 다른 자료를 가리키면 이 목록에서 찾는다.');
+  for (const e of x.more) {
+    if (e.err) { L.push('- 질문에 나온 ' + nm(e.s) + ': 받지 못했다(' + e.err + ').'); continue; }
+    L.push('- 질문에 나온 ' + nm(e.s) + ' 전체: ' + e.file + (e.diff ? '\n  열린 자료와의 값 차이(경로·앞·뒤·차이, 앞 = 열린 자료): ' + e.diff + '  — 비교 질문은 여기서 차이 나는 입력값(가격·물량·원가·비용 등)을 먼저 찾아 원인으로 설명한다.' : ''));
+  }
+  if (x.list && !x.more.length) L.push('- 질문에 다른 자료 이름이 없어 미리 받은 자료는 없다. 다른 자료가 필요하면 목록의 정확한 이름을 넣어 다시 물어 달라고 안내한다.');
+  if (x.err) L.push('- 자료를 다 받지 못했다(' + x.err + '). 받은 것으로 답하고, 없으면 그렇다고 말한다.');
+  L.push('자료 JSON 에는 주로 입력값이 들어 있다. 손익처럼 계산된 값은 화면 표에서 찾고, 없으면 입력값과 운영본 계산 방식으로 구해 어떻게 구했는지 한 줄로 적는다. 끝내 못 구하면 그 값을 볼 수 있는 메뉴를 안내한다.');
+  return L;
 }
 // 대화가 어느 수정요청에 관한 것인지: 글의 request_id(접수 때 자동으로 올라온 글) 또는 주제 「수정요청 #N」
 function reqIdOf(list) {
