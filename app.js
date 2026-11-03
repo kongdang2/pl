@@ -166,10 +166,14 @@
       if (!h2) return;
       h2.classList.add('fold-t');
       h2.setAttribute('role', 'button'); h2.tabIndex = 0;
-      const set = (f) => { sec.classList.toggle('folded', f); h2.title = f ? '눌러서 펴기' : '눌러서 접기'; };
+      const btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'fold-btn'; btn.textContent = '▾'; btn.tabIndex = -1;
+      sec.appendChild(btn);
+      const set = (f) => { sec.classList.toggle('folded', f); h2.title = btn.title = f ? '눌러서 펴기' : '눌러서 접기'; };
       set(!!saved[k]);
       const flip = () => { const f = !sec.classList.contains('folded'); set(f); saved[k] = f; try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch (_) {} };
       h2.onclick = flip;
+      btn.onclick = flip;
       h2.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); } };
     });
   })();
