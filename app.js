@@ -109,7 +109,7 @@
   };
   $('btnResetCancel').onclick = () => { RECOVERY = false; boot(); };
   $('pw2').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnSetPw').click(); });
-  $('btnLogout').onclick = async () => { await sb.auth.signOut(); location.reload(); };
+  $('btnLogout').onclick = async () => { await E.LocalCache.clear(); await sb.auth.signOut(); location.reload(); };
 
   // ── 목록 ───────────────────────────────────────────
   async function loadList() {
@@ -200,13 +200,38 @@
       + bar('데이터베이스', u.db, LIMIT.db, '목록·요청·챗봇 글');
     $('usageAt').textContent = fmtT(u.at) + ' 기준';
     $('usageCard').hidden = false;
+    showLc();
   }
   document.addEventListener('visibilitychange', () => { if (!document.hidden && st.me) loadUsage(); });
+  // 기기 보관 표시·설정 (엔진은 늘 보관, 추정자료는 끌 수 있음 · 로그아웃하면 모두 지움)
+  async function showLc() {
+    const cb = $('lcSnap'); if (!cb) return;
+    cb.checked = snapCacheOn();
+    const s = await E.LocalCache.stats();
+    $('lcInfo').textContent = '보관 중: 엔진 ' + (s.engine || 0) + ' · 추정자료 ' + (s.snap || 0) + ' (' + fmtB(s.bytes) + ')';
+  }
+  if ($('lcSnap')) {
+    $('lcSnap').onchange = async (e) => {
+      try { localStorage.setItem('sk_cache_snap', e.target.checked ? 'on' : 'off'); } catch (_) { /* 저장 불가 */ }
+      if (!e.target.checked) await E.LocalCache.clear('snap');
+      showLc();
+    };
+    $('btnLcClear').onclick = async () => { await E.LocalCache.clear(); showLc(); toast('이 기기에 보관한 엔진·추정자료를 지웠습니다.'); };
+  }
 
+  // 기기 보관(hong 11/03): 경로가 같으면 이 브라우저에 둔 것을 쓴다(서버에서 받지 않음 → 내려받기 사용량 0)
+  const snapCacheOn = () => { try { return localStorage.getItem('sk_cache_snap') !== 'off'; } catch (_) { return true; } };
+  async function fetchStored(path, kind, what) {
+    const on = kind === 'engine' || snapCacheOn();
+    if (on) { const hit = await E.LocalCache.get(path); if (hit) return hit; }
+    const { data, error } = await sb.storage.from(C.bucket).download(path);
+    if (error) throw new Error((kind === 'engine' ? '엔진을' : '추정자료를') + ' 받지 못했습니다: ' + error.message);
+    egress(data.size, what);
+    if (on) E.LocalCache.put(path, data, kind);
+    return data;
+  }
   async function fetchSnapDb(snap) {
-    const { data, error } = await sb.storage.from(C.bucket).download(snap.storage_path);
-    if (error) throw new Error('추정자료를 받지 못했습니다: ' + error.message);
-    egress(data.size, 'snapshot ' + snap.id);
+    const data = await fetchStored(snap.storage_path, 'snap', 'snapshot ' + snap.id);
     return JSON.parse(await E.gunzipToText(data));
   }
   async function downloadSnap(id) {
@@ -297,6 +322,7 @@
     const gz = await E.gzip(JSON.stringify(db));
     const up = await sb.storage.from(C.bucket).upload(path, gz, { contentType: 'application/gzip', upsert: false });
     if (up.error) throw new Error('파일 올리기 실패: ' + up.error.message);
+    if (snapCacheOn()) E.LocalCache.put(path, gz, 'snap');
     const row = Object.assign({ id, base_ym: db.baseYm || '', engine_ver: db.sysVer || null, mode: db.mode || 'sonik', scope: 'all',
       author_email: st.me.email, author_name: st.me.name || '', storage_path: path, size_bytes: gz.size }, meta);
     const ins = await sb.from('sk_snapshots').insert(row);
@@ -338,11 +364,9 @@
   async function getEngineHtml() {
     const key = 'engine:' + st.engine.ver + ':' + st.engine.sha256;
     if (getEngineHtml.cache && getEngineHtml.cache.key === key) return getEngineHtml.cache.html;
-    const { data, error } = await sb.storage.from(C.bucket).download(st.engine.storage_path);
-    if (error) throw new Error('엔진을 받지 못했습니다: ' + error.message);
-    egress(data.size, 'engine ' + st.engine.ver);
+    const data = await fetchStored(st.engine.storage_path, 'engine', 'engine ' + st.engine.ver);
     const html = await E.gunzipToText(data);
-    if (st.engine.sha256 && (await E.sha256(html)) !== st.engine.sha256) throw new Error('엔진 파일 해시가 목록과 다릅니다');
+    if (st.engine.sha256 && (await E.sha256(html)) !== st.engine.sha256) { E.LocalCache.clear('engine'); throw new Error('엔진 파일 해시가 목록과 다릅니다'); }
     getEngineHtml.cache = { key, html };
     return html;
   }
@@ -745,6 +769,7 @@
         const gz = await E.gzip(JSON.stringify(db));
         const up = await sb.storage.from(C.bucket).upload(path, gz, { contentType: 'application/gzip', upsert: false });
         if (up.error) throw new Error('파일 올리기 실패: ' + up.error.message);
+        if (snapCacheOn()) E.LocalCache.put(path, gz, 'snap'); // 방금 저장한 것은 다시 열 때 받지 않는다
         const r = await sb.rpc('sk_overwrite_snapshot', { p_id: s.id, p_expected_rev: s.rev, p_path: path, p_size: gz.size, p_engine_ver: db.sysVer || null });
         if (r.error) {
           await sb.storage.from(C.bucket).remove([path]);

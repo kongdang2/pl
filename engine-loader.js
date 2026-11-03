@@ -74,5 +74,54 @@
     return null;
   }
 
-  window.SonikEngine = { checkEmptyEngine, inject, mount, gzip, gunzipToText, sha256, checkSnapshot };
+  // ── 기기 보관(hong 11/03): 서버 파일(엔진·추정자료 .gz)을 이 브라우저 IndexedDB 에 경로 그대로 둔다.
+  // 서버 경로는 저장할 때마다 새 이름(엔진 ver_sha8, 저장본 rN_uuid)이라 경로가 같으면 내용도 같다 → 같은 경로는 다시 받지 않는다.
+  // kind 별 최근 것만 남긴다(엔진 2개, 추정자료 40개). 로그아웃하면 clear() 로 모두 지운다.
+  const LC_KEEP = { engine: 2, snap: 40 };
+  let lcDb = null;
+  function lcOpen() {
+    if (lcDb) return lcDb;
+    lcDb = new Promise((res, rej) => {
+      if (!window.indexedDB) { rej(new Error('no idb')); return; }
+      const r = indexedDB.open('sonik-cache', 1);
+      r.onupgradeneeded = () => { const s = r.result.createObjectStore('files', { keyPath: 'path' }); s.createIndex('kind', 'kind'); };
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    }).catch((e) => { lcDb = null; throw e; });
+    return lcDb;
+  }
+  function lcReq(mode, fn) {
+    return lcOpen().then((db) => new Promise((res, rej) => {
+      const tx = db.transaction('files', mode), s = tx.objectStore('files');
+      let out; const r = fn(s); if (r) r.onsuccess = () => { out = r.result; };
+      tx.oncomplete = () => res(out); tx.onerror = tx.onabort = () => rej(tx.error);
+    }));
+  }
+  const LocalCache = {
+    async get(path) {
+      try { const x = await lcReq('readonly', (s) => s.get(path)); if (!x || !x.blob) return null; lcReq('readwrite', (s) => { x.at = Date.now(); s.put(x); }).catch(() => {}); return x.blob; }
+      catch (_) { return null; }
+    },
+    async put(path, blob, kind) {
+      try {
+        await lcReq('readwrite', (s) => s.put({ path, blob, kind, at: Date.now(), size: blob.size }));
+        const all = await lcReq('readonly', (s) => s.index('kind').getAll(kind));
+        const old = (all || []).sort((a, b) => b.at - a.at).slice(LC_KEEP[kind] || 20);
+        if (old.length) await lcReq('readwrite', (s) => { old.forEach((o) => s.delete(o.path)); });
+      } catch (_) { /* 보관 못 해도 열기는 계속 */ }
+    },
+    async clear(kind) {
+      try {
+        if (!kind) { await lcReq('readwrite', (s) => s.clear()); return; }
+        const all = await lcReq('readonly', (s) => s.index('kind').getAllKeys(kind));
+        await lcReq('readwrite', (s) => { (all || []).forEach((k) => s.delete(k)); });
+      } catch (_) { /* 없음 */ }
+    },
+    async stats() {
+      try { const all = await lcReq('readonly', (s) => s.getAll()); return (all || []).reduce((o, x) => { o[x.kind] = (o[x.kind] || 0) + 1; o.bytes += x.size || 0; return o; }, { bytes: 0 }); }
+      catch (_) { return { bytes: 0 }; }
+    },
+  };
+
+  window.SonikEngine = { checkEmptyEngine, inject, mount, gzip, gunzipToText, sha256, checkSnapshot, LocalCache };
 })();
