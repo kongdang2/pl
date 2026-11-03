@@ -226,7 +226,7 @@ async function fetchCtx(m, ch) {
           for (const o of fs.readdirSync(DATA_DIR)) if (o.startsWith(path.basename(f).replace(/_r\d+\.json$/, '_r')) && o !== path.basename(f)) try { fs.unlinkSync(path.join(DATA_DIR, o)); } catch (_) { /* 무시 */ }
         }
         out.db = f; out.rev = s.rev;
-      }
+      } else throw new Error('중계 계정이 이 자료를 읽을 수 없습니다(권한)');
     }
   } catch (e) { log('열린 자료 받기 실패 #' + m.id, e.message); out.err = e.message; }
   m._ctx = out;
