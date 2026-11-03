@@ -231,7 +231,9 @@
       const u = ch.urls[f.path];
       const kb = f.size ? ' (' + (f.size < 1048576 ? Math.ceil(f.size / 1024) + 'KB' : (f.size / 1048576).toFixed(1) + 'MB') + ')' : '';
       if (/^image\//.test(f.type || '') && u) return '<a href="' + esc(u) + '" target="_blank" rel="noopener"><img src="' + esc(u) + '" alt="' + esc(f.name) + '" loading="lazy"></a>';
-      return u ? '<a href="' + esc(u) + '" target="_blank" rel="noopener" download="' + esc(f.name) + '">📄 ' + esc(f.name) + kb + '</a>' : '<span>📄 ' + esc(f.name) + kb + '</span>';
+      // 다른 출처 주소라 download 속성이 안 먹으므로, 저장소에 원래 이름으로 내려받게 한다(download 매개변수)
+      const du = u ? u + (u.includes('?') ? '&' : '?') + 'download=' + encodeURIComponent(f.name || '') : '';
+      return u ? '<a class="att-dl" href="' + esc(du) + '" target="_blank" rel="noopener" download="' + esc(f.name) + '">⬇ ' + esc(f.name) + kb + '</a>' : '<span>📄 ' + esc(f.name) + kb + '</span>';
     }).join('') + '</div>';
   }
   async function sign() {
