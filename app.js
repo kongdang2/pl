@@ -801,13 +801,12 @@
     const m = st.mounted;
     setTimeout(() => { if (st.mounted === m) st.cleanSig = dataSig(); }, ms);
   }
-  // 여는 순간의 「손익 완전 재현 확인」 팝업: 모두 일치하면 띄우지 않고 짧은 알림만, 차이가 있으면 그대로 둔다
+  // 여는 순간의 「손익 완전 재현 확인」 팝업: 모두 일치하면 아무것도 띄우지 않고(hong 11/03), 차이가 있으면 그대로 둔다
   function quietVerify(win, v) {
     if (!v || (v.diffs || []).length || (v.skipped || []).length) return;
     const kill = () => { const el = win.document.getElementById('pnlVerifyModal'); if (el && /완전 재현 확인/.test(el.textContent)) { el.remove(); return true; } return false; };
     kill();
     let n = 0; const t = setInterval(() => { if (kill() || ++n > 20) clearInterval(t); }, 250);
-    toast('✅ 손익 재현 확인: 저장 시점과 모두 일치합니다.', 3000);
   }
   async function leaveOk() {
     const draft = RQ.items.length ? ' 접수하지 않은 수정요청 항목 ' + RQ.items.length + '개도 사라집니다.' : '';
