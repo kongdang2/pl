@@ -419,6 +419,7 @@
       show('vEngine'); st.open = { id: null, srcId: s.id, mode: 'bizplan', memo: '새 사업계획', base_ym: '', source: 'new', rev: 0 }; renderBar(); fitEngine();
       busy('사업계획 여는 중… (10~30초)');
       st.mounted = await E.mount($('engineBox'), html, onEngineMsg);
+      if (window.SonikChannel && window.SonikChannel.setContext) window.SonikChannel.setContext(chatContext);
       const info = st.mounted.bridge.info();
       st.open.base_ym = info.baseYm || ''; st.open.memo = '새 사업계획 ' + String(info.baseYm || '').slice(0, 4); renderBar();
       trimHeader(st.mounted.win); hookPrint(st.mounted.win); navStart();
@@ -566,7 +567,18 @@
       };
     } catch (_) { /* 엔진 구조가 다르면 그대로 둔다 */ }
   }
-  function unmount() { navStop(); try { rqClose(true); } catch (e) { console.warn('수정요청 패널 정리 실패', e); } if (st.mounted) { st.mounted.dispose(); st.mounted = null; } $('engineBox').innerHTML = ''; st.open = null; }
+  // 챗봇 「📄 지금 화면 기준」: 열린 자료 이름·저장본과 보이는 표(full 일 때만)를 질문에 붙인다(hong 11/03)
+  function chatContext(full) {
+    if (!st.open || !st.mounted || !st.mounted.win || !window.SonikRequest) return null;
+    let sc = { loc: '', ym: null, text: '', cut: false };
+    try { sc = window.SonikRequest.screenText(st.mounted.win, full ? 20000 : 0); } catch (e) { console.warn('화면 읽기 실패', e); }
+    const o = st.open;
+    const c = { snap_id: o.id || null, snap_memo: (modeOf(o) === 'bizplan' ? '📘 ' : '') + (o.memo || o.base_ym || ''), kind: modeOf(o), base_ym: o.base_ym || '', rev: o.rev || null,
+      engine_ver: o.engine_ver || '', saved_at: o.updated_at || o.created_at || null, loc: sc.loc || '', ym: sc.ym || null };
+    if (full) { c.screen = sc.text; c.cut = sc.cut; c.dirty = !!st.dirty; }
+    return c;
+  }
+  function unmount() { if (window.SonikChannel && window.SonikChannel.setContext) window.SonikChannel.setContext(null); navStop(); try { rqClose(true); } catch (e) { console.warn('수정요청 패널 정리 실패', e); } if (st.mounted) { st.mounted.dispose(); st.mounted = null; } $('engineBox').innerHTML = ''; st.open = null; }
   // 추정자료 삭제(관리자만): 저장 파일·이전 저장(백업)까지 지운다. 되돌릴 수 없다
   async function deleteSnap(id) {
     const s = st.snaps.find((x) => x.id === id); if (!s) return;
@@ -607,6 +619,7 @@
       show('vEngine'); st.open = s; renderBar(); fitEngine();
       busy('엔진 여는 중… (10~30초)');
       st.mounted = await E.mount($('engineBox'), engineFor(s, html, db), onEngineMsg);
+      if (window.SonikChannel && window.SonikChannel.setContext) window.SonikChannel.setContext(chatContext);
       busy(KIND(s) + ' 불러오는 중…');
       await new Promise((r) => setTimeout(r, 50));
       const r = st.mounted.bridge.applyDb(db);

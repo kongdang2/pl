@@ -10,7 +10,7 @@
 // 안전장치: 한 번에 한 글만 · 실행 시간 한도 · hong 없이 이어지는 자동 왕복 한도(sk_relay.max_hops) · 웹 「멈춤」(sk_relay.paused)
 //           · 되돌리기 어려운 일(운영본 교체·보관 이동·삭제·외부 전송)은 하지 말고 hong 에게 묻도록 지시 · 모든 실행 출력은 소통\중계로그 에 남김
 'use strict';
-const fs = require('fs'), path = require('path'), os = require('os'), cp = require('child_process');
+const fs = require('fs'), path = require('path'), os = require('os'), cp = require('child_process'), zlib = require('zlib');
 
 const URL_ = 'https://znqaxyqayxkgqnqnwyez.supabase.co';
 const KEY = 'sb_publishable_2dCd3uLHA80B3hY_DflgKA_xMtj4Itl'; // 공개 키. 접근은 로그인 + RLS
@@ -20,6 +20,7 @@ const CONF_PATH = path.join(__dirname, '중계설정.json');
 const LOG_DIR = path.join(__dirname, '중계로그');
 const SESS_PATH = path.join(__dirname, '중계세션.json');
 const ATT_DIR = path.join(__dirname, '첨부');
+const DATA_DIR = path.join(__dirname, '자료'); // 챗봇 질문 때 웹에서 열어 둔 추정자료(저장본별로 한 번만 받는다)
 const REQ_DIR = path.join(__dirname, '요청'); // 수정요청 원문(항목·셀·메모·화면 캡처)을 요청 번호별로 풀어 두는 곳
 const STAGES = ['접수', '작업중', '작업중', '작업중', '완료']; // 단계 값 0 = 접수, 1~3 = 작업중, 4 = 완료(hong 11/02 단순화). // 웹에서 올린 이미지·파일을 글 번호별로 내려받는 곳
 // codex.exe 는 Codex 앱 안(%LOCALAPPDATA%\OpenAI\Codex\bin\<버전>\)에 있고 일반 PATH 에는 없다. 가장 최근 것을 쓴다.
@@ -194,6 +195,54 @@ async function fetchFiles(list) {
     }
   }
 }
+// 열린 자료 기준 질문(hong 11/03): 웹에서 자료를 열어 둔 채 물으면 글에 ctx(자료 id·저장본·보던 화면의 표)가 붙어 온다.
+// 화면 글자는 첨부\<글번호>\화면.txt, 자료 전체(DB 내보내기 JSON)는 자료\<id>_r<저장본>.json 으로 둔다
+async function fetchCtx(m, ch) {
+  if (m._ctx !== undefined) return;
+  const src = m.ctx ? m : (ch || []).slice().reverse().find((x) => x.ctx && x.sender === m.sender && (x.owner || null) === (m.owner || null));
+  m._ctx = null;
+  if (!src) return;
+  const c = src.ctx, out = { c, from: src.id };
+  try {
+    if (c.screen) {
+      const dir = path.join(ATT_DIR, String(src.id));
+      fs.mkdirSync(dir, { recursive: true });
+      out.screen = path.join(dir, '화면.txt');
+      fs.writeFileSync(out.screen, '위치: ' + (c.loc || '') + (c.cut ? '\n(표가 많아 앞부분만)' : '') + '\n\n' + c.screen);
+    }
+    if (c.snap_id) {
+      const s = (await api('GET', 'sk_snapshots', '?select=id,storage_path,rev&id=eq.' + encodeURIComponent(c.snap_id)))[0];
+      if (s && s.storage_path) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+        const f = path.join(DATA_DIR, String(s.id).replace(/[^\w-]/g, '_') + '_r' + s.rev + '.json');
+        if (!fs.existsSync(f)) {
+          if (!auth.tok || Date.now() > auth.exp) await login();
+          const r = await fetch(URL_ + '/storage/v1/object/sonik/' + s.storage_path.split('/').map(encodeURIComponent).join('/'), { headers: { apikey: KEY, Authorization: 'Bearer ' + auth.tok } });
+          if (!r.ok) throw new Error('자료 받기 HTTP ' + r.status);
+          const buf = Buffer.from(await r.arrayBuffer());
+          egress(buf.length, 'relay ctx ' + s.id);
+          fs.writeFileSync(f, buf[0] === 0x1f && buf[1] === 0x8b ? zlib.gunzipSync(buf) : buf);
+          // 같은 자료의 옛 저장본은 지운다
+          for (const o of fs.readdirSync(DATA_DIR)) if (o.startsWith(path.basename(f).replace(/_r\d+\.json$/, '_r')) && o !== path.basename(f)) try { fs.unlinkSync(path.join(DATA_DIR, o)); } catch (_) { /* 무시 */ }
+        }
+        out.db = f; out.rev = s.rev;
+      }
+    }
+  } catch (e) { log('열린 자료 받기 실패 #' + m.id, e.message); out.err = e.message; }
+  m._ctx = out;
+}
+function ctxLines(m) {
+  const x = m._ctx;
+  if (!x) return [];
+  const c = x.c;
+  return ['',
+    '[열린 자료 기준] 질문한 사람은 웹에서 「' + (c.snap_memo || '') + '」(' + (c.kind === 'bizplan' ? '사업계획' : '손익추정') + ', 기준월 ' + (c.base_ym || '') + ', 엔진 ' + (c.engine_ver || '') + ')를 열어 둔 채 물었다.',
+    '이 자료 기준으로 숫자를 찾아 답한다. PC 운영본이나 다른 자료의 값을 쓰지 않는다. 답 첫 줄에 「' + (c.snap_memo || '열린 자료') + ' 기준」이라고 밝힌다.',
+    x.screen ? '- 물을 때 보던 화면(' + (c.loc || '') + ')의 표, 탭 구분 글자: ' + x.screen + '  — 엔진이 계산해 보여 준 값은 여기서 먼저 찾는다.' + (c.dirty ? ' 저장하지 않은 수정이 있으니 화면 값이 저장본보다 우선이다.' : '') : '',
+    x.db ? '- 그 자료 전체(DB 내보내기 JSON, 저장본 ' + x.rev + (c.rev && c.rev !== x.rev ? ', 물을 때 연 것은 저장본 ' + c.rev + '이라 그 뒤 저장이 있었다' : '') + '): ' + x.db + '  — 크므로 필요한 키만 찾아 읽는다.' : (x.err ? '- 자료 전체는 받지 못했다(' + x.err + '). 화면 표로 답하고, 없으면 그렇다고 말한다.' : ''),
+    '화면에 없는 계산값은 자료 JSON 의 입력값과 운영본 계산 방식으로 구하고 어떻게 구했는지 한 줄로 적는다. 끝내 못 구하면 그 값을 볼 수 있는 메뉴를 안내한다.',
+  ].filter((l) => l !== '');
+}
 // 대화가 어느 수정요청에 관한 것인지: 글의 request_id(접수 때 자동으로 올라온 글) 또는 주제 「수정요청 #N」
 function reqIdOf(list) {
   for (const x of list.slice().reverse()) {
@@ -271,6 +320,8 @@ function memberPrompt(agent, m, ch, group) {
     '시스템을 고쳐 달라는 요청이면 고치지 말고, 웹에서 추정자료를 연 뒤 「✏️ 수정요청」으로 접수하면 관리자 승인 뒤 처리된다고 안내한다.',
     'hong 의 다른 대화, 진행 중인 작업, 중계 기록, 비밀번호·계정 정보는 알려 주지 않는다.',
     '',
+    ...ctxLines(m),
+    '',
     '대화(마지막 글이 질문):',
     '',
     ch.map(fmt).join('\n\n'),
@@ -302,6 +353,7 @@ function prompt(agent, m, ch, group) {
     '할 일: ' + (group ? 'hong 의 글(#' + m.id + ')' : '마지막 글(#' + m.id + ')') + '의 요청을 처리한다. 긴 결과는 지금처럼 검증자료\\vNNN\\ 등 파일에 쓰고 채널에는 요약과 경로만 남긴다.',
     '되돌리기 어려운 일(운영본 교체·보관 이동·파일 삭제·외부 전송)은 하지 말고 받는이를 hong 으로 해서 확인을 요청한다.',
     ...reqLines(m),
+    ...ctxLines(m),
     '다른 담당에게 넘길 일이 있으면 받는이를 ' + other + ' 로, hong 이 결정할 일이면 hong 으로 한다.',
     '',
     '마지막에 채널에 올릴 답을 정확히 아래 형식으로 출력한다(이 블록만 채널에 올라간다):',
@@ -337,6 +389,7 @@ function followUp(agent, m, fresh, group) {
     group ? '이 글은 셋이 함께 하는 대화(받는이 모두)다. Claude 가 먼저, Codex 가 이어서 답한다. 같은 말은 되풀이하지 않는다.' : '',
     '할 일: ' + (group ? 'hong 의 글(#' + m.id + ')' : '마지막 글(#' + m.id + ')') + '의 요청을 처리한다. 앞에서와 같은 규칙(AGENTS.md, 되돌리기 어려운 일은 hong 확인)을 따른다.',
     ...reqLines(m),
+    ...ctxLines(m),
     '마지막에 채널에 올릴 답을 앞에서와 같은 형식으로 출력한다:',
     '<<<채널',
     group ? (agent === 'Codex' ? '받는이: 모두   (Claude 가 고치거나 처리해야 할 일이 남으면 받는이: Claude)' : '받는이: 모두') : '받는이: hong 또는 ' + other,
@@ -595,6 +648,7 @@ async function runAgent(agent, m, ch, ctx, group, root) {
   const seenIds = new Set();
   const fresh = s ? ctx.concat(ch).filter((x) => x.id > s.lastId && !seenIds.has(x.id) && seenIds.add(x.id)).sort((a, b) => a.id - b.id) : null;
   await fetchFiles(ctx.concat(fresh || []));
+  await fetchCtx(m, ch);
   const imgs = (m._local || []).filter((f) => isImg(f) && fs.existsSync(f));
   let r, rep, resumed = false;
   if (s && fresh.length) {

@@ -438,5 +438,26 @@
     return new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   }
 
-  window.SonikRequest = { create, toXlsx, locText, _t: { buildGrid, colLabel, rowLabel, excerpt, cellValue, isNum } };
+  // ── 챗봇 질문에 붙일 「지금 보는 화면」(hong 11/03) ── 보이는 표를 표 제목 + 탭 구분 글자로 뽑는다(입력칸은 값). 최대 maxLen 글자
+  function screenText(win, maxLen) {
+    const d = win.document, vis = (e) => e && e.offsetParent !== null;
+    const L = location(win, null);
+    const out = [];
+    let len = 0, cut = false;
+    for (const t of Array.from(d.querySelectorAll('table')).filter(vis)) {
+      if (t.parentElement && t.parentElement.closest('table')) continue; // 표 안의 표는 바깥 표에서 같이 나온다
+      const rows = [];
+      for (const tr of Array.from(t.rows)) {
+        if (!vis(tr)) continue;
+        const cells = Array.from(tr.cells).map((td) => { const f = td.querySelector('input,select,textarea'); return (f && f.value != null && f.value !== '' ? f.value : txt(td)).replace(/\t/g, ' '); });
+        if (cells.some(Boolean)) rows.push(cells.join('\t'));
+      }
+      if (!rows.length) continue;
+      const block = '「' + (tableTitle(t) || '표') + '」\n' + rows.join('\n');
+      if (len + block.length > maxLen) { cut = true; break; }
+      out.push(block); len += block.length + 2;
+    }
+    return { loc: locText(L), ym: L.ym, text: out.join('\n\n'), cut };
+  }
+  window.SonikRequest = { create, toXlsx, locText, screenText, _t: { buildGrid, colLabel, rowLabel, excerpt, cellValue, isNum } };
 })();

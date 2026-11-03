@@ -13,13 +13,15 @@
   // 담당자 글·담당자에게 온 답은 그 사람 이메일 앞부분으로 보여 준다(관리자 화면)
   const NAME = (who, m) => who === '담당' ? '담당 ' + String((m && m.owner) || '').split('@')[0] : who;
   const RUN = { 실행중: '⏳ 작업 중', 완료: '✓ 자동 처리', 실패: '✗ 자동 실패', 건너뜀: '⏸ 왕복 한도' };
-  const ch = { sb: null, rows: [], replyTo: null, timer: null, onlyMine: false, to: 'Claude', relay: null, lastTop: 0, open: false, tick: 0, pending: [], urls: {}, quick: false, stopAsked: 0, liveOpen: {} };
+  // 화면 글자(ctx.screen)는 크므로 목록에서는 자료 이름·위치만 읽는다(내려받기 용량)
+  const COLS = 'id,at,sender,recipient,topic,status,reply_to,body,author_email,updated_at,run_state,run_note,files,request_id,quick,live,owner,ctx_memo:ctx->>snap_memo,ctx_loc:ctx->>loc';
+  const ch = { ctxFn: null, sb: null, rows: [], replyTo: null, timer: null, onlyMine: false, to: 'Claude', relay: null, lastTop: 0, open: false, tick: 0, pending: [], urls: {}, quick: false, stopAsked: 0, liveOpen: {} };
   const BUCKET = 'sonik-channel', MAXB = 20 * 1024 * 1024; // 첨부: 비공개 버킷, 파일당 20MB
   // 마지막으로 본 글 번호(이 브라우저에만 저장). 저장이 막혀 있으면 배지만 덜 정확하다
   const seen = { get() { try { return +localStorage.getItem('sonik.ch.seen') || 0; } catch (_) { return 0; } }, set(v) { try { localStorage.setItem('sonik.ch.seen', String(v)); } catch (_) { /* 무시 */ } } };
 
   async function load() {
-    const { data, error } = await ch.sb.from('sk_channel').select('*').order('at', { ascending: false }).limit(150);
+    const { data, error } = await ch.sb.from('sk_channel').select(COLS).order('at', { ascending: false }).limit(150);
     if (error) { $('chRows').innerHTML = '<p class="hint">채널을 읽지 못했습니다: ' + esc(error.message) + '</p>'; return; }
     const before = ch.rows.length && ch.rows[ch.rows.length - 1].id;
     const sig = (r) => r.map((m) => m.id + m.status + (m.run_state || '') + (m.run_note || '') + ':' + (m.live || []).length).join();
@@ -113,11 +115,19 @@
       head.addEventListener('pointermove', mv); head.addEventListener('pointerup', up); head.addEventListener('pointercancel', up);
     };
   }
+  // 자료를 열어 둔 상태면 「📄 지금 화면 기준」 체크를 보인다(기본 켬)
+  function refreshCtx() {
+    let c = null;
+    try { c = ch.ctxFn ? ch.ctxFn(false) : null; } catch (_) { c = null; }
+    $('chCtxBox').hidden = !c;
+    if (c) $('chCtxTxt').textContent = (c.snap_memo || '열린 자료') + (c.loc ? ' · ' + c.loc : '') + ' 기준';
+  }
   function setOpen(v) {
     ch.open = v;
     if (v) place(box.get());
     $('chCard').hidden = !v;
     $('chFab').classList.toggle('open', v);
+    if (v) refreshCtx();
     if (v) { ch.lastTop = 0; load().then(() => { render(true); $('chBody').focus(); }); } else badge();
   }
 
@@ -203,7 +213,8 @@
       + '<div class="bub">'
       + (mine ? '<div class="to">→ ' + esc(NAME(m.recipient, m)) + (m.topic ? ' · ' + esc(m.topic) : '') + '</div>' : m.topic ? '<div class="to">' + esc(m.topic) + '</div>' : '')
       + (re ? '<a class="quote" href="#ch' + re.id + '">' + esc(NAME(re.sender, re)) + ': ' + esc(re.body.slice(0, 50)) + (re.body.length > 50 ? '…' : '') + '</a>' : '')
-      + (m.body ? '<div class="txt">' + (mine ? esc(m.body) : md(m.body)) + '</div>' : '') + atts(m) + '</div>'
+      + (m.body ? '<div class="txt">' + (mine ? esc(m.body) : md(m.body)) + '</div>' : '') + atts(m)
+      + (m.ctx_memo || m.ctx_loc ? '<div class="ctxline">📄 ' + esc([m.ctx_memo, m.ctx_loc].filter(Boolean).join(' · ')) + ' 기준</div>' : '') + '</div>'
       + '<div class="meta">' + (m.status !== '안내' ? '<span class="st st-' + esc(m.status) + '">' + esc(m.status) + '</span>' : '')
       + (m.quick ? '<span class="q">⚡ 빠른 질문</span>' : '')
       + (m.run_state ? '<span class="run" title="' + esc(m.run_note || '') + '">' + (/^중지/.test(m.run_note || '') ? '■ 중지됨' : RUN[m.run_state]) + '</span>' : '')
@@ -325,6 +336,8 @@
     const re = ch.replyTo || owed[owed.length - 1] || null;
     const row = { sender: ME, recipient: ch.to, topic: re && re.topic ? re.topic : '', status: '대기',
       reply_to: re ? re.id : null, body, files, quick: ch.member || ch.quick, author_email: (s.session.user.email || '').toLowerCase() };
+    // 열어 둔 자료 기준 질문(hong 11/03): 자료가 열려 있으면 늘 그 자료(id·저장본)와 보이는 표를 붙인다
+    if (!$('chCtxBox').hidden && ch.ctxFn) { try { const c = ch.ctxFn(true); if (c) row.ctx = c; } catch (e) { console.warn('화면 읽기 실패', e); } }
     if (ch.member) row.owner = row.author_email; // 담당자 대화: 내 대화로 표시(답도 나에게만 보인다)
     const { error } = await ch.sb.from('sk_channel').insert(row);
     $('chSend').disabled = false;
@@ -336,6 +349,8 @@
   }
 
   window.SonikChannel = {
+    // app.js 가 자료를 열고 닫을 때 부른다. fn(full) → ctx 객체 또는 null
+    setContext(fn) { ch.ctxFn = fn || null; if (ch.open) refreshCtx(); },
     // app.js 가 목록 화면을 그릴 때 부른다. 관리자가 아니면 카드를 숨긴다.
     mount(sb, me) {
       ch.sb = sb;
@@ -362,6 +377,7 @@
       document.querySelectorAll('#chTo button').forEach((b) => { b.onclick = () => setTo(b.getAttribute('data-to')); });
       setTo(ch.to);
       $('chBody').oninput = grow;
+      $('chBody').onfocus = refreshCtx;
       $('chAttach').onclick = () => $('chFile').click();
       $('chFile').onchange = () => { addFiles($('chFile').files); $('chFile').value = ''; };
       // 캡처 이미지 붙여넣기(Ctrl+V)와 끌어놓기
