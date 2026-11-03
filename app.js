@@ -381,7 +381,7 @@
         }
       } else if (db.planDb) {
         const r = B.applyPlan(win, db.planDb), y = B.planYearOf(db.planDb);
-        if (r === 'ok') { toast('사업계획 ' + name + '의 ' + y + '년 계획을 차이분석 계획으로 넣었습니다.', 6000); log('link_plan', s.id, src.id); }
+        if (r === 'ok') log('link_plan', s.id, src.id); // 알림은 띄우지 않는다(hong 11/03). 엔진 기록에만 남김
         else if (r === 'other-year') toast('이 엔진은 계획을 한 해만 보관해서 ' + y + '년 사업계획을 넣지 않았습니다(v312 이후 엔진부터 연도별 보관).', 7000);
       }
     } catch (e) { toast('연동 자료를 넣지 못했습니다: ' + e.message, 7000); }
