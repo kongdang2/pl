@@ -102,7 +102,8 @@
       ? '웹 엔진: <b>' + esc(eng.ver) + '</b> · ' + esc(fmtT(eng.uploaded_at)) + ' 올림'
       : '<span class="tag old">웹 엔진이 아직 없습니다</span> 관리자가 빈 엔진을 올려야 열 수 있습니다.';
     $('snapRows').innerHTML = rows.length ? rows.map((s) => {
-      return '<tr><td class="memo"><b>' + esc(s.memo || '(이름 없음)') + '</b></td><td>' + esc(s.base_ym) + '</td>'
+      const ren = canRename(s) ? ' <button class="ren" data-ren="' + s.id + '" title="이름 바꾸기">✏️</button>' : '';
+      return '<tr><td class="memo"><b>' + esc(s.memo || '(이름 없음)') + '</b>' + ren + '</td><td>' + esc(s.base_ym) + '</td>'
         + '<td><span class="tag ' + s.source + '">' + (s.source === 'pc' ? 'PC 원본' : '웹 저장') + '</span></td>'
         + '<td>' + esc(s.author_name || s.author_email) + '</td><td>' + esc(fmtT(s.updated_at || s.created_at)) + (s.rev > 1 ? ' <span class="hint">(' + s.rev + '회 저장)</span>' : '') + '</td>'
         + '<td><button data-open="' + s.id + '"' + (eng ? '' : ' disabled') + '>열기</button>'
@@ -115,6 +116,7 @@
     $('snapRows').querySelectorAll('[data-html]').forEach((b) => { b.onclick = () => offlineFromList(b.getAttribute('data-html')); });
     $('btnEngDl').disabled = !eng;
     $('snapRows').querySelectorAll('[data-bk]').forEach((b) => { b.onclick = () => showBackups(b.getAttribute('data-bk')); });
+    $('snapRows').querySelectorAll('[data-ren]').forEach((b) => { b.onclick = () => renameSnap(b.getAttribute('data-ren')); });
     $('snapRows').querySelectorAll('[data-del]').forEach((b) => { b.onclick = () => deleteSnap(b.getAttribute('data-del')); });
     if (st.me.role === 'admin') loadMembers();
     loadUsage();
@@ -580,6 +582,22 @@
   }
   function unmount() { if (window.SonikChannel && window.SonikChannel.setContext) window.SonikChannel.setContext(null); navStop(); try { rqClose(true); } catch (e) { console.warn('수정요청 패널 정리 실패', e); } if (st.mounted) { st.mounted.dispose(); st.mounted = null; } $('engineBox').innerHTML = ''; st.open = null; }
   // 추정자료 삭제(관리자만): 저장 파일·이전 저장(백업)까지 지운다. 되돌릴 수 없다
+  // 추정자료명 바꾸기(hong 11/03): 관리자는 모든 자료, 작성자는 내가 웹에 만든 자료만(DB 함수 sk_rename_snapshot 이 다시 확인)
+  const canRename = (s) => !!st.me && (st.me.role === 'admin' || (st.me.role === 'writer' && s.source === 'web' && s.author_email === st.me.email));
+  async function renameSnap(id) {
+    const s = st.snaps.find((x) => x.id === id); if (!s) return;
+    const go = await ask('이름 바꾸기', '<label>' + (modeOf(s) === 'bizplan' ? '사업계획명' : '추정자료명') + '<input id="renMemo" maxlength="120" value="' + esc(s.memo || '') + '"></label><p class="hint">이름만 바뀌고 자료 내용·저장 이력은 그대로입니다.</p>');
+    if (!go) return;
+    const memo = (($('renMemo') || {}).value || '').trim();
+    if (!memo || memo === s.memo) return;
+    const { error } = await sb.rpc('sk_rename_snapshot', { p_id: id, p_memo: memo });
+    if (error) { toast('이름 바꾸기 실패: ' + error.message, 7000); return; }
+    log('rename', id, (s.memo || '') + ' → ' + memo);
+    s.memo = memo;
+    if (st.open && st.open.id === id) { st.open.memo = memo; renderBar(); }
+    toast('이름을 「' + memo + '」로 바꿨습니다.');
+    loadList();
+  }
   async function deleteSnap(id) {
     const s = st.snaps.find((x) => x.id === id); if (!s) return;
     const go = await ask('추정자료 삭제', '<p><b>' + esc(s.base_ym) + ' · ' + esc(s.memo || '') + '</b> (' + (s.source === 'pc' ? 'PC 원본' : '웹 저장') + ', ' + esc(s.author_name || s.author_email) + ')</p>'
@@ -912,9 +930,10 @@
     const { data, error } = await sb.from('sk_requests').select('id,title,kind,status,stage,progress,working,author_name,author_email,created_at').order('created_at', { ascending: false }).limit(100);
     if (error) { $('rqRows').innerHTML = '<tr><td colspan="7" class="hint">요청 목록을 읽지 못했습니다: ' + esc(error.message) + '</td></tr>'; return; }
     $('rqRows').innerHTML = (data || []).length ? data.map((r) => '<tr><td>#' + r.id + '</td><td class="memo">' + esc(r.title) + '</td><td>' + esc(r.kind) + '</td><td>' + stageBar(r, true) + '</td><td>'
-      + esc(r.author_name || r.author_email) + '</td><td>' + esc(fmtT(r.created_at)) + '</td><td><button data-rv="' + r.id + '">보기</button>' + (canCancel(r) ? ' <button data-cx="' + r.id + '">접수 취소</button>' : '') + '</td></tr>').join('')
+      + esc(r.author_name || r.author_email) + '</td><td>' + esc(fmtT(r.created_at)) + '</td><td><button data-rv="' + r.id + '">보기</button>' + (canCancel(r) ? ' <button data-cx="' + r.id + '">접수 취소</button>' : '') + (canDelReq(r) ? ' <button class="danger" data-rd="' + r.id + '">삭제</button>' : '') + '</td></tr>').join('')
       : '<tr><td colspan="7" class="hint">아직 접수된 요청이 없습니다.</td></tr>';
     $('rqRows').querySelectorAll('[data-rv]').forEach((b) => { b.onclick = () => viewRequest(+b.getAttribute('data-rv')); });
+    $('rqRows').querySelectorAll('[data-rd]').forEach((b) => { b.onclick = () => deleteRequest(+b.getAttribute('data-rd')); });
     $('rqRows').querySelectorAll('[data-cx]').forEach((b) => { b.onclick = () => cancelRequest(+b.getAttribute('data-cx')); });
     $('rqRows').querySelectorAll('[data-ok]').forEach((b) => { b.onclick = () => judgeRequest(+b.getAttribute('data-ok'), true); });
     $('rqRows').querySelectorAll('[data-no]').forEach((b) => { b.onclick = () => judgeRequest(+b.getAttribute('data-no'), false); });
@@ -923,6 +942,20 @@
   // 접수 취소(hong 11/03): 내 요청(관리자는 모든 요청)이고 아직 완료·반려·취소가 아니면 취소할 수 있다.
   // DB 함수 sk_cancel_request 가 상태를 「취소」로 바꾸고, Claude 앞에 아직 안 넘어간 대기 글도 닫는다
   const canCancel = (r) => !!st.me && (r.author_email === st.me.email || st.me.role === 'admin') && !['완료', '반려', '취소'].includes(r.status) && stepOf(r.stage, r.status) < 2;
+  // 수정요청 삭제(hong 11/03): 관리자는 모든 요청, 담당자는 내 요청 중 승인대기·취소·반려만(DB 정책이 다시 확인)
+  const canDelReq = (r) => !!st.me && (st.me.role === 'admin' || (r.author_email === st.me.email && ['승인대기', '취소', '반려'].includes(r.status)));
+  async function deleteRequest(id) {
+    const go = await ask('수정요청 #' + id + ' 삭제', '<p>요청과 진행 기록을 목록에서 지웁니다. <b>되돌릴 수 없습니다.</b></p><p class="hint">진행 중인 요청이면 먼저 「접수 취소」를 권합니다. 이미 만들어진 버전·파일은 그대로 남습니다.</p>');
+    if (!go) return;
+    // 아직 Claude 가 시작하지 않은 대기 글은 닫는다(삭제한 요청을 처리하지 않게)
+    if (st.me.role === 'admin') await sb.from('sk_channel').update({ status: '완료' }).eq('request_id', id).eq('status', '대기');
+    const { data, error } = await sb.from('sk_requests').delete().eq('id', id).select('id');
+    if (error || !(data || []).length) { toast('삭제하지 못했습니다' + (error ? ': ' + error.message : ' (권한이 없거나 이미 지워진 요청)'), 7000); return; }
+    log('request_delete', null, '#' + id);
+    if (rqOpenId === id) { $('rqView').hidden = true; rqOpenId = null; }
+    toast('수정요청 #' + id + '를 삭제했습니다.');
+    loadRequests();
+  }
   async function cancelRequest(id) {
     const go = await ask('수정요청 #' + id + ' 접수 취소', '<p>이 요청을 취소합니다. 아직 Claude가 시작하지 않았다면 작업하지 않습니다.</p><p class="hint">이미 작업 중이면 지금 하던 한 번의 답변은 끝까지 진행된 뒤 멈춥니다. 요청 기록은 남습니다.</p>');
     if (!go) return;
