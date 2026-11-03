@@ -401,6 +401,7 @@ function memberPrompt(agent, m, ch, group) {
     '손익추정 시스템의 사용법·메뉴·계산 방식·자료의 뜻을 작업 폴더(' + ROOT + ')의 문서(AGENTS.md, 코드지도, _brain 등)와 운영본을 읽고 쉽게 설명한다.',
     '시스템을 고쳐 달라는 요청이면 고치지 말고, 웹에서 추정자료를 연 뒤 「✏️ 수정요청」으로 접수하면 관리자 승인 뒤 처리된다고 안내한다.',
     'hong 의 다른 대화, 진행 중인 작업, 중계 기록, 비밀번호·계정 정보는 알려 주지 않는다.',
+    '소통\\중계로그, 중계세션.json, 소통\\첨부, 소통\\산출물\\보낸파일 의 다른 사람 폴더는 열지 않는다(남의 대화다).',
     '질문에 캡처 그림이 붙어 있으면 그림을 먼저 보고, 그림 속 화면·숫자를 기준으로 답한다.',
     ...FILE_HINT,
     '',
@@ -536,12 +537,15 @@ async function uploadOut(blocks, m, agent) {
         buf = Buffer.from((ext === 'csv' || ext === 'tsv' ? '\ufeff' : '') + b.text, 'utf8'); // 엑셀이 한글을 읽도록 BOM
         if (buf.length > 2 * 1048576) throw new Error('2MB 초과');
       }
+      // 보낸 파일은 PC 에도 남긴다(다시 보내 달라면 대화 기록의 경로를 <<<첨부>>> 로 바로 붙이게)
+      const keep = path.join(OUT_DIR, '보낸파일', isMember(m) ? String(m.owner).toLowerCase().replace(/[^a-z0-9._-]/g, '_') : agent, new Date().toISOString().slice(0, 10) + '_' + name);
+      if (!b.local) { fs.mkdirSync(path.dirname(keep), { recursive: true }); fs.writeFileSync(keep, buf); b.keep = keep; }
       const key = (isMember(m) ? 'member/' + String(m.owner).toLowerCase().replace(/[^a-z0-9._-]/g, '_') : agent) + '/' + new Date().toISOString().replace(/[-:.TZ]/g, '') + '_' + Math.random().toString(36).slice(2, 8) + '.' + ext;
       if (!auth.tok || Date.now() > auth.exp) await login();
       const r = await fetch(URL_ + '/storage/v1/object/sonik-channel/' + key.split('/').map(encodeURIComponent).join('/'), { method: 'POST', headers: { apikey: KEY, Authorization: 'Bearer ' + auth.tok, 'Content-Type': type + (b.local ? '' : '; charset=utf-8') }, body: buf });
       if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
       files.push({ path: key, name, size: buf.length, type });
-    } catch (e) { log('답 파일 올리기 실패 #' + m.id, b.name, e.message); files.failed = (files.failed || []).concat(b.name); }
+    } catch (e) { log('답 파일 올리기 실패 #' + m.id, b.name, e.message); files.failed = (files.failed || []).concat(b.keep ? b.name + '(PC: ' + path.relative(ROOT, b.keep) + ')' : b.name); }
   }
   return files;
 }
@@ -549,6 +553,7 @@ const FILE_HINT = ['질문한 사람이 표·목록을 파일로 받기 원하�
   '<<<파일 이름.csv', '(CSV 본문: 첫 줄 머리글, 쉼표 구분, 쉼표가 든 값은 큰따옴표. .tsv·.txt·.md·.json 도 된다)', '파일>>>',
   '이미 만든 파일(엑셀·PPT·PDF·그림 등)은 내용을 옮겨 적지 말고 한 줄로 붙인다(중계가 그 파일을 그대로 올린다. 손익추정시스템 폴더 안, 10MB 까지. 새로 만드는 파일은 소통\\산출물\\ 아래에 둔다):',
   '<<<첨부 소통\\산출물\\파일이름.xlsx>>>',
+  '앞에서 보낸 파일을 다시 달라고 하면 대화 기록에 적힌 그 파일 경로(첨부 줄·「PC:」 경로)를 <<<첨부 경로>>> 로 바로 붙인다. 중계로그·세션 기록을 뒤지거나 다시 만들지 않는다.',
   '네가 직접 웹에 올리려 하지 않는다(채널 도구·Edge·브라우저 제어 금지, 제어 권한을 달라고도 하지 않는다). 파일 전달은 위 첨부 줄이면 된다.',
   '웹 추정자료에 엑셀을 넣어 달라는 요청은 직접 하지 못한다: 필요한 파일을 첨부하고, 웹에서 그 자료를 열어 어느 메뉴의 어떤 업로드 버튼에 넣으면 되는지 순서를 안내한다.',
   '파일을 붙이면 채널 본문에는 요약과 「첨부 파일 이름」만 적는다.'];
