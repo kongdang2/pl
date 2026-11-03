@@ -489,8 +489,8 @@ function followUp(agent, m, fresh, group) {
 
 function parseReply(out, agent) {
   // 파일 답(hong 11/03): <<<파일 이름.csv … 파일>>> 블록은 채널 블록 안팎 어디에 있어도 파일로 떼어 낸다
-  const fileBlocks = [...String(out).matchAll(/<<<파일[ \t]+([^\r\n>]+?)[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*파일>>>/g)].map((x) => ({ name: x[1].trim(), text: x[2] }));
-  out = String(out).replace(/<<<파일[ \t]+[^\r\n>]+?\r?\n[\s\S]*?\r?\n[ \t]*파일>>>/g, '');
+  const fileBlocks = [...String(out).matchAll(/<<<(?:파일[ \t]+)?([^\r\n<>]+?\.[A-Za-z0-9]{2,5})[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*파일>>>/g)].map((x) => ({ name: x[1].trim(), text: x[2] }));
+  out = String(out).replace(/<<<(?:파일[ \t]+)?[^\r\n<>]+?\.[A-Za-z0-9]{2,5}[ \t]*\r?\n[\s\S]*?\r?\n[ \t]*파일>>>/g, '');
   // 만들어 둔 파일(엑셀 등) 첨부(hong 11/03): <<<첨부 경로>>> 한 줄. 중계가 PC 파일을 그대로 올린다
   for (const x of String(out).matchAll(/<<<첨부[ \t]+([^\r\n>]+?)[ \t]*>>>/g)) fileBlocks.push({ name: x[1].trim().split(/[\\/]/).filter(Boolean).pop(), local: x[1].trim() });
   out = String(out).replace(/<<<첨부[ \t]+[^\r\n>]+?[ \t]*>>>/g, '');
@@ -701,6 +701,7 @@ async function handle(m, ctl) {
       const mem = isMember(m);
       const files = await uploadOut(r.rep.fileBlocks, m, m.recipient);
       if (files.failed) r.rep.body += '\n\n(중계: 파일 ' + files.failed.join(', ') + ' 을 올리지 못했습니다. 다시 요청해 주세요.)';
+      else if (!files.length && /첨부\s*파일|첨부했습니다|파일로 첨부/.test(r.rep.body)) r.rep.body += '\n\n(중계: 답에 파일 블록이 없어 첨부가 만들어지지 않았습니다. 「파일 다시 보내줘」라고 해 주세요.)';
       await post({ sender: m.recipient, recipient: mem ? '담당' : r.rep.to, topic: r.rep.topic || m.topic, status: mem ? '안내' : r.rep.st, reply_to: m.id, body: r.rep.body, files, request_id: m._req ? m._req.id : null, owner: mem ? m.owner : null });
       await patchMsg(m.id, { status: '답변', run_state: '완료', run_note: '' });
       log('완료 #' + m.id, '→', r.rep.to, r.rep.st);
@@ -723,6 +724,7 @@ async function handle(m, ctl) {
       const hand = !mem && agent === 'Codex' && r.rep.to === 'Claude' && r.rep.st === '대기';
       const files = await uploadOut(r.rep.fileBlocks, m, agent);
       if (files.failed) r.rep.body += '\n\n(중계: 파일 ' + files.failed.join(', ') + ' 을 올리지 못했습니다. 다시 요청해 주세요.)';
+      else if (!files.length && /첨부\s*파일|첨부했습니다|파일로 첨부/.test(r.rep.body)) r.rep.body += '\n\n(중계: 답에 파일 블록이 없어 첨부가 만들어지지 않았습니다. 「파일 다시 보내줘」라고 해 주세요.)';
       const [row] = await post({ sender: agent, recipient: mem ? '담당' : hand ? 'Claude' : '모두', topic: r.rep.topic || m.topic, status: hand ? '대기' : '안내', reply_to: last.id, body: r.rep.body, files, request_id: m._req ? m._req.id : null, owner: mem ? m.owner : null });
       cur = cur.concat([row]); ctx = ctx.concat([row]); last = row; ok++;
       log('완료 #' + m.id, agent, hand ? '→ Claude(대기)' : '→ 모두');
