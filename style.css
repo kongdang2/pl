@@ -219,3 +219,12 @@ button.link{background:none;border:0;color:var(--pri2);padding:4px 2px;text-deco
 @media (max-width:600px){.chat-pop .ch-rz-n{height:26px}.chat-pop .chat-head{min-height:46px}}
 @media (max-width:600px){.chat-pop .ch-rz-n::after{width:56px;margin-left:-28px;opacity:.75}}
 .rq-eng{margin:2px 0 8px}.rq-eng .hint{flex:1;min-width:240px}.eng-sub{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:8px 0}.eng-sub .bad{color:var(--warn)}
+/* 챗봇 답의 수정요청 초안 카드(hong 11/04) */
+.rqd{margin-top:8px;border:1px dashed var(--pri);border-radius:8px;padding:8px 10px;background:rgba(0,0,0,.02)}
+.rqd-h{font-size:12px;color:var(--pri);font-weight:700;margin-bottom:4px}
+.rqd-b{white-space:pre-wrap;font-size:13px;margin:4px 0 8px;max-height:180px;overflow:auto}
+.rqd-ok{font-size:12.5px;color:#2e7d32;font-weight:600}
+.rqd-go{font-size:13px}
+label.cd{display:block;margin:6px 0;font-size:13px}
+label.cd input,label.cd select{display:block;width:100%;margin-top:3px;padding:6px 8px;font:inherit;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink)}
+label.cd textarea{display:block;margin-top:3px}

@@ -14,8 +14,8 @@
   const NAME = (who, m) => who === '담당' ? '담당 ' + String((m && m.owner) || '').split('@')[0] : who;
   const RUN = { 실행중: '⏳ 작업 중', 완료: '✓ 자동 처리', 실패: '✗ 자동 실패', 건너뜀: '⏸ 왕복 한도' };
   // 화면 글자(ctx.screen)는 크므로 목록에서는 자료 이름·위치만 읽는다(내려받기 용량)
-  const COLS = 'id,at,sender,recipient,topic,status,reply_to,body,author_email,updated_at,run_state,run_note,files,request_id,quick,live,owner,ctx_memo:ctx->>snap_memo,ctx_loc:ctx->>loc';
-  const ch = { ctxFn: null, sb: null, rows: [], replyTo: null, timer: null, onlyMine: false, to: 'Claude', relay: null, lastTop: 0, open: false, tick: 0, pending: [], urls: {}, quick: false, stopAsked: 0, liveOpen: {} };
+  const COLS = 'id,at,sender,recipient,topic,status,reply_to,body,author_email,updated_at,run_state,run_note,files,request_id,quick,live,owner,ctx_memo:ctx->>snap_memo,ctx_loc:ctx->>loc,ctx_snap:ctx->>snap_id,ctx_base:ctx->>base_ym,ctx_ver:ctx->>engine_ver';
+  const ch = { ctxFn: null, sb: null, rows: [], replyTo: null, timer: null, onlyMine: false, to: 'Claude', relay: null, lastTop: 0, open: false, tick: 0, pending: [], urls: {}, quick: false, stopAsked: 0, liveOpen: {}, filed: {}, onDraft: null };
   const BUCKET = 'sonik-channel', MAXB = 20 * 1024 * 1024; // 첨부: 비공개 버킷, 파일당 20MB
   // 마지막으로 본 글 번호(이 브라우저에만 저장). 저장이 막혀 있으면 배지만 덜 정확하다
   const seen = { get() { try { return +localStorage.getItem('sonik.ch.seen') || 0; } catch (_) { return 0; } }, set(v) { try { localStorage.setItem('sonik.ch.seen', String(v)); } catch (_) { /* 무시 */ } } };
@@ -27,10 +27,48 @@
     const sig = (r) => r.map((m) => m.id + m.status + (m.run_state || '') + (m.run_note || '') + ':' + (m.live || []).length).join();
     const changed = sig(ch.rows) !== sig((data || []).slice().reverse());
     ch.rows = (data || []).reverse();
+    if (await loadFiled()) render(false);
     if (changed) render(before !== (ch.rows.length && ch.rows[ch.rows.length - 1].id));
     if (ch.open) sign();
     badge();
     if (ch.open) loadRelay();
+  }
+  // 챗봇 답의 수정요청 초안(hong 11/04): 답 본문 안 <<<요청초안 … 요청초안>>> 블록 → 카드 + 「수정요청으로 올리기」
+  const DRAFT_RE = /<<<요청초안[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*요청초안>>>/;
+  const KINDS = ['계산', '표시·서식', '기능 추가', '기타'];
+  function parseDraft(body) {
+    const x = String(body || '').match(DRAFT_RE);
+    if (!x) return null;
+    const t = x[1], get = (k) => { const y = t.match(new RegExp('^[ \\t]*' + k + '[ \\t]*:[ \\t]*(.*)$', 'm')); return y ? y[1].trim() : ''; };
+    const at = t.search(/^[ \t]*내용[ \t]*:/m);
+    let kind = get('구분'); if (!KINDS.includes(kind)) kind = '기타';
+    return { title: get('제목').slice(0, 80), kind, body: at < 0 ? '' : t.slice(at).replace(/^[ \t]*내용[ \t]*:[ \t]*/, '').trim(), rest: String(body).replace(DRAFT_RE, '').trim() };
+  }
+  // 이미 올린 초안: sk_requests.chat_id 로 찾는다(담당자는 자기 요청만 보인다). 새로 알게 된 것이 있으면 true
+  async function loadFiled() {
+    const ids = ch.rows.filter((m) => !(m.id in ch.filed) && DRAFT_RE.test(m.body || '')).map((m) => m.id);
+    if (!ids.length) return false;
+    const { data, error } = await ch.sb.from('sk_requests').select('id,chat_id').in('chat_id', ids);
+    if (error) return false;
+    ids.forEach((id) => { ch.filed[id] = 0; });
+    (data || []).forEach((r) => { ch.filed[r.chat_id] = r.id; });
+    return (data || []).length > 0;
+  }
+  function draftCard(m, d) {
+    const done = ch.filed[m.id];
+    return '<div class="rqd"><div class="rqd-h">📝 수정요청 초안</div><div class="rqd-t"><b>' + esc(d.title || '(제목 없음)') + '</b> <span class="hint">· ' + esc(d.kind) + '</span></div>'
+      + (d.body ? '<div class="rqd-b">' + esc(d.body) + '</div>' : '')
+      + (done ? '<div class="rqd-ok">✔ 수정요청 #' + done + '(으)로 올렸습니다</div>'
+        : ch.onDraft ? '<button class="pri rqd-go" data-rqd="' + m.id + '">수정요청으로 올리기…</button>' : '<div class="hint">추정자료 목록 화면에서 올릴 수 있습니다.</div>')
+      + '</div>';
+  }
+  async function fileDraft(id) {
+    const m = ch.rows.find((x) => x.id === id), d = m && parseDraft(m.body);
+    if (!d || !ch.onDraft) return;
+    const q = m.reply_to ? ch.rows.find((x) => x.id === m.reply_to) : null;
+    const reqId = await ch.onDraft({ chat_id: m.id, title: d.title, kind: d.kind, body: d.body,
+      question: q ? { id: q.id, body: q.body, snap_id: q.ctx_snap || null, base_ym: q.ctx_base || null, engine_ver: q.ctx_ver || null, memo: q.ctx_memo || '', loc: q.ctx_loc || '' } : null });
+    if (reqId) { ch.filed[m.id] = reqId; render(false); }
   }
   // 닫혀 있을 때: 내가 마지막으로 본 뒤 Codex·Claude 가 올린 글 수
   function badge() {
@@ -259,7 +297,7 @@
       + '<div class="bub">'
       + (mine ? '<div class="to">→ ' + esc(NAME(m.recipient, m)) + (m.topic ? ' · ' + esc(m.topic) : '') + '</div>' : m.topic ? '<div class="to">' + esc(m.topic) + '</div>' : '')
       + (re ? '<a class="quote" href="#ch' + re.id + '">' + esc(NAME(re.sender, re)) + ': ' + esc(re.body.slice(0, 50)) + (re.body.length > 50 ? '…' : '') + '</a>' : '')
-      + (m.body ? '<div class="txt">' + (mine ? esc(m.body) : md(m.body)) + '</div>' : '') + atts(m)
+      + (m.body ? (mine ? '<div class="txt">' + esc(m.body) + '</div>' : (() => { const d = parseDraft(m.body); return (d ? (d.rest ? '<div class="txt">' + md(d.rest) + '</div>' : '') + draftCard(m, d) : '<div class="txt">' + md(m.body) + '</div>'); })()) : '') + atts(m)
       + (m.ctx_memo || m.ctx_loc ? '<div class="ctxline">📄 ' + esc([m.ctx_memo, m.ctx_loc].filter(Boolean).join(' · ')) + ' 기준</div>' : '') + '</div>'
       + '<div class="meta">' + (m.status !== '안내' ? '<span class="st st-' + esc(m.status) + '">' + esc(m.status) + '</span>' : '')
       + (m.quick ? '<span class="q">⚡ 빠른 질문</span>' : '')
@@ -316,6 +354,7 @@
     });
     const box = $('chRows'), atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
     box.innerHTML = html || '<p class="hint center">' + (ch.onlyMine ? '나에게 온 대기 글이 없습니다.' : '아직 대화가 없습니다. 아래에서 첫 글을 보내 보세요.') + '</p>';
+    box.querySelectorAll('[data-rqd]').forEach((b) => { b.onclick = () => fileDraft(+b.getAttribute('data-rqd')); });
     box.querySelectorAll('[data-live]').forEach((b) => { b.onclick = () => { const id = +b.getAttribute('data-live'); ch.liveOpen[id] = !ch.liveOpen[id]; render(false); }; });
     box.querySelectorAll('.live-box.all').forEach((x) => { x.scrollTop = x.scrollHeight; });
     box.querySelectorAll('[data-stop]').forEach((b) => { b.onclick = () => askStop(+b.getAttribute('data-stop')); });
@@ -399,6 +438,8 @@
   window.SonikChannel = {
     // app.js 가 자료를 열고 닫을 때 부른다. fn(full) → ctx 객체 또는 null
     setContext(fn) { ch.ctxFn = fn || null; if (ch.open) refreshCtx(); },
+    // app.js 가 「수정요청 초안 → 올리기」 창을 넘겨준다. fn(draft) → 올린 요청 번호 또는 null
+    setDraftHandler(fn) { ch.onDraft = fn || null; if (ch.open) render(false); },
     // app.js 가 목록 화면을 그릴 때 부른다. 관리자가 아니면 카드를 숨긴다.
     mount(sb, me) {
       ch.sb = sb;
