@@ -1,0 +1,22 @@
+<!doctype html><html><head><meta charset="utf-8"><title>fake</title></head><body><div id="v">engine</div><script>
+window.SYS_CHANGELOG=[{date:'2026-11-04',title:'v319-1 시험'}];
+var S=null, CONFIRMED_DB={c:1}, PLAN_DB=null, __APPLY=0;
+function sortRows(){['onsan','ulsan'].forEach(function(st){var o=S[st]&&S[st].sales||{};Object.keys(o).forEach(function(ym){o[ym].sort(function(a,b){return String(a.prod).localeCompare(String(b.prod));});});});}
+function tot(){var n=0;['onsan','ulsan'].forEach(function(st){var o=S[st].sales;Object.keys(o).forEach(function(ym){o[ym].forEach(function(r){n+=+r.qty||0;});});});return n*(S.onsan.prices.fx||0);}
+window.__sonikWebBridge={info:function(){return {sysVer:'v319-1'};},
+ buildDb:function(){var p={};Object.keys(S).forEach(function(k){if(['site','menu','ym'].indexOf(k)<0)p[k]=JSON.parse(JSON.stringify(S[k]));});
+  return {format:'pnl-db/1',scope:'all',sysVer:'v319-1',mode:'sonik',baseYm:S.session.baseYm,months:JSON.parse(JSON.stringify(S.session.months)),payload:p,confirmed:JSON.parse(JSON.stringify(CONFIRMED_DB)),plan:null,verify:{t:tot()},savedAt:new Date().toISOString()};},
+ applyDb:function(db){__APPLY++;S=JSON.parse(JSON.stringify(db.payload));if(!S.site)S.site='onsan';if(!S.menu)S.menu='price';if(!S.ym)S.ym=db.baseYm;CONFIRMED_DB=JSON.parse(JSON.stringify(db.confirmed));
+  if(!S.ulsan.sales['2026-12'])S.ulsan.sales['2026-12']=[{prod:'PP',qty:0}]; /* 엔진이 저절로 만드는 행 */
+  sortRows();document.getElementById('v').textContent='t='+tot();return {verify:db.verify?{diffs:db.verify.t===tot()?[]:[1],skipped:[]}:null};}};
+var R=function(st,ym,prod){return S[st].sales[ym].find(function(r){return r.prod===prod;});};
+window.T={
+ qty:function(prod,v){R('onsan','2026-11',prod).qty=v;sortRows();},
+ note:function(prod,v){R('onsan','2026-11',prod).note=v;},
+ add:function(prod,q){S.onsan.sales['2026-11'].push({prod:prod,qty:q});sortRows();},
+ del:function(prod){var a=S.onsan.sales['2026-11'];a.splice(a.findIndex(function(r){return r.prod===prod;}),1);},
+ fx:function(v){S.onsan.prices.fx=v;}, log:function(m){S.sysLog.push({m:m});},
+ month:function(){S.session.months.push({ym:'2027-01',type:'estimate',active:true});},
+ go:function(m){S.menu=m;}, where:function(){return S.menu;}, S:function(){return S;}
+};
+</script></body></html>

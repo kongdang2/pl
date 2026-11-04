@@ -219,3 +219,8 @@ button.link{background:none;border:0;color:var(--pri2);padding:4px 2px;text-deco
 @media (max-width:600px){.chat-pop .ch-rz-n{height:26px}.chat-pop .chat-head{min-height:46px}}
 @media (max-width:600px){.chat-pop .ch-rz-n::after{width:56px;margin-left:-28px;opacity:.75}}
 .rq-eng{margin:2px 0 8px}.rq-eng .hint{flex:1;min-width:240px}.eng-sub{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:8px 0}.eng-sub .bad{color:var(--warn)}
+/* 동시 작업 합치기(11/04): 새 저장본 알림 단추 · 고를 칸 표 */
+#bar button.warn{background:var(--warn);border-color:var(--warn);color:#fff;font-weight:600}
+.mgwrap{max-height:50vh;overflow:auto;margin:6px 0;border:1px solid var(--line);border-radius:6px}
+.grid.mg td{white-space:normal;vertical-align:top}.grid.mg td.memo{min-width:180px}
+.mgpick{display:flex;gap:6px;align-items:flex-start;cursor:pointer}
