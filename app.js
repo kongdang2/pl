@@ -35,8 +35,9 @@
     try { await sb.from('sk_log').insert({ email: st.me.email, action, snapshot_id: snapshotId || null, detail: detail || '' }); } catch (_) { /* 기록 실패는 무시 */ }
   }
   const canWrite = () => st.me && (st.me.role === 'admin' || st.me.role === 'writer');
-  // 덮어쓸 수 있는 추정자료 = 내가 웹에서 저장한 것(PC 원본·남의 것·백업본은 첫 저장 때 새 추정자료)
-  const isOwnWeb = (s) => s && !s.backupOf && s.source === 'web' && s.author_email === (st.me && st.me.email);
+  // 덮어쓸 수 있는 추정자료 = 웹 저장본(hong 11/04: 작성자 누구나, 남이 만든 것도). PC 원본·백업본은 첫 저장 때 새 추정자료.
+  // 그사이 다른 사람이 저장했으면 저장할 때 최신 판에 내가 바꾼 칸만 얹는다(아래 「동시 작업 합치기」)
+  const isOwnWeb = (s) => s && !s.backupOf && s.source === 'web' && canWrite();
 
   // ── 로그인 ─────────────────────────────────────────
   async function boot() {
@@ -65,8 +66,11 @@
     $('btnLink').hidden = !(inEngine && st.open && modeOf(st.open) === 'bizplan' && canWrite());
     $('btnOffline').hidden = !inEngine;
     $('btnZoom').hidden = !inEngine;
+    $('btnMerge').hidden = !(inEngine && st.newer && !(st.open && st.open.preview));
+    if (st.newer) $('btnMerge').title = (st.newer.name ? st.newer.name + ' · ' : '') + (st.newer.at ? fmtT(st.newer.at) + ' 저장본을 지금 화면에 합칩니다' : '최신 저장본을 지금 화면에 합칩니다');
     const K = st.open ? KIND(st.open) : '';
-    $('ctx').textContent = inEngine && st.open ? ((K === '사업계획' ? '📘 ' : '') + st.open.base_ym + ' · ' + (st.open.memo || '(이름 없음)') + (K === '사업계획' && st.link ? ' · 🔗 ' + (st.link.memo || '') : '') + (st.open.preview ? ' · 저장 안 됨' : st.open.backupOf ? ' · 백업본' : isOwnWeb(st.open) ? ' · 저장하면 이 ' + K + '에 덮어씀' : ' · 첫 저장은 새 ' + K)) : '';
+    $('ctx').textContent = inEngine && st.open ? ((K === '사업계획' ? '📘 ' : '') + st.open.base_ym + ' · ' + (st.open.memo || '(이름 없음)') + (K === '사업계획' && st.link ? ' · 🔗 ' + (st.link.memo || '') : '') + (st.open.preview ? ' · 저장 안 됨' : st.open.backupOf ? ' · 백업본' : isOwnWeb(st.open) ? ' · 저장하면 이 ' + K + '에 덮어씀' : ' · 첫 저장은 새 ' + K)
+      + (st.peers && st.peers.length ? ' · 👥 ' + st.peers.join(', ') + ' 함께 여는 중' : '')) : '';
   }
   $('btnLogin').onclick = async () => {
     $('loginMsg').textContent = '';
@@ -136,7 +140,7 @@
       const ren = canRename(s) ? ' <button class="ren" data-ren="' + s.id + '" title="이름 바꾸기">✏️</button>' : '';
       return '<tr><td>' + esc(s.base_ym) + '</td><td class="memo"><b>' + esc(s.memo || '(이름 없음)') + '</b>' + ren + '</td>'
         + '<td><span class="tag ' + s.source + '">' + (s.source === 'pc' ? 'PC 원본' : '웹 저장') + '</span></td>'
-        + '<td>' + esc(s.author_name || s.author_email) + '</td><td>' + esc(fmtT(s.updated_at || s.created_at)) + (s.rev > 1 ? ' <span class="hint">(' + s.rev + '회 저장)</span>' : '') + '</td>'
+        + '<td>' + esc(s.author_name || s.author_email) + '</td><td>' + esc(fmtT(s.updated_at || s.created_at)) + (s.rev > 1 ? ' <span class="hint">(' + s.rev + '회 저장' + (s.last_saved_by && s.last_saved_by !== s.author_email ? ' · 마지막 ' + esc(s.last_saved_name || s.last_saved_by) : '') + ')</span>' : '') + '</td>'
         + '<td><button data-open="' + s.id + '"' + (eng ? '' : ' disabled') + '>열기</button>'
         + ' <button data-dl="' + s.id + '" title="DB 내보내기 ▸ 전체와 같은 .json (PC에서 DB 불러오기)">JSON</button>'
         + ' <button data-html="' + s.id + '"' + (eng ? '' : ' disabled') + ' title="웹 엔진 + 이 추정자료를 합친 HTML 한 파일. PC에서 바로 열립니다">오프라인 파일</button>'
@@ -616,7 +620,7 @@
     if (full) { c.screen = sc.text; c.cut = sc.cut; c.dirty = !!st.dirty; }
     return c;
   }
-  function unmount() { if (window.SonikChannel && window.SonikChannel.setContext) window.SonikChannel.setContext(null); navStop(); try { rqClose(true); } catch (e) { console.warn('수정요청 패널 정리 실패', e); } if (st.mounted) { st.mounted.dispose(); st.mounted = null; } $('engineBox').innerHTML = ''; st.open = null; }
+  function unmount() { presStop(); st.base = null; st.newer = null; st.peers = []; if (window.SonikChannel && window.SonikChannel.setContext) window.SonikChannel.setContext(null); navStop(); try { rqClose(true); } catch (e) { console.warn('수정요청 패널 정리 실패', e); } if (st.mounted) { st.mounted.dispose(); st.mounted = null; } $('engineBox').innerHTML = ''; st.open = null; }
   // 추정자료 삭제(관리자만): 저장 파일·이전 저장(백업)까지 지운다. 되돌릴 수 없다
   // 추정자료명 바꾸기(hong 11/03): 관리자는 모든 자료, 작성자는 내가 웹에 만든 자료만(DB 함수 sk_rename_snapshot 이 다시 확인)
   const canRename = (s) => !!st.me && (st.me.role === 'admin' || (st.me.role === 'writer' && s.source === 'web' && s.author_email === st.me.email));
@@ -678,11 +682,14 @@
       if (window.SonikChannel && window.SonikChannel.setContext) window.SonikChannel.setContext(chatContext);
       busy(KIND(s) + ' 불러오는 중…');
       await new Promise((r) => setTimeout(r, 50));
+      if (MG && !pv) MG.stamp(db.payload, true); // 같은 판을 연 사람끼리 같은 행 번호(합치기용, 엔진은 모르는 칸이라 계산과 무관)
       const r = st.mounted.bridge.applyDb(db);
+      if (MG && !pv) { const S = engS(st.mounted.win); if (S) MG.stamp(S, 'a'); } // 엔진이 열면서 저절로 만든 행
       rebase(st.mounted.win);
       trimHeader(st.mounted.win); hookPrint(st.mounted.win); navStart();
       quietVerify(st.mounted.win, r.verify);
-      markClean(1500);
+      markClean(1500, !pv && !backup ? s.rev : null);
+      if (!pv && !backup) presStart(s);
       const n = r.verify ? r.verify.diffs.length : null;
       log('open', s.id, (backup ? 'rev=' + backup.rev + ' ' : '') + (n == null ? 'verify 없음' : ('diffs=' + n)));
       if (!backup && !pv) await linkAfterOpen(s);
@@ -746,25 +753,47 @@
     saveFromEngine.busy = true; busy('저장하는 중…');
     try {
       // 연동 자료도 함께 싣는다(손익추정: 올해 연간 비교자료 / 사업계획: 사업계획 DB) — 상대편이 열 때 자동으로 넣는다
-      const db = Object.assign(st.mounted.bridge.buildDb(), await B.extras(st.mounted.win));
-      if (B.isBiz(st.mounted.win)) db.linkSonik = st.link || null; // 이 사업계획이 이어받는 손익추정(다시 열 때 그것을 쓴다)
+      const buildFull = async () => {
+        if (MG) { const S = engS(st.mounted.win); if (S) MG.stamp(S, false); } // 새로 넣은 행에 숨은 번호
+        const d = Object.assign(st.mounted.bridge.buildDb(), await B.extras(st.mounted.win));
+        if (B.isBiz(st.mounted.win)) d.linkSonik = st.link || null; // 이 사업계획이 이어받는 손익추정(다시 열 때 그것을 쓴다)
+        return d;
+      };
+      let db = await buildFull();
       if (memo === null) {
-        const s = st.open, path = 'snapshots/' + s.id + '/r' + (s.rev + 1) + '_' + crypto.randomUUID().slice(0, 8) + '.json.gz';
-        const gz = await E.gzip(JSON.stringify(db));
-        const up = await sb.storage.from(C.bucket).upload(path, gz, { contentType: 'application/gzip', upsert: false });
-        if (up.error) throw new Error('파일 올리기 실패: ' + up.error.message);
-        if (snapCacheOn()) E.LocalCache.put(path, gz, 'snap'); // 방금 저장한 것은 다시 열 때 받지 않는다
-        const r = await sb.rpc('sk_overwrite_snapshot', { p_id: s.id, p_expected_rev: s.rev, p_path: path, p_size: gz.size, p_engine_ver: db.sysVer || null });
-        if (r.error) {
-          await sb.storage.from(C.bucket).remove([path]);
-          if (/CONFLICT/.test(r.error.message)) { toast('다른 창이나 다른 사람이 그사이 이 추정자료를 저장했습니다. 덮어쓰지 않았으니 「새 버전으로 저장」을 쓰세요.', 9000); return; }
-          throw new Error('저장 실패: ' + r.error.message);
+        // 그사이 다른 창·다른 사람이 저장했으면(CONFLICT) 최신 판에 내가 바꾼 칸만 얹어 다시 저장한다(hong 11/04, 최대 3번)
+        let merged = null;
+        for (let tries = 0; ; tries++) {
+          const s = st.open, path = 'snapshots/' + s.id + '/r' + (s.rev + 1) + '_' + crypto.randomUUID().slice(0, 8) + '.json.gz';
+          const gz = await E.gzip(JSON.stringify(db));
+          const up = await sb.storage.from(C.bucket).upload(path, gz, { contentType: 'application/gzip', upsert: false });
+          if (up.error) throw new Error('파일 올리기 실패: ' + up.error.message);
+          const r = await sb.rpc('sk_overwrite_snapshot', { p_id: s.id, p_expected_rev: s.rev, p_path: path, p_size: gz.size, p_engine_ver: db.sysVer || null });
+          if (r.error) {
+            await sb.storage.from(C.bucket).remove([path]);
+            if (/CONFLICT/.test(r.error.message) && tries < 3) {
+              busy(null);
+              const m = await mergeLatest(db, true);
+              if (!m) return; // 취소·합칠 수 없음(안내는 mergeLatest 가 했다)
+              merged = merged ? Object.assign(m, { auto: merged.auto + m.auto, picked: merged.picked + m.picked, warns: merged.warns.concat(m.warns) }) : m;
+              db = m.db; busy('합친 자료를 저장하는 중…');
+              continue;
+            }
+            if (/NOT_OWN/.test(r.error.message)) { toast('이 저장본은 덮어쓸 수 없어(서버 설정 전) 새 버전으로 저장합니다.', 6000); setTimeout(() => saveFromEngine(true), 0); return; }
+            if (/CONFLICT/.test(r.error.message)) { toast('다른 창이나 다른 사람이 계속 저장하고 있어 덮어쓰지 않았습니다. 잠시 뒤 다시 저장하거나 「새 버전으로 저장」을 쓰세요.', 9000); return; }
+            throw new Error('저장 실패: ' + r.error.message);
+          }
+          if (snapCacheOn()) E.LocalCache.put(path, gz, 'snap'); // 방금 저장한 것은 다시 열 때 받지 않는다
+          if (r.data && r.data.prune && r.data.prune.length) await sb.storage.from(C.bucket).remove(r.data.prune);
+          st.open = Object.assign({}, s, { rev: r.data.rev, storage_path: path, size_bytes: gz.size, updated_at: new Date().toISOString(), engine_ver: db.sysVer || s.engine_ver, last_saved_by: st.me.email, last_saved_name: st.me.name || '' });
+          st.base = baseOf(db, r.data.rev); st.newer = null;
+          log('save_web', s.id, 'rev=' + r.data.rev + (merged ? ' ' + merged.note : ''));
+          presSaved();
+          break;
         }
-        if (r.data && r.data.prune && r.data.prune.length) await sb.storage.from(C.bucket).remove(r.data.prune);
-        st.open = Object.assign({}, s, { rev: r.data.rev, storage_path: path, size_bytes: gz.size, updated_at: new Date().toISOString(), engine_ver: db.sysVer || s.engine_ver });
-        log('save_web', s.id, 'rev=' + r.data.rev);
         markClean(0);
-        toast('저장했습니다.');
+        if (merged) { toast('최신 저장본과 합쳐 저장했습니다. ' + merged.note, 7000); if (merged.warns.length) showWarns(merged.warns); }
+        else toast('저장했습니다.');
       } else {
         const parent = st.open.backupOf || st.open.id || st.open.srcId || null;
         const id = await putSnapshot(db, { source: 'web', memo, parent_id: parent });
@@ -772,6 +801,7 @@
         markClean(0);
         const now = new Date().toISOString();
         st.open = Object.assign({}, st.open, { id, memo, rev: 1, created_at: now, updated_at: now, source: 'web', author_email: st.me.email, author_name: st.me.name || '', engine_ver: db.sysVer, backupOf: null });
+        st.base = baseOf(db, 1); st.newer = null; presStart(st.open);
         toast('새 ' + RO(KIND(st.open)) + ' 저장했습니다. 다음 저장부터는 여기에 덮어씁니다.', 5000);
       }
       renderBar();
@@ -780,6 +810,7 @@
   }
   $('btnSave').onclick = () => saveFromEngine(false);
   $('btnSaveNew').onclick = () => saveFromEngine(true);
+  $('btnMerge').onclick = () => applyLatest();
   $('btnOffline').onclick = downloadOffline;
   $('btnEngDl').onclick = downloadEngine;
 
@@ -798,17 +829,23 @@
   }
   // 저장 뒤 바뀐 게 있는지(hong 11/03): 엔진 자료(DB 내보내기와 같은 내용)에서 화면 위치 같은 보기 상태를 빼고 비교한다
   const VIEW_KEYS = ['_zone', '_zoneMode', '_siteMenu', '_zoneMenu', '_sub', '_sysLogReset', '_sysLogHideV2'];
-  function dataSig() {
+  function dataSig(db) {
     try {
-      const d = st.mounted.bridge.buildDb(), p = Object.assign({}, d.payload);
+      const d = db || st.mounted.bridge.buildDb(), p = Object.assign({}, d.payload);
       VIEW_KEYS.forEach((k) => delete p[k]);
       if (p.menuMemoAttach) p.menuMemoAttach = Object.fromEntries(Object.entries(p.menuMemoAttach).filter(([, v]) => v && (v.memo || (v.files && v.files.length))));
       return JSON.stringify([d.baseYm, d.mode, d.months, p, d.confirmed, d.plan]);
     } catch (_) { return null; }
   }
-  function markClean(ms) {
+  // baseRev 가 있으면 같은 순간의 자료를 합치기 기준본으로도 남긴다(내가 연·저장한 판 = 그 판 번호)
+  function markClean(ms, baseRev) {
     const m = st.mounted;
-    setTimeout(() => { if (st.mounted === m) st.cleanSig = dataSig(); }, ms);
+    setTimeout(() => {
+      if (st.mounted !== m) return;
+      let d = null; try { d = m.bridge.buildDb(); } catch (_) { d = null; }
+      st.cleanSig = d ? dataSig(d) : null;
+      if (d && baseRev != null && st.open && st.open.rev === baseRev) st.base = baseOf(d, baseRev);
+    }, ms);
   }
   // 여는 순간의 「손익 완전 재현 확인」 팝업: 모두 일치하면 아무것도 띄우지 않고(hong 11/03), 차이가 있으면 그대로 둔다
   function quietVerify(win, v) {
@@ -816,6 +853,155 @@
     const kill = () => { const el = win.document.getElementById('pnlVerifyModal'); if (el && /완전 재현 확인/.test(el.textContent)) { el.remove(); return true; } return false; };
     kill();
     let n = 0; const t = setInterval(() => { if (kill() || ++n > 20) clearInterval(t); }, 250);
+  }
+  // ── 동시 작업 합치기(hong 11/04) ──────────────────
+  // 기준본(내가 연·마지막으로 저장한 판) · 내 판(지금 화면) · 상대 판(그사이 저장된 최신본)을 칸마다 비교해(merge.js)
+  // 한쪽만 바꾼 칸은 그 값, 둘 다 다르게 바꾼 칸만 한 창에서 묻는다. 저장할 때(덮어쓰기 충돌)와 「⤵ 반영」을 눌렀을 때만 합친다.
+  // 기준월·추정월 구성(롤오버)·엔진 버전이 다르면 합치지 않고 「새 버전으로 저장」을 권한다. 손익은 합친 입력값으로 엔진이 다시 계산한다
+  const MG = window.SonikMerge;
+  const MERGE_VIEW = ['site', 'menu', 'ym'].concat(VIEW_KEYS); // 화면 위치는 합치지 않고 지금 화면 것을 쓴다
+  function engS(win) { try { return win.eval('S'); } catch (_) { return null; } }
+  function mcore(db) {
+    const p = Object.assign({}, db.payload); MERGE_VIEW.forEach((k) => delete p[k]);
+    return { payload: p, confirmed: db.confirmed == null ? null : db.confirmed, plan: db.plan == null ? null : db.plan };
+  }
+  const monthsKey = (db) => JSON.stringify((db.months || []).map((m) => [m.ym, m.type]));
+  function baseOf(db, rev) { return { rev, core: mcore(db), baseYm: db.baseYm, months: monthsKey(db), sysVer: db.sysVer, mode: db.mode }; }
+  function cannotMerge(base, mine, th) {
+    if (!MG) return '합치기 기능을 불러오지 못했습니다';
+    if (!base) return '이 화면을 연 기준본이 없습니다(열고 바로 저장했거나 백업본·미리보기)';
+    if ((th.mode || 'sonik') !== (mine.mode || 'sonik')) return '손익추정·사업계획 구분이 다릅니다';
+    if (sameBase(th.sysVer) !== sameBase(mine.sysVer)) return '최신 저장본은 다른 엔진(' + (th.sysVer || '?') + ')으로 저장되었습니다. 목록으로 가서 다시 여세요';
+    if (th.baseYm !== base.baseYm || mine.baseYm !== base.baseYm) return '기준월이 바뀌었습니다(롤오버)';
+    if (monthsKey(th) !== base.months || monthsKey(mine) !== base.months) return '추정월 구성이 바뀌었습니다';
+    if (MG.unstamped(th.payload)) return '최신 저장본이 합치기 전 화면(옛 사이트)에서 저장되어 판매·구매 행을 맞출 수 없습니다';
+    return null;
+  }
+  // 최신 저장본에 지금 화면을 합쳐 화면에 넣는다. saving=true 면 저장 중(충돌 뒤). 반환 {db, auto, picked, warns, note} · 취소/불가 = null
+  async function mergeLatest(mineDb, saving) {
+    const s = st.open;
+    const { data: row, error } = await sb.from('sk_snapshots').select('*').eq('id', s.id).maybeSingle();
+    if (error || !row) { toast('최신 저장본을 읽지 못했습니다' + (error ? ': ' + error.message : ''), 7000); return null; }
+    if (row.rev === s.rev) { st.newer = null; renderBar(); return saving ? null : { db: mineDb, auto: 0, picked: 0, warns: [], note: '', same: true }; }
+    busy('최신 저장본 받는 중…');
+    let th;
+    try { th = await fetchSnapDb(row); } finally { busy(null); }
+    const why = cannotMerge(st.base, mineDb, th);
+    if (why) {
+      const go = await ask('합칠 수 없습니다', '<p>' + esc(why) + '.</p><p class="hint">' + (saving ? '덮어쓰지 않았습니다. 「확인」을 누르면 지금 작업을 새 버전으로 따로 저장합니다.' : '지금 화면은 그대로입니다. 「확인」을 누르면 지금 작업을 새 버전으로 따로 저장합니다.') + '</p>');
+      if (go) setTimeout(() => saveFromEngine(true), 0);
+      return null;
+    }
+    const Bc = st.base.core, Mc = mcore(mineDb), Tc = mcore(th);
+    let res = MG.merge(Bc, Mc, Tc);
+    const who = (st.newer && st.newer.rev === row.rev && st.newer.name) || (row.last_saved_by && st.me && row.last_saved_by === st.me.email ? '내 다른 창' : row.last_saved_name || row.last_saved_by || '');
+    let choice = {};
+    if (res.conflicts.length) {
+      choice = await askConflicts(res, row, who, saving);
+      if (!choice) { toast(saving ? '저장하지 않았습니다.' : '반영하지 않았습니다.'); return null; }
+      res = MG.merge(Bc, Mc, Tc, choice);
+    }
+    busy('합친 값으로 다시 계산하는 중…');
+    try {
+      const win = st.mounted.win, S = engS(win) || {};
+      const view = {}; MERGE_VIEW.forEach((k) => { if (S[k] !== undefined) view[k] = JSON.parse(JSON.stringify(S[k])); else if (mineDb.payload[k] !== undefined) view[k] = mineDb.payload[k]; });
+      const mdb = Object.assign({}, mineDb, { payload: Object.assign({}, res.result.payload, view), confirmed: res.result.confirmed, plan: res.result.plan });
+      delete mdb.verify; // 합친 자료는 저장된 손익 숫자가 없으므로 재현 확인 창을 띄우지 않는다(새로 계산)
+      st.mounted.bridge.applyDb(mdb);
+      quietVerify(win, { diffs: [], skipped: [] });
+      const S2 = engS(win); if (S2) MG.stamp(S2, false);
+      const full = Object.assign(st.mounted.bridge.buildDb(), await B.extras(win));
+      if (B.isBiz(win)) full.linkSonik = st.link || null;
+      st.base = baseOf(th, row.rev); st.newer = null;
+      st.open = Object.assign({}, st.open, { rev: row.rev, storage_path: row.storage_path, size_bytes: row.size_bytes, updated_at: row.updated_at, engine_ver: row.engine_ver });
+      const picked = Object.values(choice).filter((v) => v === 't').length;
+      const note = (who ? who + (who === '내 다른 창' ? ' ' : '님 ') : '') + fmtT(row.updated_at) + ' 저장본과 합침 · 상대 ' + res.stats.theirs + '칸 · 내 ' + res.stats.mine + '칸'
+        + (res.conflicts.length ? ' · 물은 칸 ' + res.conflicts.length + '(상대 값 ' + picked + ')' : '') + (res.warns.length ? ' · 확인 필요 ' + res.warns.length : '');
+      renderBar();
+      return { db: full, auto: res.stats.theirs, picked, warns: res.warns, note, mineN: res.stats.mine };
+    } catch (e) {
+      toast('합친 값을 넣지 못했습니다: ' + (e.message || e) + ' — 저장하지 않았습니다. 「새 버전으로 저장」을 쓰세요.', 9000);
+      return null;
+    } finally { busy(null); }
+  }
+  // 둘 다 다르게 바꾼 칸: 한 창에 표로(위치 · 내 값 · 상대 값). 반환 {key:'m'|'t'} · 취소 = null
+  async function askConflicts(res, row, who, saving) {
+    const cs = res.conflicts;
+    const rows = cs.map((c, i) => '<tr><td class="memo">' + esc(MG.label(c)) + (c.kind === 'row' ? ' <span class="hint">(행)</span>' : '') + '</td>'
+      + '<td><label class="mgpick"><input type="radio" name="mg' + i + '" value="m" checked> ' + esc(MG.show(c.mine)) + '</label></td>'
+      + '<td><label class="mgpick"><input type="radio" name="mg' + i + '" value="t"> ' + esc(MG.show(c.theirs)) + '</label></td></tr>').join('');
+    const p = ask(saving ? '저장 전에 합치기 — 고를 칸 ' + cs.length + '개' : '최신 저장본 반영 — 고를 칸 ' + cs.length + '개',
+      '<p>' + esc((who ? who + (who === '내 다른 창' ? '에서 ' : '님이 ') : '그사이 ') + fmtT(row.updated_at) + '에 저장한 판이 있습니다.') + ' 아래 칸은 양쪽이 다른 값으로 고쳤습니다. 남길 값을 고르세요. 나머지 칸(상대 ' + res.stats.theirs + '칸 · 내 ' + res.stats.mine + '칸 중 겹치지 않는 것)은 자동으로 합칩니다.</p>'
+      + '<div class="row"><button id="mgAllM" type="button">모두 내 값</button><button id="mgAllT" type="button">모두 상대 값</button></div>'
+      + '<div class="mgwrap"><table class="grid mg"><thead><tr><th>위치</th><th>내 값</th><th>상대 값</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+      + '<p class="hint">취소하면 아무것도 ' + (saving ? '저장하지' : '바꾸지') + ' 않습니다.</p>');
+    const all = (v) => $('mBody').querySelectorAll('input[type=radio][value=' + v + ']').forEach((x) => { x.checked = true; });
+    $('mgAllM').onclick = () => all('m'); $('mgAllT').onclick = () => all('t');
+    const tb = $('mBody').querySelector('table.mg tbody'); if (tb) labelGrid(tb);
+    if (!(await p)) return null;
+    const out = {}; // 창은 닫혀도 내용은 다음 창 전까지 남아 있다
+    cs.forEach((c, i) => { const x = $('mBody').querySelector('input[name=mg' + i + ']:checked'); out[c.key] = x ? x.value : 'm'; });
+    return out;
+  }
+  function showWarns(ws) {
+    const li = ws.slice(0, 30).map((w) => '<li>' + esc(MG.label({ path: w.path, row: w.row })) + (w.kind === 'added' ? ' — 양쪽에서 행을 더함' : ' — 같은 행의 다른 칸을 양쪽이 고침') + '</li>').join('');
+    ask('확인 필요 ' + ws.length + '곳', '<p>자동으로 합쳤지만 한 번 보시면 좋은 곳입니다.</p><ul>' + li + '</ul>' + (ws.length > 30 ? '<p class="hint">외 ' + (ws.length - 30) + '곳</p>' : ''));
+  }
+  // 「⤵ 반영」: 저장하지 않고 최신 저장본을 지금 화면에 합친다(내가 바꾼 칸은 그대로 남고 저장 전 상태)
+  async function applyLatest() {
+    if (!st.mounted || !st.open || saveFromEngine.busy) return;
+    saveFromEngine.busy = true;
+    try {
+      const mine = st.mounted.bridge.buildDb();
+      const m = await mergeLatest(mine, false);
+      if (!m) return;
+      if (m.same) { toast('이미 최신 저장본입니다.'); return; }
+      log('merge_web', st.open.id, 'rev=' + st.open.rev + ' ' + m.note);
+      if (!m.mineN) markClean(0); // 내가 바꾼 게 없으면 지금 화면 = 최신 저장본
+      toast('최신 저장본을 반영했습니다. ' + m.note + (m.mineN ? ' — 내 수정은 아직 저장 전입니다.' : ''), 8000);
+      if (m.warns.length) showWarns(m.warns);
+    } finally { saveFromEngine.busy = false; busy(null); }
+  }
+  // 함께 여는 사람·저장 알림: 저장본마다 실시간 통로 하나(같이 연 사람 이름, 저장하면 판 번호를 알림). 통로가 막혀도 1분마다 판 번호를 본다
+  const PRES = { ch: null, timer: null, tab: Math.random().toString(36).slice(2, 8) };
+  function presStart(s) {
+    presStop();
+    if (!s || !s.id || s.preview || s.backupOf || !st.me) return;
+    const id = s.id;
+    try {
+      const ch = sb.channel('sk-snap-' + id, { config: { presence: { key: st.me.email + '#' + PRES.tab }, broadcast: { self: false } } });
+      ch.on('presence', { event: 'sync' }, () => {
+        if (PRES.ch !== ch) return;
+        const ps = ch.presenceState(), names = [];
+        Object.keys(ps).forEach((k) => { if (k === st.me.email + '#' + PRES.tab) return; const p = (ps[k] || [])[0] || {}; const n = p.email === st.me.email ? '내 다른 창' : (p.name || p.email || '?'); if (names.indexOf(n) < 0) names.push(n); });
+        st.peers = names; renderBar();
+      }).on('broadcast', { event: 'saved' }, (m) => { if (PRES.ch === ch && st.open && st.open.id === id) onNewer(m.payload || {}); });
+      ch.subscribe((stt) => { if (stt === 'SUBSCRIBED') ch.track({ name: st.me.name || st.me.email, email: st.me.email, at: Date.now() }); });
+      PRES.ch = ch;
+    } catch (_) { PRES.ch = null; }
+    PRES.timer = setInterval(() => pollRev(id), 60000);
+  }
+  function presStop() {
+    clearInterval(PRES.timer); PRES.timer = null;
+    const ch = PRES.ch; PRES.ch = null;
+    if (ch) { try { sb.removeChannel(ch); } catch (_) { /* 무시 */ } }
+  }
+  function presSaved() {
+    try { if (PRES.ch) PRES.ch.send({ type: 'broadcast', event: 'saved', payload: { rev: st.open.rev, name: st.me.name || st.me.email, email: st.me.email, tab: PRES.tab, at: new Date().toISOString() } }); } catch (_) { /* 무시 */ }
+  }
+  async function pollRev(id) {
+    if (document.hidden || !st.open || st.open.id !== id) return;
+    try {
+      const { data } = await sb.from('sk_snapshots').select('*').eq('id', id).maybeSingle();
+      if (data && st.open && st.open.id === id && data.rev > st.open.rev) onNewer({ rev: data.rev, at: data.updated_at, email: data.last_saved_by || '', name: data.last_saved_name || data.last_saved_by || '' });
+    } catch (_) { /* 다음 번에 */ }
+  }
+  function onNewer(p) {
+    if (!st.open || !(p.rev > st.open.rev) || (st.newer && st.newer.rev >= p.rev)) return;
+    const name = p.email && st.me && p.email === st.me.email ? '내 다른 창' : (p.name || '');
+    st.newer = { rev: p.rev, name, at: p.at || null };
+    renderBar();
+    toast((name ? name + (name === '내 다른 창' ? '에서 ' : '님이 ') : '다른 창이나 다른 사람이 ') + (p.at ? fmtT(p.at) + '에 ' : '') + '이 ' + KIND(st.open) + (KIND(st.open) === '사업계획' ? '을' : '를') + ' 저장했습니다. 「⤵ 반영」을 누르면 지금 화면에 합칩니다(저장할 때도 자동으로 합칩니다).', 9000);
   }
   async function leaveOk() {
     const draft = RQ.items.length ? ' 접수하지 않은 수정요청 항목 ' + RQ.items.length + '개도 사라집니다.' : '';

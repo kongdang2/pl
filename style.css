@@ -228,3 +228,8 @@ button.link{background:none;border:0;color:var(--pri2);padding:4px 2px;text-deco
 label.cd{display:block;margin:6px 0;font-size:13px}
 label.cd input,label.cd select{display:block;width:100%;margin-top:3px;padding:6px 8px;font:inherit;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink)}
 label.cd textarea{display:block;margin-top:3px}
+/* 동시 작업 합치기(11/04): 새 저장본 알림 단추 · 고를 칸 표 */
+#bar button.warn{background:var(--warn);border-color:var(--warn);color:#fff;font-weight:600}
+.mgwrap{max-height:50vh;overflow:auto;margin:6px 0;border:1px solid var(--line);border-radius:6px}
+.grid.mg td{white-space:normal;vertical-align:top}.grid.mg td.memo{min-width:180px}
+.mgpick{display:flex;gap:6px;align-items:flex-start;cursor:pointer}
