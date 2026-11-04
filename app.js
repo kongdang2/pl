@@ -1160,6 +1160,37 @@
     busy(null);
   };
 
+  // ── 챗봇 답의 수정요청 초안 올리기(hong 11/04) ── 챗봇이 만든 초안을 담당자가 확인·고쳐서 「올리기」를 눌러야 접수된다.
+  // 기준 자료 = 질문할 때 열려 있던 추정자료(질문 ctx), 없으면 지금 열린 자료. 담당자 요청은 DB 트리거가 승인대기로 바꾼다.
+  async function fileChatDraft(d) {
+    const q = d.question || {}, o = st.open || {};
+    const snap = q.snap_id || o.backupOf || o.id || null, memo = q.memo || o.memo || o.base_ym || '';
+    const html = '<label class="cd">제목<input id="cdTitle" maxlength="80"></label>'
+      + '<label class="cd">구분<select id="cdKind">' + ['계산', '표시·서식', '기능 추가', '기타'].map((k) => '<option>' + k + '</option>').join('') + '</select></label>'
+      + '<label class="cd">내용<textarea id="cdBody" rows="7"></textarea></label>'
+      + '<p class="hint">' + (memo || q.loc ? '기준 자료: ' + esc([memo, q.loc].filter(Boolean).join(' · ')) + '<br>' : '')
+      + (st.me.role === 'admin' ? '올리면 바로 접수되어 Claude에게 넘어갑니다.' : '올리면 관리자가 승인한 뒤 Claude가 작업합니다.') + ' 화면 셀·영역을 붙이려면 자료를 열고 「✏️ 수정요청」을 쓰세요.</p>';
+    const p = ask('📝 챗봇 초안으로 수정요청 올리기', html);
+    $('mOk').textContent = '올리기';
+    $('cdTitle').value = d.title || ''; $('cdKind').value = d.kind || '기타'; $('cdBody').value = d.body || '';
+    const ok = await p; $('mOk').textContent = '확인';
+    if (!ok) return null;
+    const title = ($('cdTitle').value || '').trim() || '챗봇에서 올린 요청', body = ($('cdBody').value || '').trim();
+    const src = '\n\n— 챗봇 대화 #' + d.chat_id + '에서 올림' + (q.body ? '\n질문: ' + String(q.body).replace(/\s+/g, ' ').slice(0, 300) : '');
+    busy('올리는 중…');
+    try {
+      const { data, error } = await sb.from('sk_requests').insert({ title, kind: $('cdKind').value || '기타', body: body + src, items: [], snapshot_id: snap,
+        base_ym: q.base_ym || o.base_ym || null, engine_ver: q.engine_ver || (st.engine ? st.engine.ver : null), author_email: st.me.email, author_name: st.me.name || '', chat_id: d.chat_id }).select('id').single();
+      if (error) throw new Error(error.message);
+      log('request', snap, '#' + data.id + ' (챗봇 #' + d.chat_id + ')');
+      busy(null);
+      toast(st.me.role === 'admin' ? '수정요청 #' + data.id + '을(를) 접수했습니다. Claude에게 넘겼습니다.' : '수정요청 #' + data.id + '을(를) 올렸습니다. 관리자가 승인하면 작업이 시작됩니다.', 7000);
+      try { loadRequests(); } catch (_) { /* 목록이 없는 화면 */ }
+      return data.id;
+    } catch (e) { busy(null); toast('올리기 실패: ' + e.message, 8000); return null; }
+  }
+  if (window.SonikChannel && window.SonikChannel.setDraftHandler) window.SonikChannel.setDraftHandler(fileChatDraft);
+
   // ── 수정 엔진 올리기(hong 11/03) ── 담당자가 직접 고친 엔진(빈 엔진)을 수정요청으로 올린다.
   // 실데이터 블록이 있으면 거부, 바탕 버전(SYS_CHANGELOG 첫 제목)과 웹 최신 엔진 대비 바뀐 줄 수를 기록한다.
   // 파일은 챗봇 첨부와 같은 비공개 저장소(sonik-channel, 담당자는 member/<이메일>/ 아래)에 gzip 으로 둔다
