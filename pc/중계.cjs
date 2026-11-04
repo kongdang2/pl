@@ -21,6 +21,9 @@ const LOG_DIR = path.join(__dirname, '중계로그');
 const SESS_PATH = path.join(__dirname, '중계세션.json');
 const ATT_DIR = path.join(__dirname, '첨부');
 const DATA_DIR = path.join(__dirname, '자료'); // 챗봇 질문 때 웹에서 열어 둔 추정자료(저장본별로 한 번만 받는다)
+const SCR_DIR = path.join(DATA_DIR, '화면'); // 엔진 계산 화면(엔진조회.cjs 결과): 자료·저장본·달·엔진별 폴더
+const EQ_TOOL = path.join(__dirname, '엔진조회.cjs');
+const KS = require('./검산.cjs'); // 숫자 답 검산
 const REQ_DIR = path.join(__dirname, '요청'); // 수정요청 원문(항목·셀·메모·화면 캡처)을 요청 번호별로 풀어 두는 곳
 const STAGES = ['접수', '작업중', '작업중', '작업중', '완료']; // 단계 값 0 = 접수, 1~3 = 작업중, 4 = 완료(hong 11/02 단순화). // 웹에서 올린 이미지·파일을 글 번호별로 내려받는 곳
 // codex.exe 는 Codex 앱 안(%LOCALAPPDATA%\OpenAI\Codex\bin\<버전>\)에 있고 일반 PATH 에는 없다. 가장 최근 것을 쓴다.
@@ -238,7 +241,55 @@ function diffFile(fa, sa, fb, sb2) {
   for (const o of fs.readdirSync(DATA_DIR)) if (o.startsWith('비교_') && path.join(DATA_DIR, o) !== f && (Date.now() - fs.statSync(path.join(DATA_DIR, o)).mtimeMs > 7 * 864e5)) try { fs.unlinkSync(path.join(DATA_DIR, o)); } catch (_) { /* 무시 */ }
   return f;
 }
-async function fetchCtx(m, ch) {
+// ── 엔진 계산 화면(챗봇 답변 개선 B, hong 11-04) ──
+// 자료를 웹 엔진에 화면 없이 열어 메뉴마다 엔진이 보여 주는 표를 글자로 뽑아 둔다(소통\엔진조회.cjs). 챗봇은 숫자를 여기서 먼저 찾는다.
+// 엔진: 웹테스트\손익추정_웹연결_<자료 저장 때 엔진>_날짜.html, 없으면 웹테스트의 가장 새 웹판(자료를 불러오면 데이터는 자료 것으로 바뀐다)
+function localEngine(ver) {
+  const dir = path.join(ROOT, '웹테스트');
+  let fl = [];
+  try { fl = fs.readdirSync(dir).filter((f) => /^손익추정_웹연결_v\d+-\d+_\d{8}\.html$/.test(f)); } catch (_) { return null; }
+  const exact = ver ? fl.find((f) => f.indexOf('_' + ver + '_') > 0) : null;
+  const pick = exact || fl.sort((a, b) => fs.statSync(path.join(dir, b)).mtimeMs - fs.statSync(path.join(dir, a)).mtimeMs)[0];
+  return pick ? { file: path.join(dir, pick), ver: (/_(v\d+-\d+)_/.exec(pick) || [])[1], exact: !!exact } : null;
+}
+const scrJobs = new Map(); // 같은 폴더를 두 갈래(본 작업·빠른 질문)가 동시에 만들지 않게
+function screensFor(s, dbFile, ym, engVer) {
+  const eng = localEngine(engVer);
+  if (!eng) return Promise.resolve({ err: '웹테스트 폴더에 웹 엔진 파일이 없습니다' });
+  if (!fs.existsSync(EQ_TOOL)) return Promise.resolve({ err: '소통\\엔진조회.cjs 가 없습니다' });
+  ym = /^\d{4}-\d{2}$/.test(ym || '') ? ym : s.base_ym;
+  const id8 = String(s.id).slice(0, 8), dir = path.join(SCR_DIR, id8 + '_r' + s.rev + '_' + ym + '_' + eng.ver);
+  const done = () => ({ dir, idx: path.join(dir, '목차.txt'), eng, ym, n: (fs.readFileSync(path.join(dir, '목차.txt'), 'utf8').split('\n').length - 3) });
+  if (fs.existsSync(path.join(dir, '목차.txt'))) return Promise.resolve(done());
+  if (scrJobs.has(dir)) return scrJobs.get(dir);
+  const job = new Promise((res) => {
+    fs.mkdirSync(dir, { recursive: true });
+    const t0 = Date.now();
+    const p = cp.spawn(process.execPath, [EQ_TOOL, '--db', dbFile, '--engine', eng.file, '--out', dir, '--ym', ym, '--limit-min', String(conf.screenMin || 6)], { cwd: ROOT, windowsHide: true });
+    let out = '';
+    p.stdout.on('data', (d) => { out += d; }); p.stderr.on('data', (d) => { out += d; });
+    const kill = setTimeout(() => { try { p.kill(); } catch (_) { /* 무시 */ } }, ((conf.screenMin || 6) + 2) * 60000);
+    p.on('error', (e) => { out += e.message; });
+    p.on('close', (code) => {
+      clearTimeout(kill); scrJobs.delete(dir);
+      log('엔진 화면', id8, 'r' + s.rev, ym, eng.ver, 'code', code, Math.round((Date.now() - t0) / 1000) + '초', out.trim().split('\n').pop());
+      if (fs.existsSync(path.join(dir, '목차.txt'))) {
+        // 같은 자료의 옛 저장본 화면, 7일 지난 화면은 지운다
+        for (const o of fs.readdirSync(SCR_DIR)) {
+          const f = path.join(SCR_DIR, o);
+          if (f === dir) continue;
+          const old = (o.startsWith(id8 + '_r') && !o.startsWith(id8 + '_r' + s.rev + '_')) || Date.now() - fs.statSync(f).mtimeMs > 7 * 864e5;
+          if (old) try { fs.rmSync(f, { recursive: true, force: true }); } catch (_) { /* 무시 */ }
+        }
+        res(done());
+      } else { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) { /* 무시 */ } res({ err: (out.trim().split('\n').pop() || '종료 코드 ' + code).slice(0, 200) }); }
+    });
+  });
+  scrJobs.set(dir, job);
+  return job;
+}
+
+async function fetchCtx(m, ch, sink) {
   if (m._ctx !== undefined) return;
   m._ctx = null;
   const src = m.ctx ? m : (ch || []).slice().reverse().find((x) => x.ctx && x.sender === m.sender && (x.owner || null) === (m.owner || null));
@@ -250,7 +301,7 @@ async function fetchCtx(m, ch) {
       out.screen = path.join(dir, '화면.txt');
       fs.writeFileSync(out.screen, '위치: ' + (c.loc || '') + (c.cut ? '\n(표가 많아 앞부분만)' : '') + '\n\n' + c.screen);
     }
-    const all = await api('GET', 'sk_snapshots', '?select=id,memo,mode,base_ym,source,author_name,rev,storage_path,updated_at&order=updated_at.desc');
+    const all = await api('GET', 'sk_snapshots', '?select=id,memo,mode,base_ym,source,author_name,rev,storage_path,updated_at,engine_ver&order=updated_at.desc');
     if (!all.length) throw new Error('중계 계정이 자료 목록을 읽을 수 없습니다(권한)');
     fs.mkdirSync(DATA_DIR, { recursive: true });
     out.list = path.join(DATA_DIR, '목록.json');
@@ -258,6 +309,10 @@ async function fetchCtx(m, ch) {
     out.all = all;
     const open = c && c.snap_id ? all.find((x) => x.id === c.snap_id) : null;
     if (open) { out.open = open; out.db = await snapFile(open); out.rev = open.rev; }
+    if (out.db && conf.screens !== false && open.mode !== 'bizplan') {
+      if (sink) sink.add([{ k: 'tool', s: '엔진 계산 화면 준비(자료마다 처음 한 번, 1분 안팎)' }]);
+      out.scr = await screensFor(open, out.db, c.ym, c.engine_ver);
+    }
     // 질문(이 대화의 사람 글)에 이름이 나온 자료: 긴 이름부터 맞추고 맞춘 부분은 지워서 「수급회의」가 「수급회의_1040」 안에서 또 걸리지 않게
     let q = normName((ch || []).filter((x) => x.sender === m.sender).map((x) => x.body).concat([m.body]).join(' '));
     for (const x of all.slice().sort((p, r) => normName(r.memo).length - normName(p.memo).length)) {
@@ -268,10 +323,19 @@ async function fetchCtx(m, ch) {
       if (out.more.length >= 3) break;
       const e = { s: x };
       try { e.file = await snapFile(x); if (out.db) e.diff = diffFile(out.db, open, e.file, x); } catch (er) { e.err = er.message; }
+      // 비교 대상도 엔진 화면을 뽑는다(처음 conf.screenMore 개, 기본 1)
+      if (e.file && conf.screens !== false && x.mode !== 'bizplan' && out.more.length < (conf.screenMore == null ? 1 : conf.screenMore)) {
+        if (sink) sink.add([{ k: 'tool', s: '비교 자료 「' + x.memo + '」 엔진 계산 화면 준비' }]);
+        e.scr = await screensFor(x, e.file, c && c.ym, x.engine_ver);
+      }
       out.more.push(e);
     }
   } catch (e) { log('열린 자료 받기 실패 #' + m.id, e.message); out.err = e.message; }
   m._ctx = out;
+}
+function scrDirs(m) {
+  const x = m._ctx; if (!x) return [];
+  return [x.scr].concat((x.more || []).map((e) => e.scr)).filter((s) => s && s.dir).map((s) => s.dir);
 }
 function ctxLines(m) {
   const x = m._ctx;
@@ -284,6 +348,25 @@ function ctxLines(m) {
     if (x.screen) L.push('- 물을 때 보던 화면(' + (c.loc || '') + ')의 표, 탭 구분 글자: ' + x.screen + '  — 엔진이 계산해 보여 준 값은 여기서 먼저 찾는다.' + (c.dirty ? ' 저장하지 않은 수정이 있으니 화면 값이 저장본보다 우선이다.' : ''));
     if (x.db) L.push('- 열린 자료 전체(DB 내보내기 JSON, 저장본 ' + x.rev + (c.rev && c.rev !== x.rev ? ', 물을 때 연 것은 저장본 ' + c.rev + '이라 그 뒤 저장이 있었다' : '') + '): ' + x.db + '  — 크므로 필요한 키만 찾아 읽는다.');
   }
+  const scrs = scrDirs(m);
+  if (x.scr && x.scr.dir) {
+    L.push('[엔진 계산 화면] 열린 자료를 웹 엔진 ' + x.scr.eng.ver + '에 열어, 메뉴마다 엔진이 계산해 보여 주는 표를 글자로 뽑아 두었다(화면 ' + x.scr.n + '개).',
+      '  목차: ' + x.scr.idx + '  (월을 고르는 화면은 ' + x.scr.ym + ' 기준, 확정 구역은 기준월 직전 달, 나머지는 전체 월 표)' + (x.scr.eng.exact ? '' : '  ※ 자료를 저장한 엔진(' + (c && c.engine_ver) + ') 파일이 PC에 없어 ' + x.scr.eng.ver + ' 로 열었다.'));
+  } else if (x.scr && x.scr.err) L.push('[엔진 계산 화면] 뽑지 못했다(' + x.scr.err + '). 화면 표와 자료 JSON 으로 답한다.');
+  for (const e of x.more) if (e.scr && e.scr.dir) L.push('- 비교 자료 「' + e.s.memo + '」의 엔진 계산 화면 목차: ' + e.scr.idx);
+  if (scrs.length) {
+    const q = m.quick || isMember(m) || !(x.scr && x.scr.dir);
+    L.push('[숫자 답 규칙] 손익·금액·단가·물량 같은 숫자는 아래 순서로 구한다. 직접 만든 공식으로 다시 셈한 값은 틀리기 쉽다(예: 외화단가 = 금액÷수량÷기준환율처럼 엔진 정의가 따로 있다).',
+      '  1) 엔진 계산 화면 파일에서 찾는다: 목차로 화면을 고르고 그 파일을 읽거나 grep 한다. 화면 파일 값이 자료 JSON·직접 셈보다 우선이다.',
+      q ? '  2) 화면에 없으면 화면에 있는 값들로만 셈하고 「계산」이라고 밝힌다. 그래도 못 구하면 그 값을 볼 메뉴를 안내한다.'
+        : '  2) 화면에 없으면 엔진 함수로 구한다: node 소통\\엔진조회.cjs --db "' + x.db + '" --engine "' + x.scr.eng.file + '" --eval "식"  (다른 달 화면: --out 소통\\자료\\화면\\<새 폴더> --ym YYYY-MM [--conf-ym YYYY-MM] [--only 온산]). 그래도 없을 때만 직접 셈하고 「계산」이라고 밝힌다.',
+      '  3) 단위·부호는 화면 그대로 쓴다(Δ = 음수, 백만원·억원 구분). 억원으로 바꿔 쓰면 「계산」 줄로 적는다.',
+      '  4) 채널 블록(<<<채널) 바로 앞에, 답에 쓴 숫자마다 근거를 아래 형식(탭 구분)으로 적는다. 중계가 화면 파일과 대조해 검산하고, 맞지 않으면 다시 고치게 한다. 이 블록은 채널에 올라가지 않는다.',
+      '<<<근거',
+      '숫자\t화면 파일 이름(목차의 001_… )\t행 이름\t열 이름',
+      '숫자\t계산\t식(식에 쓴 값도 각각 한 줄씩 화면 근거를 적는다)',
+      '근거>>>');
+  }
   if (x.list) L.push('[웹 자료 범위 안에서 자유 열람·비교] 웹에 저장된 자료 전체 목록: ' + x.list + ' (' + x.all.length + '개). 질문이 다른 자료를 가리키면 이 목록에서 찾는다.');
   for (const e of x.more) {
     if (e.err) { L.push('- 질문에 나온 ' + nm(e.s) + ': 받지 못했다(' + e.err + ').'); continue; }
@@ -291,7 +374,7 @@ function ctxLines(m) {
   }
   if (x.list && !x.more.length) L.push('- 질문에 다른 자료 이름이 없어 미리 받은 자료는 없다. 다른 자료가 필요하면 목록의 정확한 이름을 넣어 다시 물어 달라고 안내한다.');
   if (x.err) L.push('- 자료를 다 받지 못했다(' + x.err + '). 받은 것으로 답하고, 없으면 그렇다고 말한다.');
-  L.push('자료 JSON 에는 주로 입력값이 들어 있다. 손익처럼 계산된 값은 화면 표에서 찾고, 없으면 입력값과 운영본 계산 방식으로 구해 어떻게 구했는지 한 줄로 적는다. 끝내 못 구하면 그 값을 볼 수 있는 메뉴를 안내한다.');
+  if (!scrs.length) L.push('자료 JSON 에는 주로 입력값이 들어 있다. 손익처럼 계산된 값은 화면 표에서 찾고, 없으면 입력값과 운영본 계산 방식으로 구해 어떻게 구했는지 한 줄로 적는다. 끝내 못 구하면 그 값을 볼 수 있는 메뉴를 안내한다.');
   return L;
 }
 // 대화가 어느 수정요청에 관한 것인지: 글의 request_id(접수 때 자동으로 올라온 글) 또는 주제 「수정요청 #N」
@@ -595,7 +678,8 @@ function run(agent, input, resumeId, images, opt) {
   if (opt.quick) a = agent === 'Claude'
     ? a.map((x, i) => (a[i - 1] === '--allowedTools' ? 'Read Glob Grep' : a[i - 1] === '--permission-mode' ? 'default' : x))
     : a.map((x) => (x === 'workspace-write' ? 'read-only' : x));
-  const cm = CTL.claude_model || conf.claudeModel, xm = CTL.codex_model || conf.codexModel, xe = CTL.codex_effort || conf.codexEffort;
+  // 숫자 질문(엔진 화면이 붙은 질문)은 Codex 추론을 높인다(챗봇 답변 개선 C). 웹 ⚙ 에서 정한 값이 있으면 그것이 우선
+  const cm = CTL.claude_model || conf.claudeModel, xm = CTL.codex_model || conf.codexModel, xe = CTL.codex_effort || (opt.numeric ? (conf.numericEffort || 'high') : conf.codexEffort);
   if (agent === 'Claude' && cm) a = a.concat(['--model', cm]);
   if (agent === 'Codex') {
     // 옵션은 exec 바로 뒤에 넣는다(resume 앞)
@@ -814,6 +898,43 @@ async function quickHead(m) {
     '지금 진행 중인 작업: ' + (busy || '없음'), '오늘 중계 기록 끝부분:', tail || '(없음)', '', ''].join('\n');
 }
 
+// ── 숫자 답 검산(챗봇 답변 개선 C, hong 11-04) ──
+// 답의 <<<근거 블록을 엔진 계산 화면과 대조한다. 틀린 근거·근거 없는 숫자가 있으면 같은 세션에 한 번 고치게 하고,
+// 그래도 남으면 답 끝에 「확인 못 한 숫자」를 적는다. 맞으면 답 끝에 근거 화면을 짧게 붙인다.
+function checkText(r) { return String(r.reply || ''); } // 최종 답 글(실행 출력 전체는 JSON 으로 이스케이프돼 있어 쓰지 않는다)
+function verdict(dirs, r, rep) { return KS.check(dirs, checkText(r), rep.body); }
+function problems(v) {
+  return v.bad.map((b) => b.raw + ' — ' + b.why).concat(v.unbacked.filter((u) => !v.bad.some((b) => b.raw === u)).map((u) => u + ' — 근거 줄 없음'));
+}
+async function numCheck(agent, m, r, rep, sid, opt, sink) {
+  const dirs = scrDirs(m);
+  rep.body = KS.stripBasis(rep.body);
+  let v = verdict(dirs, r, rep), probs = problems(v), tries = 0;
+  log('검산 #' + m.id, agent, '근거', v.basis.length, '맞음', v.checked, '문제', probs.length);
+  while (probs.length && tries < (conf.checkRetry == null ? 1 : conf.checkRetry)) {
+    tries++;
+    sink.add([{ k: 'tool', s: '검산: 엔진 화면과 다른 숫자 ' + probs.length + '개 → 다시 확인' }]);
+    const fix = ['[중계 검산] 방금 답의 숫자를 엔진 계산 화면과 대조했더니 아래가 맞지 않거나 근거가 없다:',
+      ...probs.slice(0, 20).map((x) => '- ' + x),
+      '',
+      '화면 파일(' + dirs.join(' , ') + ')에서 다시 찾아 고친다. 행·열을 잘못 본 것이면 맞는 칸의 값으로, 직접 셈한 값이면 화면 값으로 바꾸거나 「계산」 근거를 적는다. 끝내 못 찾으면 본문에 「확인 못 함」이라고 쓴다.',
+      '고친 답 전체를 앞과 같은 형식으로 다시 출력한다: <<<근거 … 근거>>> 다음에 <<<채널 … 채널>>>.'].join('\n');
+    const r2 = await run(agent, sid ? fix : (prompt(agent, m, [m], false) + '\n\n' + fix + '\n\n[앞 답]\n' + rep.body), sid, null, opt);
+    keepLog(m, agent + '_검산' + tries, r2.out);
+    if (r2.stopped) break;
+    const rep2 = parseReply(r2.reply, agent);
+    if (!rep2) break;
+    rep2.body = KS.stripBasis(rep2.body);
+    const v2 = verdict(dirs, r2, rep2), p2 = problems(v2);
+    log('검산 다시 #' + m.id, agent, '근거', v2.basis.length, '맞음', v2.checked, '문제', p2.length);
+    sid = sessionOf(agent, r2) || sid;
+    if (p2.length <= probs.length) { rep = Object.assign(rep2, { fileBlocks: rep2.fileBlocks.length ? rep2.fileBlocks : rep.fileBlocks }); v = v2; probs = p2; }
+  }
+  if (probs.length) rep.body += '\n\n> ⚠ 검산: 엔진 화면에서 확인하지 못한 숫자 — ' + probs.slice(0, 8).map((x) => x.split(' — ')[0]).join(', ') + (probs.length > 8 ? ' 외 ' + (probs.length - 8) + '개' : '') + '. 이 숫자는 그대로 쓰기 전에 화면에서 확인해 주세요.';
+  else if (v.checked) rep.body += '\n\n> 🔎 검산: 숫자 ' + v.checked + '개가 엔진 화면과 맞습니다' + (v.wheres.length ? ' (' + v.wheres.slice(0, 3).join(' · ') + (v.wheres.length > 3 ? ' 외' : '') + ')' : '') + '.';
+  return { rep, sid };
+}
+
 async function runAgent(agent, m, ch, ctx, group, root) {
   await patchMsg(m.id, { run_state: '실행중', run_note: agent });
   const sink = liveSink(m, agent);
@@ -825,7 +946,8 @@ async function runAgent(agent, m, ch, ctx, group, root) {
   const seenIds = new Set();
   const fresh = s ? ctx.concat(ch).filter((x) => x.id > s.lastId && !seenIds.has(x.id) && seenIds.add(x.id)).sort((a, b) => a.id - b.id) : null;
   await fetchFiles(ctx.concat(fresh || []));
-  await fetchCtx(m, ch);
+  await fetchCtx(m, ch, sink);
+  opt.numeric = scrDirs(m).length > 0;
   const imgs = (m._local || []).filter((f) => isImg(f) && fs.existsSync(f));
   let r, rep, resumed = false;
   if (s && fresh.length) {
@@ -842,9 +964,13 @@ async function runAgent(agent, m, ch, ctx, group, root) {
     if (r.stopped) { await sink.end(); keepLog(m, agent + '_중지', r.out); return r; }
     rep = parseReply(r.reply, agent);
   }
-  await sink.end();
   keepLog(m, agent, r.out);
-  const sid = sessionOf(agent, r) || (resumed ? s.id : null);
+  let sid = sessionOf(agent, r) || (resumed ? s.id : null);
+  if (rep && opt.numeric) {
+    const v = await numCheck(agent, m, r, rep, sid, opt, sink);
+    rep = v.rep; if (v.sid) sid = v.sid;
+  }
+  await sink.end();
   if (rep && sid && conf.resume && !quick) {
     all[key] = { id: sid, turns: (resumed ? s.turns : 0) + 1, lastId: Math.max(...ctx.concat(ch).map((x) => x.id)), at: new Date().toISOString() };
     saveSess(all);
