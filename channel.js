@@ -317,7 +317,7 @@
       if (/^image\//.test(f.type || '') && u) return '<a href="' + esc(u) + '" target="_blank" rel="noopener"><img src="' + esc(u) + '" alt="' + esc(f.name) + '" loading="lazy"></a>';
       // 다른 출처 주소라 download 속성이 안 먹으므로, 저장소에 원래 이름으로 내려받게 한다(download 매개변수)
       const du = u ? u + (u.includes('?') ? '&' : '?') + 'download=' + encodeURIComponent(f.name || '') : '';
-      return u ? '<a class="att-dl" href="' + esc(du) + '" target="_blank" rel="noopener" download="' + esc(f.name) + '">⬇ ' + esc(f.name) + kb + '</a>' : '<span>📄 ' + esc(f.name) + kb + '</span>';
+      return u ? '<a class="att-dl" href="' + esc(du) + '" target="_blank" rel="noopener" download="' + esc(f.name) + '">⬇ ' + esc(f.name) + kb + '</a>' : '<span>📄 ' + esc(f.name) + kb + (ch.gone && ch.gone[f.path] ? ' <i class="hint">(정리됨)</i>' : '') + '</span>';
     }).join('') + '</div>';
   }
   async function sign() {
@@ -326,7 +326,8 @@
     ch.rows.forEach((m) => (m.files || []).forEach((f) => { if (!ch.urls[f.path]) need.push(f.path); }));
     if (!need.length) return;
     const { data } = await ch.sb.storage.from(BUCKET).createSignedUrls(need, 3600);
-    (data || []).forEach((d) => { if (d.signedUrl) ch.urls[d.path] = d.signedUrl; });
+    ch.gone = ch.gone || {};
+    (data || []).forEach((d) => { if (d.signedUrl) ch.urls[d.path] = d.signedUrl; else if (d.error) ch.gone[d.path] = 1; }); // 저장소 정리로 지운 첨부
     render(false);
   }
   function render(scroll) {
