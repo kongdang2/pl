@@ -792,8 +792,10 @@
     busy(null);
   }
   // ── 휴대폰 보기 ─────────────────────────────────
-  // 엔진은 PC 화면 폭(1280px)으로 그린다. 좁은 화면에서는 폭에 맞춰 줄여 보거나(맞춤), 더 크게 키워 옆으로 밀어 본다(확대 60%·100%).
-  const ENGINE_W = 1280, ZOOMS = [0, 0.6, 1]; // 0 = 화면 폭 맞춤
+  // 엔진은 PC 화면 폭(1280px)으로 그린다. 좁은 화면에서는 폭에 맞춰 줄여 보거나(맞춤), 더 크게 키워 옆으로 밀어 본다.
+  // 확대 단계는 「맞춤 배율 → 원래 크기(100%)」 사이를 나눈 자리: 1단계 45%, 2단계 80% 지점(hong 11/05: 1단계가 너무 작고 2단계가 너무 커서 조정).
+  // 예) 태블릿(맞춤 62%) 79%·93%, 휴대폰(맞춤 32%) 63%·86%. 예전에는 고정 60%·100%라 태블릿에서는 1단계가 오히려 맞춤보다 작았다.
+  const ENGINE_W = 1280, ZOOMS = [0, 0.45, 0.8]; // 0 = 화면 폭 맞춤
   st.zoom = 0;
   function fitEngine() {
     document.documentElement.style.setProperty('--barh', $('bar').offsetHeight + 'px');
@@ -803,7 +805,7 @@
     $('btnZoom').textContent = st.zoom === ZOOMS.length - 1 ? '🔍 맞춤' : st.zoom ? '🔍 더 확대' : '🔍 확대';
     if (!f) return;
     if (!narrow) { f.removeAttribute('style'); return; }
-    const k = z || box.clientWidth / ENGINE_W;
+    const fit = box.clientWidth / ENGINE_W, k = z ? Math.min(1, fit + (1 - fit) * z) : fit;
     f.style.cssText = 'width:' + ENGINE_W + 'px;height:' + Math.floor(box.clientHeight / k) + 'px;zoom:' + k; // zoom은 배치 크기도 줄여 옆 스크롤이 실제 폭만큼만 생긴다
   }
   $('btnZoom').onclick = () => { st.zoom = (st.zoom + 1) % ZOOMS.length; fitEngine(); };
