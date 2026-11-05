@@ -233,3 +233,9 @@ label.cd textarea{display:block;margin-top:3px}
 .mgwrap{max-height:50vh;overflow:auto;margin:6px 0;border:1px solid var(--line);border-radius:6px}
 .grid.mg td{white-space:normal;vertical-align:top}.grid.mg td.memo{min-width:180px}
 .mgpick{display:flex;gap:6px;align-items:flex-start;cursor:pointer}
+/* 저장소 정리(11/05) */
+#btnClean{padding:3px 9px;font-size:12px;margin-left:8px}
+.cl-row{display:grid;grid-template-columns:auto 9em 1fr auto auto;gap:8px;align-items:center;font-size:12.5px;padding:2px 0;border-bottom:1px solid var(--line,#eee)}
+.cl-row .mono{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#mBody h4{margin:12px 0 4px;font-size:13px}
+@media (max-width:640px){.cl-row{grid-template-columns:auto 1fr auto}.cl-row .mono,.cl-row .hint{display:none}}
