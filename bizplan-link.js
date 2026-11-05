@@ -133,5 +133,25 @@
     return out;
   }
 
-  window.SonikBizplan = { capture, makeHtml, shell, offlineFlag, extras, applyAnnual, applyPlan, isBiz, planYearOf, seedPack, applySeedPack };
+  // 사업계획 화면의 관리자 도구 「🧩 빈 엔진 다운로드」: 엔진 함수는 사업계획 표시를 빼고 손익추정 빈 엔진을 만든다(hong 11/05 지적).
+  // 웹에서는 같은 빈 엔진에 사업계획 표시(계획연도, 시드·자료 없음)를 다시 넣어 「사업계획 시스템 빈 엔진」으로 받게 한다.
+  // 계산·화면 코드는 그대로(같은 엔진)라 수정 엔진 올리기에도 그대로 쓸 수 있다.
+  function patchEmpty(win) {
+    if (!isBiz(win) || typeof win.downloadEmptyEngine !== 'function' || win.downloadEmptyEngine.__biz) return false;
+    const orig = win.downloadEmptyEngine;
+    const fn = function () {
+      if (typeof win.__buildEngineHtml !== 'function' || typeof win.__downloadHtml !== 'function') return orig.apply(this, arguments);
+      try {
+        const html = offlineFlag(win, win.__buildEngineHtml({ embedData: false, emptyEngine: true, stripAdminBar: false }));
+        let v = ''; try { v = (win.eval('S').session || {}).version || ''; } catch (_) { /* 버전 모름 */ }
+        win.__downloadHtml(html, '사업계획시스템_빈엔진_v' + v + '_' + win.__BIZPLAN__.planYear + '.html');
+        if (typeof win.showToast === 'function') win.showToast('🧩 사업계획 시스템 빈 엔진 다운로드 완료 — 자료 없음, 열면 ' + win.__BIZPLAN__.planYear + '년 사업계획 화면으로 뜹니다.');
+      } catch (e) { if (typeof win.showToast === 'function') win.showToast('빈 엔진 생성 실패: ' + e.message); console.error(e); }
+    };
+    fn.__biz = true;
+    win.downloadEmptyEngine = fn;
+    return true;
+  }
+
+  window.SonikBizplan = { capture, makeHtml, shell, offlineFlag, extras, applyAnnual, applyPlan, isBiz, planYearOf, seedPack, applySeedPack, patchEmpty };
 })();

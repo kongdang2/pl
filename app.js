@@ -69,6 +69,11 @@
     $('btnMerge').hidden = !(inEngine && st.newer && !(st.open && st.open.preview));
     if (st.newer) $('btnMerge').title = (st.newer.name ? st.newer.name + ' · ' : '') + (st.newer.at ? fmtT(st.newer.at) + ' 저장본을 지금 화면에 합칩니다' : '최신 저장본을 지금 화면에 합칩니다');
     const K = st.open ? KIND(st.open) : '';
+    // 사업계획을 열었거나 사업계획 목록을 보고 있으면 제목도 「사업계획 시스템」(hong 11/05)
+    const bizView = inEngine ? !!(st.open && modeOf(st.open) === 'bizplan') : st.tab === 'bizplan';
+    const brand = bizView ? '사업계획 시스템' : '손익추정 웹';
+    const bEl = document.querySelector('#bar .brand'); if (bEl && bEl.textContent !== brand) bEl.textContent = brand;
+    document.title = brand;
     $('ctx').textContent = inEngine && st.open ? ((K === '사업계획' ? '📘 ' : '') + st.open.base_ym + ' · ' + (st.open.memo || '(이름 없음)') + (K === '사업계획' && st.link ? ' · 🔗 ' + (st.link.memo || '') : '') + (st.open.preview ? ' · 저장 안 됨' : st.open.backupOf ? ' · 백업본' : isOwnWeb(st.open) ? ' · 저장하면 이 ' + K + '에 덮어씀' : ' · 첫 저장은 새 ' + K)
       + (st.peers && st.peers.length ? ' · 👥 ' + st.peers.join(', ') + ' 함께 여는 중' : '')) : '';
   }
@@ -560,6 +565,7 @@
       show('vEngine'); st.open = { id: null, srcId: s.id, mode: 'bizplan', memo: '새 사업계획', base_ym: '', source: 'new', rev: 0 }; renderBar(); fitEngine();
       busy('사업계획 여는 중… (10~30초)');
       st.mounted = await E.mount($('engineBox'), html, onEngineMsg);
+      try { B.patchEmpty(st.mounted.win); } catch (e) { console.warn('사업계획 빈 엔진 버튼 연결 실패', e); }
       if (window.SonikChannel && window.SonikChannel.setContext) window.SonikChannel.setContext(chatContext);
       const info = st.mounted.bridge.info();
       st.open.base_ym = info.baseYm || ''; st.open.memo = '새 사업계획 ' + String(info.baseYm || '').slice(0, 4); renderBar();
@@ -569,7 +575,7 @@
     busy(null);
   }
   $('btnNewBiz').onclick = newBizplan;
-  document.querySelectorAll('#listTabs button').forEach((b) => { b.onclick = () => { st.tab = b.getAttribute('data-t'); try { localStorage.setItem('sk_tab', st.tab); } catch (_) { /* 무시 */ } loadList(); }; });
+  document.querySelectorAll('#listTabs button').forEach((b) => { b.onclick = () => { st.tab = b.getAttribute('data-t'); try { localStorage.setItem('sk_tab', st.tab); } catch (_) { /* 무시 */ } renderBar(); loadList(); }; });
 
   // 요약·손익 시뮬레이션의 「조정 전」 기준 = 파일을 연 시점. 엔진은 페이지가 열릴 때(웹에서는 빈 엔진일 때) 기준을 잡으므로,
   // 자료를 넣은 직후 엔진의 「DB 불러오기」와 똑같이 기준을 새로 잡는다(cpOpenReset). 없던 엔진이면 그냥 둔다
@@ -766,6 +772,7 @@
       show('vEngine'); st.open = s; renderBar(); fitEngine();
       busy('엔진 여는 중… (10~30초)');
       st.mounted = await E.mount($('engineBox'), engineFor(s, html, db), onEngineMsg);
+      try { B.patchEmpty(st.mounted.win); } catch (e) { console.warn('사업계획 빈 엔진 버튼 연결 실패', e); }
       if (window.SonikChannel && window.SonikChannel.setContext) window.SonikChannel.setContext(chatContext);
       busy(KIND(s) + ' 불러오는 중…');
       await new Promise((r) => setTimeout(r, 50));
