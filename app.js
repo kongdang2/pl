@@ -145,7 +145,7 @@
       const ren = canRename(s) ? ' <button class="ren" data-ren="' + s.id + '" title="이름 바꾸기">✏️</button>' : '';
       return '<tr><td>' + esc(s.base_ym) + '</td><td class="memo"><b>' + esc(s.memo || '(이름 없음)') + '</b>' + ren + '</td>'
         + '<td><span class="tag ' + s.source + '">' + (s.source === 'pc' ? 'PC 원본' : '웹 저장') + '</span></td>'
-        + '<td>' + esc(s.author_name || s.author_email) + '</td><td>' + esc(fmtT(s.updated_at || s.created_at)) + (s.rev > 1 ? ' <span class="hint">(' + s.rev + '회 저장' + (s.last_saved_by && s.last_saved_by !== s.author_email ? ' · 마지막 ' + esc(s.last_saved_name || s.last_saved_by) : '') + ')</span>' : '') + '</td>'
+        + '<td>' + esc(s.author_name || s.author_email) + '</td><td>' + esc(fmtT(s.updated_at || s.created_at)) + (s.rev > 1 ? ' <span class="hint">(' + s.rev + '회 저장)</span>' : '') + '</td>'
         + '<td><button data-open="' + s.id + '"' + (eng ? '' : ' disabled') + '>열기</button>'
         + ' <button data-dl="' + s.id + '" title="DB 내보내기 ▸ 전체와 같은 .json (PC에서 DB 불러오기)">JSON</button>'
         + ' <button data-html="' + s.id + '"' + (eng ? '' : ' disabled') + ' title="웹 엔진 + 이 추정자료를 합친 HTML 한 파일. PC에서 바로 열립니다">오프라인 파일</button>'
