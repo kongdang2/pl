@@ -363,9 +363,10 @@
     ch.lastTop = 1;
   }
   function setTo(to) {
+    if (ch.member) to = 'Claude'; // 담당자 챗봇은 Claude 로 일원화, Codex 는 hong 의 개발 교차검증 전용(hong 11/06)
     ch.to = to;
     document.querySelectorAll('#chTo button').forEach((b) => b.classList.toggle('on', b.getAttribute('data-to') === to));
-    $('chBody').placeholder = ch.member ? (to === '모두' ? 'Claude·Codex 모두에게 질문 (읽기 전용 답변)' : to + '에게 질문 (캡처 붙여넣기 가능 · 「파일로 줘」하면 CSV로 받습니다)') : ch.quick ? '⚡ 빠른 질문: 진행 중인 작업과 따로, 파일을 고치지 않고 바로 답합니다' : to === '모두' ? 'Claude·Codex 모두에게 (Claude → Codex 순서로 답합니다)' : to + '에게 보내기 (Shift+Enter 줄바꿈)';
+    $('chBody').placeholder = ch.member ? 'Claude에게 질문 (캡처 붙여넣기 가능 · 「파일로 줘」하면 CSV로 받습니다)' : ch.quick ? '⚡ 빠른 질문: 진행 중인 작업과 따로, 파일을 고치지 않고 바로 답합니다' : to === '모두' ? 'Claude·Codex 모두에게 (Claude → Codex 순서로 답합니다)' : to + '에게 보내기 (Shift+Enter 줄바꿈)';
   }
   function setQuick(v) {
     ch.quick = v;
@@ -450,10 +451,10 @@
       if (!ok) { $('chCard').hidden = true; return; }
       // 담당자: 내 대화만, 읽기 전용 질의응답. 첨부·⚡ 전환·중계 멈춤/모델 설정은 숨긴다
       ch.member = me.role !== 'admin'; ME = ch.member ? '담당' : 'hong';
-      ['chQuick', 'chPause', 'chSet'].forEach((id) => { $(id).hidden = ch.member; }); // 담당자도 캡처·파일 첨부 가능(hong 11/03)
+      ['chQuick', 'chPause', 'chSet', 'chTo'].forEach((id) => { $(id).hidden = ch.member; }); // 담당자도 캡처·파일 첨부 가능(hong 11/03)
       ch.email = String(me.email || '').toLowerCase();
       if (ch.member) $('chSetBox').hidden = true;
-      $('chWho').textContent = ch.member ? '나 · Claude · Codex (읽기 전용 질의응답)' : 'hong · Claude · Codex';
+      $('chWho').textContent = ch.member ? '나 · Claude (읽기 전용 질의응답)' : 'hong · Claude · Codex';
       ch.quick = ch.member;
       $('chFab').onclick = () => setOpen(!ch.open);
       $('chClose').onclick = () => setOpen(false);

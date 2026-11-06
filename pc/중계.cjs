@@ -782,6 +782,8 @@ async function engineLoop(once) {
 const ENGINE_RETRY = /웹\s*엔진\s*(자동\s*)?갱신[^\n]{0,10}다시/;
 
 async function handle(m, ctl) {
+  // 담당자 질문은 Claude 만 답한다(hong 11/06: Codex 는 hong 의 개발 교차검증 전용). 예전 화면에서 Codex·모두로 보낸 글도 Claude 로
+  if (isMember(m) && m.recipient !== 'Claude') { log('담당자 글 #' + m.id + ' 받는이 ' + m.recipient + ' → Claude'); m.recipient = 'Claude'; }
   const quick = !!m.quick;
   if (m.sender === 'hong' && m.recipient !== 'Codex' && ENGINE_RETRY.test(m.body || '')) {
     const ok = engineCheck(true);
