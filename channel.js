@@ -15,18 +15,41 @@
   const RUN = { 실행중: '⏳ 작업 중', 완료: '✓ 자동 처리', 실패: '✗ 자동 실패', 건너뜀: '⏸ 왕복 한도' };
   // 화면 글자(ctx.screen)는 크므로 목록에서는 자료 이름·위치만 읽는다(내려받기 용량)
   const COLS = 'id,at,sender,recipient,topic,status,reply_to,body,author_email,updated_at,run_state,run_note,files,request_id,quick,live,owner,ctx_memo:ctx->>snap_memo,ctx_loc:ctx->>loc,ctx_snap:ctx->>snap_id,ctx_base:ctx->>base_ym,ctx_ver:ctx->>engine_ver';
-  const ch = { ctxFn: null, sb: null, rows: [], replyTo: null, timer: null, onlyMine: false, to: 'Claude', relay: null, lastTop: 0, open: false, tick: 0, pending: [], urls: {}, quick: false, stopAsked: 0, liveOpen: {}, filed: {}, onDraft: null };
+  const ch = { fullAt: 0, live: null, ctxFn: null, sb: null, rows: [], replyTo: null, timer: null, onlyMine: false, to: 'Claude', relay: null, lastTop: 0, open: false, tick: 0, pending: [], urls: {}, quick: false, stopAsked: 0, liveOpen: {}, filed: {}, onDraft: null };
   const BUCKET = 'sonik-channel', MAXB = 20 * 1024 * 1024; // 첨부: 비공개 버킷, 파일당 20MB
   // 마지막으로 본 글 번호(이 브라우저에만 저장). 저장이 막혀 있으면 배지만 덜 정확하다
   const seen = { get() { try { return +localStorage.getItem('sonik.ch.seen') || 0; } catch (_) { return 0; } }, set(v) { try { localStorage.setItem('sonik.ch.seen', String(v)); } catch (_) { /* 무시 */ } } };
 
+  // 전송량(hong 11-06, Supabase 무료 한도 초과): 최근 150글(약 0.5MB)을 통째로 다시 읽는 일은 처음 열 때와 몇 분에 한 번(예비)만 한다.
+  // 그 사이 새 글·바뀐 글은 Realtime 알림에 실려 온 행을 그대로 합친다(apply). Realtime 이 끊겨 있으면 예전처럼 주기적으로 다시 읽는다.
+  const sig = (r) => r.map((m) => m.id + m.status + (m.run_state || '') + (m.run_note || '') + ':' + (m.live || []).length).join();
   async function load() {
     const { data, error } = await ch.sb.from('sk_channel').select(COLS).order('at', { ascending: false }).limit(150);
     if (error) { $('chRows').innerHTML = '<p class="hint">채널을 읽지 못했습니다: ' + esc(error.message) + '</p>'; return; }
+    ch.fullAt = Date.now();
+    await after((data || []).reverse());
+  }
+  // Realtime 행(전체 열) → 목록 열 모양. 바뀌지 않은 큰 열은 알림에서 빠질 수 있어(TOAST) 들어온 값만 덮는다
+  function apply(p) {
+    const rows = ch.rows.slice();
+    if (p.eventType === 'DELETE') {
+      const id = p.old && p.old.id; if (id == null) return;
+      return after(rows.filter((m) => m.id !== id));
+    }
+    const n = p.new || {}; if (n.id == null) return;
+    const v = {};
+    COLS.split(',').forEach((c) => { const k = c.split(':')[0]; if (k in n && n[k] !== undefined) v[k] = n[k]; });
+    ['at', 'updated_at'].forEach((k) => { if (typeof v[k] === 'string') v[k] = v[k].replace(' ', 'T').replace(/([+-]\d\d)$/, '$1:00'); }); // 시각 표기를 목록과 같게
+    if (n.ctx && typeof n.ctx === 'object') { const x = n.ctx; v.ctx_memo = x.snap_memo ?? null; v.ctx_loc = x.loc ?? null; v.ctx_snap = x.snap_id ?? null; v.ctx_base = x.base_ym ?? null; v.ctx_ver = x.engine_ver ?? null; }
+    const i = rows.findIndex((m) => m.id === n.id);
+    if (i >= 0) rows[i] = Object.assign({}, rows[i], v);
+    else { rows.push(v); rows.sort((a, b) => (Date.parse(a.at) - Date.parse(b.at)) || (a.id - b.id)); }
+    return after(rows.slice(-150));
+  }
+  async function after(rows) {
     const before = ch.rows.length && ch.rows[ch.rows.length - 1].id;
-    const sig = (r) => r.map((m) => m.id + m.status + (m.run_state || '') + (m.run_note || '') + ':' + (m.live || []).length).join();
-    const changed = sig(ch.rows) !== sig((data || []).slice().reverse());
-    ch.rows = (data || []).reverse();
+    const changed = sig(ch.rows) !== sig(rows);
+    ch.rows = rows;
     if (await loadFiled()) render(false);
     if (changed) render(before !== (ch.rows.length && ch.rows[ch.rows.length - 1].id));
     if (ch.open) sign();
@@ -484,13 +507,21 @@
       $('chBody').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); send(); } };
       load();
       // 열려 있으면 10초마다, 닫혀 있으면 30초마다(배지용) 새로 읽는다
-      ch.timer = setInterval(() => { ch.tick++; if (!document.hidden && (ch.open || ch.tick % 3 === 0)) load(); }, 10000);
-      // 새 글·답·작업 과정이 생기면 Realtime 으로 바로 새로 읽는다(migration 012). 몰려오면 0.8초에 한 번만. 위 주기 확인은 예비
+      // Realtime 연결 중: 열려 있으면 5분, 닫혀 있으면 15분마다 예비로 다시 읽는다. 끊겨 있으면 예전처럼 10초·30초
+      ch.timer = setInterval(() => {
+        ch.tick++;
+        if (document.hidden) return;
+        const age = Date.now() - (ch.fullAt || 0);
+        if (ch.live ? age > (ch.open ? 300000 : 900000) : (ch.open || ch.tick % 3 === 0)) load();
+      }, 10000);
+      // 새 글·답·작업 과정이 생기면 Realtime 알림에 실린 행을 바로 합친다(migration 012). 다시 읽지 않는다
       if (!ch.rt) {
-        let t = null;
-        ch.rt = sb.channel('sk_channel_web').on('postgres_changes', { event: '*', schema: 'public', table: 'sk_channel' }, () => {
-          if (!t) t = setTimeout(() => { t = null; load(); }, 800);
-        }).subscribe();
+        ch.rt = sb.channel('sk_channel_web').on('postgres_changes', { event: '*', schema: 'public', table: 'sk_channel' }, (p) => {
+          try { apply(p); } catch (_) { load(); }
+        }).subscribe((status) => {
+          const was = ch.live; ch.live = status === 'SUBSCRIBED';
+          if (ch.live && was === false) load(); // 다시 연결되면 끊긴 사이 놓친 글을 한 번 읽는다
+        });
       }
     },
   };
