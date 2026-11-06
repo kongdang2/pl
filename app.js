@@ -4,7 +4,32 @@
   // 만료된 확인 메일 링크 등으로 주소 끝에 #error=… 가 남아 있으면, supabase-js 가 새로고침할 때마다
   // 저장된 로그인을 지운다. 클라이언트를 만들기 전에 그런 주소 조각을 걷어낸다.
   if (/(^#|&)error(_code)?=/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
-  const sb = window.supabase.createClient(C.url, C.key);
+  // 전송량 세기(hong 11-07): Supabase 는 파일뿐 아니라 DB 조회 응답·실시간 알림까지 모두 「Egress」로 센다.
+  // 이 브라우저가 받은 응답 크기(+머리글 어림 400B)를 모아 5분마다 sk_egress 에 한 줄로 적는다. 파일 내려받기는 fetchStored 등이 따로 적으므로 뺀다
+  const NET = { bytes: 0, n: 0 };
+  const HDR = 400;
+  const netAdd = (b) => { NET.bytes += (b || 0) + HDR; NET.n++; };
+  const countFetch = async (input, init) => {
+    const r = await fetch(input, init);
+    try {
+      const url = typeof input === 'string' ? input : input.url;
+      const method = String((init && init.method) || (input && input.method) || 'GET').toUpperCase();
+      if (method === 'GET' && /\/storage\/v1\/object\/(?!list\/|sign\/|info\/)/.test(url)) return r; // 파일 본문: 따로 적음
+      const len = +r.headers.get('content-length');
+      if (len >= 0 && r.headers.has('content-length')) netAdd(len);
+      else r.clone().blob().then((b) => netAdd(b.size), () => netAdd(0));
+    } catch (_) { /* 세기 실패는 무시 */ }
+    return r;
+  };
+  const WS = window.WebSocket;
+  class CountWS extends WS {
+    constructor(...a) {
+      super(...a);
+      this.addEventListener('message', (e) => { const d = e.data; NET.bytes += typeof d === 'string' ? new Blob([d]).size : (d && (d.size || d.byteLength)) || 0; });
+    }
+  }
+  window.WebSocket = CountWS; // realtime 의 transport 옵션은 연결 준비(setupConnection)를 건너뛰어(2.45.4) 전역을 바꿔 끼운다
+  const sb = window.supabase.createClient(C.url, C.key, { global: { fetch: countFetch } });
   const $ = (id) => document.getElementById(id);
   const ROLE = { admin: '관리자', writer: '작성자', viewer: '열람자' };
   const st = { user: null, me: null, engine: null, snaps: [], open: null, mounted: null, tab: 'sonik', link: null };
@@ -193,6 +218,15 @@
     if (!st.me || !bytes) return;
     sb.from('sk_egress').insert({ email: st.me.email, bytes: Math.round(bytes), what: what || '' }).then(() => loadUsage(), () => {});
   }
+  // 모아 둔 응답 크기를 5분마다(또는 화면을 떠날 때) 한 줄로 적는다. 적는 요청도 다음 묶음에 들어간다
+  async function netFlush() {
+    if (!st.me || NET.bytes < 1024) return;
+    const b = Math.round(NET.bytes), n = NET.n; NET.bytes = 0; NET.n = 0;
+    const { error } = await sb.from('sk_egress').insert({ email: st.me.email, bytes: b, what: 'api ' + n });
+    if (error) NET.bytes += b; // 못 적었으면 다음에 다시
+  }
+  setInterval(netFlush, 300000);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) netFlush(); });
   const fmtB = (b) => b >= 1024 ** 3 ? (b / 1024 ** 3).toFixed(2) + 'GB' : Math.round(b / 1024 ** 2) + 'MB';
   async function loadUsage() {
     clearTimeout(loadUsage.t); loadUsage.t = setTimeout(loadUsage, 60000);
@@ -204,7 +238,13 @@
       return '<div class="u-item"><div class="u-top"><b>' + label + '</b><span>' + fmtB(v) + ' / ' + fmtB(lim) + ' · ' + (p < 1 ? p.toFixed(1) : Math.round(p)) + '%</span></div>'
         + '<div class="u-bar"><i class="' + c + '" style="width:' + Math.max(p, 0.5) + '%"></i></div>' + (sub ? '<div class="hint">' + sub + '</div>' : '') + '</div>';
     };
-    $('usageRows').innerHTML = bar('내려받기 (이번 달)', u.egress_month, LIMIT.egress, '오늘 ' + fmtB(u.egress_today) + ' · 매월 1일 새로 셈(추정)')
+    // Supabase 결제 주기(매월 7일 시작, UTC)에 맞춰 센다(migration 024). 024 전이면 예전처럼 이번 달
+    const md = (d) => (d.getUTCMonth() + 1) + '/' + d.getUTCDate();
+    const cs = u.cycle_start ? new Date(u.cycle_start) : null, ce = cs && new Date(Date.UTC(cs.getUTCFullYear(), cs.getUTCMonth() + 1, cs.getUTCDate()));
+    const egLabel = cs ? '전송량 (' + md(cs) + '~' + md(ce) + ')' : '내려받기 (이번 달)';
+    const egSub = '오늘 ' + fmtB(u.egress_today) + ' · 파일·DB 조회·실시간 알림 포함 추정. 같은 조직의 다른 앱은 빠짐'
+      + (st.me && st.me.role === 'admin' ? ' · <a href="https://supabase.com/dashboard/org/_/usage" target="_blank" rel="noopener">Supabase 실제 값</a>' : '');
+    $('usageRows').innerHTML = bar(egLabel, u.egress_month, LIMIT.egress, egSub)
       + bar('파일 보관', u.storage, LIMIT.storage, '추정자료·엔진·챗봇 첨부')
       + bar('데이터베이스', u.db, LIMIT.db, '목록·요청·챗봇 글');
     $('usageAt').textContent = fmtT(u.at) + ' 기준';

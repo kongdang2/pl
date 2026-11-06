@@ -79,9 +79,17 @@ async function api(method, table, q, body) {
   if (!auth.tok || Date.now() > auth.exp) await login();
   const r = await fetch(URL_ + '/rest/v1/' + table + (q || ''), { method, headers: { apikey: KEY, Authorization: 'Bearer ' + auth.tok, 'Content-Type': 'application/json', Prefer: 'return=representation' }, body: body ? JSON.stringify(body) : undefined });
   const t = await r.text();
+  NET.bytes += Buffer.byteLength(t) + 400; NET.n++; // 전송량 세기(hong 11-07): 응답 본문 + 머리글 어림
   if (!r.ok) throw new Error(method + ' ' + table + ' ' + r.status + ': ' + t);
   return t ? JSON.parse(t) : null;
 }
+// 중계가 몇 초마다 묻는 DB 응답도 Supabase 전송량에 들어간다. 모아서 10분마다 sk_egress 에 한 줄로 적는다(파일은 egress() 가 따로 적음)
+const NET = { bytes: 0, n: 0 };
+setInterval(() => {
+  if (!auth.email || NET.bytes < 1024) return;
+  const b = Math.round(NET.bytes), n = NET.n; NET.bytes = 0; NET.n = 0;
+  api('POST', 'sk_egress', '', { email: auth.email, bytes: b, what: 'relay api ' + n }).catch(() => { NET.bytes += b; });
+}, 600000).unref();
 // 무료 한도 현황용: 중계가 받은 파일 크기(내려받기 추정치, migration 014). 실패해도 무시
 const egress = (bytes, what) => { if (bytes) api('POST', 'sk_egress', '', { email: auth.email, bytes, what }).catch(() => {}); };
 // 담당자(작성자·조회자) 대화: owner = 그 사람 이메일. 읽기 전용 질의응답만, 답은 그 사람에게만(hong 11/03)
