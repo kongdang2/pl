@@ -14,6 +14,13 @@ begin
     'storage', (select coalesce(sum((metadata->>'size')::bigint), 0) from storage.objects),
     'egress_month', (select coalesce(sum(bytes), 0) from public.sk_egress where at >= m),
     'egress_today', (select coalesce(sum(bytes), 0) from public.sk_egress where at >= date_trunc('day', now() at time zone 'Asia/Seoul') at time zone 'Asia/Seoul'),
+    -- 항목별(이번 주기): 웹 조회(api N) · 중계 조회(relay api N) · 중계 파일(relay …) · 웹 파일(engine·snapshot 등)
+    'egress_by', (select json_build_object(
+        'web_api', coalesce(sum(bytes) filter (where what like 'api %'), 0),
+        'relay_api', coalesce(sum(bytes) filter (where what like 'relay api %'), 0),
+        'relay_file', coalesce(sum(bytes) filter (where what like 'relay %' and what not like 'relay api %'), 0),
+        'web_file', coalesce(sum(bytes) filter (where what not like 'api %' and what not like 'relay %'), 0))
+      from public.sk_egress where at >= m),
     'month_start', m, 'cycle_start', m, 'at', now());
 end $$;
 revoke all on function public.sk_usage() from public;

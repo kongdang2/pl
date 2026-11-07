@@ -242,7 +242,8 @@
     const md = (d) => (d.getUTCMonth() + 1) + '/' + d.getUTCDate();
     const cs = u.cycle_start ? new Date(u.cycle_start) : null, ce = cs && new Date(Date.UTC(cs.getUTCFullYear(), cs.getUTCMonth() + 1, cs.getUTCDate()));
     const egLabel = cs ? '전송량 (' + md(cs) + '~' + md(ce) + ')' : '내려받기 (이번 달)';
-    const egSub = '오늘 ' + fmtB(u.egress_today) + ' · 파일·DB 조회·실시간 알림 포함 추정. 같은 조직의 다른 앱은 빠짐'
+    const by = u.egress_by, byTxt = by ? '<br>웹 조회·알림 ' + fmtB(by.web_api) + ' · 웹 파일 ' + fmtB(by.web_file) + ' · 중계 조회 ' + fmtB(by.relay_api) + ' · 중계 파일 ' + fmtB(by.relay_file) : '';
+    const egSub = '오늘 ' + fmtB(u.egress_today) + ' · 파일·DB 조회·실시간 알림 포함 추정. 같은 조직의 다른 앱은 빠짐' + byTxt
       + (st.me && st.me.role === 'admin' ? ' · <a href="https://supabase.com/dashboard/org/_/usage" target="_blank" rel="noopener">Supabase 실제 값</a>' : '');
     $('usageRows').innerHTML = bar(egLabel, u.egress_month, LIMIT.egress, egSub)
       + bar('파일 보관', u.storage, LIMIT.storage, '추정자료·엔진·챗봇 첨부')
