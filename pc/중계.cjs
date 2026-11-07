@@ -92,6 +92,41 @@ setInterval(() => {
 }, 600000).unref();
 // 무료 한도 현황용: 중계가 받은 파일 크기(내려받기 추정치, migration 014). 실패해도 무시
 const egress = (bytes, what) => { if (bytes) api('POST', 'sk_egress', '', { email: auth.email, bytes, what }).catch(() => {}); };
+// ── Supabase 실제 사용량(hong 11-07): Usage 화면과 같은 값을 1시간마다 가져와 sk_usage_real 에 적는다 ──
+// 개인 토큰(sbp_…)은 이 PC 의 %USERPROFILE%\.sonik-supabase-token 파일에만 둔다(저장소·DB 에 올리지 않음). 파일이 없으면 건너뜀.
+// 대시보드가 쓰는 비공개 주소(/platform/…)라 Supabase 가 바꾸면 끊길 수 있다 → 실패하면 error 칸에 적고 웹 카드는 추정치만 보인다.
+const ORG = 'wpfrlcrxrglffxvxkmln';
+const TOKEN_FILE = path.join(os.homedir(), '.sonik-supabase-token');
+async function realUsage() {
+  let tok = '';
+  try { tok = fs.readFileSync(TOKEN_FILE, 'utf8').replace(/^﻿/, '').trim(); } catch (_) { return; }
+  if (!tok) return;
+  const get = async (p) => {
+    const r = await fetch('https://api.supabase.com' + p, { headers: { Authorization: 'Bearer ' + tok } });
+    const t = await r.text();
+    if (!r.ok) throw new Error(p + ' ' + r.status + ': ' + t.slice(0, 200));
+    return JSON.parse(t);
+  };
+  const row = { id: 1, fetched_at: new Date().toISOString(), error: '' };
+  try {
+    const sub = await get('/platform/organizations/' + ORG + '/billing/subscription').catch(() => null);
+    const ps = sub && (sub.current_period_start || sub.billing_cycle_anchor), pe = sub && sub.current_period_end;
+    const iso = (v) => (v == null ? null : new Date(typeof v === 'number' ? (v < 1e12 ? v * 1000 : v) : v).toISOString());
+    const q = ps && pe ? '?start=' + encodeURIComponent(iso(ps)) + '&end=' + encodeURIComponent(iso(pe)) : '';
+    const u = await get('/platform/organizations/' + ORG + '/usage' + q);
+    const list = Array.isArray(u) ? u : (u.usages || u.usage || []);
+    const pick = (name) => list.find((x) => String(x.metric || x.name || '').toUpperCase() === name);
+    const bytes = (x) => { const v = x && +(x.usage ?? x.value ?? x.total); return v == null || isNaN(v) ? null : (!Number.isInteger(v) || v < 1000) ? Math.round(v * 1024 ** 3) : Math.round(v); }; // 소수·작은 수 = GB, 큰 정수 = 바이트
+    const eg = pick('EGRESS'), ce = pick('CACHED_EGRESS');
+    Object.assign(row, { egress: bytes(eg), cached_egress: bytes(ce), egress_free: bytes(eg && { usage: eg.pricing_free_units ?? eg.available_in_plan }),
+      period_start: iso(ps) || (u.usage_billing_period_start ?? null), period_end: iso(pe) || (u.usage_billing_period_end ?? null), raw: u });
+    if (row.egress == null) row.error = 'EGRESS 항목을 찾지 못함(응답 모양이 바뀜?)';
+  } catch (e) { row.error = String(e.message || e).slice(0, 300); }
+  try { await api('POST', 'sk_usage_real', '?on_conflict=id', row); } catch (e) {
+    try { await api('PATCH', 'sk_usage_real', '?id=eq.1', row); } catch (e2) { log('실제 사용량 저장 실패', e2.message); }
+  }
+  if (row.error) log('실제 사용량', row.error); else log('실제 사용량', Math.round(row.egress / 1024 ** 2) + 'MB');
+}
 // 담당자(작성자·조회자) 대화: owner = 그 사람 이메일. 읽기 전용 질의응답만, 답은 그 사람에게만(hong 11/03)
 const isMember = (m) => m && m.sender === '담당' && !!m.owner;
 const getMsg = async (id) => (await api('GET', 'sk_channel', '?select=*&id=eq.' + id))[0];
@@ -1058,6 +1093,7 @@ function realtime() {
   const beat = () => setRelay({ heartbeat: new Date().toISOString() }).catch((e) => log('신호 오류', e.message));
   await beat();
   if (!once) setInterval(beat, 30000);
+  realUsage().catch(() => {}); if (!once) setInterval(() => realUsage().catch(() => {}), 3600000);
   if (!once) realtime();
   await Promise.all([loop(false, conf.pollSec, once), loop(true, 8, once), engineLoop(once)]);
 })().catch((e) => { log('중단', e.message); process.exit(1); });

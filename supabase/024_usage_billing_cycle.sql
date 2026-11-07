@@ -26,3 +26,18 @@ end $$;
 revoke all on function public.sk_usage() from public;
 revoke execute on function public.sk_usage() from anon;
 grant execute on function public.sk_usage() to authenticated;
+
+-- Supabase 실제 사용량(Usage 화면 값). PC 중계가 hong 의 개인 토큰으로 1시간마다 가져와 한 줄(id=1)로 덮어쓴다.
+create table if not exists public.sk_usage_real (
+  id int primary key default 1 check (id = 1),
+  egress bigint, cached_egress bigint, egress_free bigint,
+  period_start timestamptz, period_end timestamptz,
+  fetched_at timestamptz not null default now(),
+  error text not null default '',
+  raw jsonb
+);
+alter table public.sk_usage_real enable row level security;
+create policy "members read real usage" on public.sk_usage_real for select to authenticated using (public.sk_my_role() is not null);
+create policy "relay writes real usage" on public.sk_usage_real for insert to authenticated with check (public.sk_channel_is_relay());
+create policy "relay updates real usage" on public.sk_usage_real for update to authenticated using (public.sk_channel_is_relay()) with check (public.sk_channel_is_relay());
+grant select, insert, update on public.sk_usage_real to authenticated;
