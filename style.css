@@ -143,7 +143,7 @@ body.nobar #bar{display:none}
 .chat-set label{display:flex;align-items:center;justify-content:space-between;gap:8px}.chat-set select,.chat-set input{width:58%;font:inherit;padding:3px 6px}
 .chat-set .hint{margin:0}
 .bub.typing .stop{margin-left:10px;padding:0 8px;font-size:11.5px;border-radius:9px;color:#D92D20;border-color:#D92D20}
-.cm .meta .q{color:#F79009}.chat-to button{flex:none;padding:3px 12px;font-size:12px}
+.cm .meta .done-btn{padding:0 6px;font-size:10.5px;line-height:16px;border:1px solid var(--ok);color:var(--ok);background:transparent;border-radius:8px;cursor:pointer}.cm .meta .done-btn:disabled{opacity:.5}.cm .meta .q{color:#F79009}.chat-to button{flex:none;padding:3px 12px;font-size:12px}
 .chat-to button.on{background:var(--pri);border-color:var(--pri);color:#fff}
 .chat-box{display:flex;gap:6px;align-items:flex-end}
 .chat-box textarea{flex:1;resize:none;font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:18px;background:var(--card);color:var(--ink);max-height:160px}

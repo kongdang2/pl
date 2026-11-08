@@ -323,6 +323,7 @@
       + (m.body ? (mine ? '<div class="txt">' + esc(m.body) + '</div>' : (() => { const d = parseDraft(m.body); return (d ? (d.rest ? '<div class="txt">' + md(d.rest) + '</div>' : '') + draftCard(m, d) : '<div class="txt">' + md(m.body) + '</div>'); })()) : '') + atts(m)
       + (m.ctx_memo || m.ctx_loc ? '<div class="ctxline">📄 ' + esc([m.ctx_memo, m.ctx_loc].filter(Boolean).join(' · ')) + ' 기준</div>' : '') + '</div>'
       + '<div class="meta">' + (m.status !== '안내' ? '<span class="st st-' + esc(m.status) + '">' + esc(m.status) + '</span>' : '')
+      + (!ch.member && (m.status === '대기' || m.status === '답변') ? '<button class="done-btn" data-done="' + m.id + '" title="이 글을 완료로 바꿉니다">✓ 완료</button>' : '')
       + (m.quick ? '<span class="q">⚡ 빠른 질문</span>' : '')
       + (m.run_state ? '<span class="run" title="' + esc(m.run_note || '') + '">' + (/^중지/.test(m.run_note || '') ? '■ 중지됨' : RUN[m.run_state]) + '</span>' : '')
       + '<span>' + esc(hm(m.at)) + '</span></div></div></div>'
@@ -382,6 +383,8 @@
     box.querySelectorAll('[data-live]').forEach((b) => { b.onclick = () => { const id = +b.getAttribute('data-live'); ch.liveOpen[id] = !ch.liveOpen[id]; render(false); }; });
     box.querySelectorAll('.live-box.all').forEach((x) => { x.scrollTop = x.scrollHeight; });
     box.querySelectorAll('[data-stop]').forEach((b) => { b.onclick = () => askStop(+b.getAttribute('data-stop')); });
+    // hong 11-09 #704: 관리자는 대기·답변 글을 「완료」로 직접 바꾼다
+    box.querySelectorAll('[data-done]').forEach((b) => { b.onclick = async () => { b.disabled = true; await setStatus(+b.getAttribute('data-done'), '완료'); render(false); }; });
     if (scroll || atBottom || !ch.lastTop) box.scrollTop = box.scrollHeight;
     ch.lastTop = 1;
   }
