@@ -213,7 +213,7 @@
   })();
 
   // ── 무료 한도 현황(hong 11/03) ── 파일 보관·DB 는 실제 크기, 내려받기(egress)는 사이트·중계가 받은 파일 크기를 적어 둔 추정치(sk_egress)
-  const LIMIT = { egress: 5 * 1024 ** 3, storage: 1024 ** 3, db: 500 * 1024 ** 2 };
+  const LIMIT = { egress: 5e9, storage: 1e9, db: 5e8 }; // Supabase Usage 화면은 10진 GB(1GB = 10억 바이트)
   function egress(bytes, what) {
     if (!st.me || !bytes) return;
     sb.from('sk_egress').insert({ email: st.me.email, bytes: Math.round(bytes), what: what || '' }).then(() => loadUsage(), () => {});
@@ -227,11 +227,11 @@
   }
   setInterval(netFlush, 300000);
   document.addEventListener('visibilitychange', () => { if (document.hidden) netFlush(); });
-  const fmtB = (b) => b >= 1024 ** 3 ? (b / 1024 ** 3).toFixed(2) + 'GB' : Math.round(b / 1024 ** 2) + 'MB';
+  const fmtB = (b) => b >= 1e9 ? (b / 1e9).toFixed(2) + 'GB' : Math.round(b / 1e6) + 'MB';
   async function loadUsage() {
     clearTimeout(loadUsage.t); loadUsage.t = setTimeout(loadUsage, 60000);
     if ($('vList').hidden || document.hidden) return;
-    const [{ data: u, error }, { data: real }] = await Promise.all([sb.rpc('sk_usage'), sb.from('sk_usage_real').select('egress,cached_egress,egress_free,period_start,period_end,fetched_at,error').eq('id', 1).maybeSingle().then((r) => r, () => ({ data: null }))]);
+    const [{ data: u, error }, { data: real }] = await Promise.all([sb.rpc('sk_usage'), sb.from('sk_usage_real').select('egress,cached_egress,egress_free,period_start,period_end,fetched_at,error,raw').eq('id', 1).maybeSingle().then((r) => r, () => ({ data: null }))]);
     if (error || !u) { $('usageCard').hidden = true; return; }
     const bar = (label, v, lim, sub) => {
       const p = Math.min(100, v / lim * 100), c = p >= 90 ? 'bad' : p >= 70 ? 'warn' : 'ok';
@@ -245,13 +245,20 @@
     const by = u.egress_by, byTxt = by ? '<br>웹 조회·알림 ' + fmtB(by.web_api) + ' · 웹 파일 ' + fmtB(by.web_file) + ' · 중계 조회 ' + fmtB(by.relay_api) + ' · 중계 파일 ' + fmtB(by.relay_file) : '';
     const egSub = '오늘 ' + fmtB(u.egress_today) + ' · 파일·DB 조회·실시간 알림 포함 추정. 같은 조직의 다른 앱은 빠짐' + byTxt
       + (st.me && st.me.role === 'admin' ? ' · <a href="https://supabase.com/dashboard/org/_/usage" target="_blank" rel="noopener">Supabase 실제 값</a>' : '');
+    // 프로젝트별(Usage 화면 원문 project_allocations): 이 사이트 / 다른 앱
+    const realSplit = (r) => { try {
+      const eg = ((r.raw && r.raw.usage && r.raw.usage.usages) || []).find((x) => x.metric === 'EGRESS');
+      const al = (eg && eg.project_allocations) || []; if (!al.length) return '(다른 앱 포함)';
+      const me = al.filter((a) => a.ref === 'znqaxyqayxkgqnqnwyez').reduce((t, a) => t + (+a.usage || 0), 0);
+      return ' (이 사이트 ' + fmtB(me) + ' · 다른 앱 ' + fmtB(al.reduce((t, a) => t + (+a.usage || 0), 0) - me) + ')';
+    } catch (_) { return '(다른 앱 포함)'; } };
     // Supabase 실제 값(PC 중계가 1시간마다, migration 024 sk_usage_real). 3시간 넘게 안 바뀌었거나 오류면 그 사실을 적는다
     let realRow = '';
     if (real && real.egress != null) {
       const ago = Math.round((Date.now() - new Date(real.fetched_at).getTime()) / 60000);
       const rs = real.period_start ? new Date(real.period_start) : null, re = real.period_end ? new Date(real.period_end) : null;
       realRow = bar('Supabase 실제 전송량' + (rs && re ? ' (' + md(rs) + '~' + md(re) + ')' : ''), real.egress, real.egress_free || LIMIT.egress,
-        (ago < 60 ? ago + '분' : Math.round(ago / 60) + '시간') + ' 전 Usage 화면 값 · 조직 전체(다른 앱 포함)' + (real.cached_egress != null ? ' · 캐시 ' + fmtB(real.cached_egress) + '(별도 한도)' : '')
+        (ago < 60 ? ago + '분' : Math.round(ago / 60) + '시간') + ' 전 Usage 화면 값 · 조직 전체' + realSplit(real) + (real.cached_egress != null ? ' · 캐시 ' + fmtB(real.cached_egress) + '(별도 한도)' : '')
         + (real.error ? ' · <span style="color:#C83C52">최근 가져오기 실패: ' + esc(real.error) + '</span>' : ago > 180 ? ' · <span style="color:#C83C52">3시간 넘게 갱신 안 됨(PC 중계 확인)</span>' : ''));
     } else if (real && real.error && st.me && st.me.role === 'admin') realRow = '<div class="hint">Supabase 실제 값을 가져오지 못했습니다: ' + esc(real.error) + '</div>';
     $('usageRows').innerHTML = realRow + bar(realRow ? '추정 (이 사이트·중계)' : egLabel, u.egress_month, LIMIT.egress, egSub)
