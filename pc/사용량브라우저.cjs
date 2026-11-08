@@ -17,7 +17,8 @@ function browserType() {
   return { pw: require('playwright'), channel: undefined };
 }
 
-const isUsage = (u) => u.includes('/platform/organizations/' + ORG + '/usage') && !/project_ref=|projectRef=/.test(u);
+// 조직 합계 주소만(…/usage 또는 …/usage?…). 일별(…/usage/daily) 등 다른 주소는 같은 이름으로 시작해도 제외
+const isUsage = (u) => new RegExp('/platform/organizations/' + ORG + '/usage(\\?|$)').test(u) && !/project_ref=|projectRef=/.test(u);
 const isSub = (u) => u.includes('/platform/organizations/' + ORG + '/billing/subscription');
 
 // 반환: { usage, sub } (둘 다 대시보드가 받은 JSON). 로그인 안 됨 → Error('LOGIN')
