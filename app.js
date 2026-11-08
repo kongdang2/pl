@@ -257,8 +257,8 @@
     if (real && real.egress != null) {
       const ago = Math.round((Date.now() - new Date(real.fetched_at).getTime()) / 60000);
       const rs = real.period_start ? new Date(real.period_start) : null, re = real.period_end ? new Date(real.period_end) : null;
-      realRow = bar('Supabase 실제 전송량' + (rs && re ? ' (' + md(rs) + '~' + md(re) + ')' : ''), real.egress, real.egress_free || LIMIT.egress,
-        (ago < 60 ? ago + '분' : Math.round(ago / 60) + '시간') + ' 전 Usage 화면 값 · 조직 전체' + realSplit(real) + (real.cached_egress != null ? ' · 캐시 ' + fmtB(real.cached_egress) + '(별도 한도)' : '')
+      realRow = bar('전송량', real.egress, real.egress_free || LIMIT.egress,
+        (rs && re ? md(rs) + '~' + md(re) + ' · ' : '') + (ago < 60 ? ago + '분' : Math.round(ago / 60) + '시간') + ' 전 Usage 화면 값 · 조직 전체' + realSplit(real) + (real.cached_egress != null ? ' · 캐시 ' + fmtB(real.cached_egress) + '(별도 한도)' : '')
         + (real.error ? ' · <span style="color:#C83C52">최근 가져오기 실패: ' + esc(real.error) + '</span>' : ago > 180 ? ' · <span style="color:#C83C52">3시간 넘게 갱신 안 됨(PC 중계 확인)</span>' : ''));
     } else if (real && real.error && st.me && st.me.role === 'admin') realRow = '<div class="hint">Supabase 실제 값을 가져오지 못했습니다: ' + esc(real.error) + '</div>';
     // Supabase 실제 값이 최신(오류 없음·3시간 이내)이면 추정 막대는 숨기고, 파일 보관·DB 도 Usage 화면 값으로(hong 11-08)
