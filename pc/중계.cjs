@@ -93,36 +93,30 @@ setInterval(() => {
 }, 600000).unref();
 // 무료 한도 현황용: 중계가 받은 파일 크기(내려받기 추정치, migration 014). 실패해도 무시
 const egress = (bytes, what) => { if (bytes) api('POST', 'sk_egress', '', { email: auth.email, bytes, what }, 'return=minimal').catch(() => {}); };
-// ── Supabase 실제 사용량(hong 11-07): Usage 화면과 같은 값을 1시간마다 가져와 sk_usage_real 에 적는다 ──
-// 개인 토큰(sbp_…)은 이 PC 의 %USERPROFILE%\.sonik-supabase-token 파일에만 둔다(저장소·DB 에 올리지 않음). 파일이 없으면 건너뜀.
-// 대시보드가 쓰는 비공개 주소(/platform/…)라 Supabase 가 바꾸면 끊길 수 있다 → 실패하면 error 칸에 적고 웹 카드는 추정치만 보인다.
-const ORG = 'wpfrlcrxrglffxvxkmln';
-const TOKEN_FILE = path.join(os.homedir(), '.sonik-supabase-token');
+// ── Supabase 실제 사용량(hong 11-07·11-08): Usage 화면과 같은 값을 1시간마다 가져와 sk_usage_real 에 적는다 ──
+// 개인 토큰은 대시보드 주소(/platform/…)에서 401 이라, PC 전용 브라우저 프로필에 hong 이 로그인해 두고 그 화면이 받는 값을 읽는다(사용량브라우저.cjs).
+// 프로필이 없으면 건너뜀. 로그인이 풀리면 error = 「다시 로그인 필요」 → 웹 카드에 보이고, hong 이 소통\사용량로그인.cmd 로 다시 로그인.
+const UB = require('./사용량브라우저.cjs');
+let usageBusy = false;
 async function realUsage() {
-  let tok = '';
-  try { tok = fs.readFileSync(TOKEN_FILE, 'utf8').replace(/^﻿/, '').trim(); } catch (_) { return; }
-  if (!tok) return;
-  const get = async (p) => {
-    const r = await fetch('https://api.supabase.com' + p, { headers: { Authorization: 'Bearer ' + tok } });
-    const t = await r.text();
-    if (!r.ok) throw new Error(p + ' ' + r.status + ': ' + t.slice(0, 200));
-    return JSON.parse(t);
-  };
+  if (usageBusy || !fs.existsSync(UB.PROFILE)) return;
+  usageBusy = true;
   const row = { id: 1, fetched_at: new Date().toISOString(), error: '' };
   try {
-    const sub = await get('/platform/organizations/' + ORG + '/billing/subscription').catch(() => null);
+    const { usage: u, sub } = await UB.fetchUsage({ headless: true });
     const ps = sub && (sub.current_period_start || sub.billing_cycle_anchor), pe = sub && sub.current_period_end;
     const iso = (v) => (v == null ? null : new Date(typeof v === 'number' ? (v < 1e12 ? v * 1000 : v) : v).toISOString());
-    const q = ps && pe ? '?start=' + encodeURIComponent(iso(ps)) + '&end=' + encodeURIComponent(iso(pe)) : '';
-    const u = await get('/platform/organizations/' + ORG + '/usage' + q);
     const list = Array.isArray(u) ? u : (u.usages || u.usage || []);
     const pick = (name) => list.find((x) => String(x.metric || x.name || '').toUpperCase() === name);
     const bytes = (x) => { const v = x && +(x.usage ?? x.value ?? x.total); return v == null || isNaN(v) ? null : (!Number.isInteger(v) || v < 1000) ? Math.round(v * 1024 ** 3) : Math.round(v); }; // 소수·작은 수 = GB, 큰 정수 = 바이트
     const eg = pick('EGRESS'), ce = pick('CACHED_EGRESS');
     Object.assign(row, { egress: bytes(eg), cached_egress: bytes(ce), egress_free: bytes(eg && { usage: eg.pricing_free_units ?? eg.available_in_plan }),
-      period_start: iso(ps) || (u.usage_billing_period_start ?? null), period_end: iso(pe) || (u.usage_billing_period_end ?? null), raw: u });
+      period_start: iso(ps) || (u.usage_billing_period_start ?? null), period_end: iso(pe) || (u.usage_billing_period_end ?? null), raw: { usage: u, sub: sub || null } });
     if (row.egress == null) row.error = 'EGRESS 항목을 찾지 못함(응답 모양이 바뀜?)';
-  } catch (e) { row.error = String(e.message || e).slice(0, 300); }
+  } catch (e) {
+    const m = String(e.message || e);
+    row.error = m === 'LOGIN' ? '다시 로그인 필요(PC 소통\\사용량로그인.cmd)' : m.includes('ProcessSingleton') || m.includes('already in use') ? '로그인 창이 열려 있어 이번 회차 건너뜀' : m.slice(0, 300);
+  } finally { usageBusy = false; }
   try { await api('POST', 'sk_usage_real', '?on_conflict=id', row, 'resolution=merge-duplicates,return=minimal'); } catch (e) { log('실제 사용량 저장 실패', e.message); }
   if (row.error) log('실제 사용량', row.error); else log('실제 사용량', Math.round(row.egress / 1024 ** 2) + 'MB');
 }
