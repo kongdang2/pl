@@ -261,9 +261,17 @@
         (ago < 60 ? ago + '분' : Math.round(ago / 60) + '시간') + ' 전 Usage 화면 값 · 조직 전체' + realSplit(real) + (real.cached_egress != null ? ' · 캐시 ' + fmtB(real.cached_egress) + '(별도 한도)' : '')
         + (real.error ? ' · <span style="color:#C83C52">최근 가져오기 실패: ' + esc(real.error) + '</span>' : ago > 180 ? ' · <span style="color:#C83C52">3시간 넘게 갱신 안 됨(PC 중계 확인)</span>' : ''));
     } else if (real && real.error && st.me && st.me.role === 'admin') realRow = '<div class="hint">Supabase 실제 값을 가져오지 못했습니다: ' + esc(real.error) + '</div>';
-    $('usageRows').innerHTML = realRow + bar(realRow ? '추정 (이 사이트·중계)' : egLabel, u.egress_month, LIMIT.egress, egSub)
-      + bar('파일 보관', u.storage, LIMIT.storage, '추정자료·엔진·챗봇 첨부')
-      + bar('데이터베이스', u.db, LIMIT.db, '목록·요청·챗봇 글');
+    // Supabase 실제 값이 최신(오류 없음·3시간 이내)이면 추정 막대는 숨기고, 파일 보관·DB 도 Usage 화면 값으로(hong 11-08)
+    const fresh = realRow && !real.error && (Date.now() - new Date(real.fetched_at).getTime()) < 3 * 3600000;
+    const metric = (name) => fresh ? ((real.raw && real.raw.usage && real.raw.usage.usages) || []).find((x) => x.metric === name) : null;
+    const split = (m) => { const al = (m && m.project_allocations) || []; const me = al.filter((a) => a.ref === 'znqaxyqayxkgqnqnwyez').reduce((t, a) => t + (+a.usage || 0), 0);
+      return '이 사이트 ' + fmtB(me) + ' · 다른 앱 ' + fmtB(al.filter((a) => a.ref !== 'znqaxyqayxkgqnqnwyez').reduce((t, a) => t + (+a.usage || 0), 0)); };
+    const rs = metric('STORAGE_SIZE'), rd = metric('DATABASE_SIZE');
+    $('usageRows').innerHTML = realRow + (fresh ? '' : bar(realRow ? '추정 (이 사이트·중계)' : egLabel, u.egress_month, LIMIT.egress, egSub))
+      + (rs ? bar('파일 보관', +rs.usage_original, (+rs.pricing_free_units || 1) * 1e9, 'Usage 화면 값 · 조직 전체 · 기간 평균 (' + split(rs) + ')')
+        : bar('파일 보관', u.storage, LIMIT.storage, '추정자료·엔진·챗봇 첨부'))
+      + (rd ? bar('데이터베이스', +rd.usage_original, (+rd.pricing_free_units || 0.5) * 1e9, 'Usage 화면 값 · 가장 큰 프로젝트 기준(한도는 프로젝트마다) (' + split(rd) + ')')
+        : bar('데이터베이스', u.db, LIMIT.db, '목록·요청·챗봇 글'));
     $('usageAt').textContent = fmtT(u.at) + ' 기준';
     $('btnClean').hidden = !(st.me && st.me.role === 'admin');
     $('usageCard').hidden = false;
