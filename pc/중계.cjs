@@ -75,9 +75,10 @@ async function login() {
   if (!r.ok) { if (auth.refresh) { auth.refresh = null; return login(); } throw new Error('로그인 실패: ' + (j.error_description || j.msg || r.status)); }
   Object.assign(auth, { tok: j.access_token, refresh: j.refresh_token, exp: Date.now() + (j.expires_in - 120) * 1000, email: String(j.user.email).toLowerCase() });
 }
-async function api(method, table, q, body) {
+// prefer: 기본은 쓴 행을 돌려받는다. 중계 계정이 읽을 수 없는 표(sk_egress·sk_usage_real)에 쓸 때는 'return=minimal' 이어야 403 이 안 난다
+async function api(method, table, q, body, prefer) {
   if (!auth.tok || Date.now() > auth.exp) await login();
-  const r = await fetch(URL_ + '/rest/v1/' + table + (q || ''), { method, headers: { apikey: KEY, Authorization: 'Bearer ' + auth.tok, 'Content-Type': 'application/json', Prefer: 'return=representation' }, body: body ? JSON.stringify(body) : undefined });
+  const r = await fetch(URL_ + '/rest/v1/' + table + (q || ''), { method, headers: { apikey: KEY, Authorization: 'Bearer ' + auth.tok, 'Content-Type': 'application/json', Prefer: prefer || 'return=representation' }, body: body ? JSON.stringify(body) : undefined });
   const t = await r.text();
   NET.bytes += Buffer.byteLength(t) + 400; NET.n++; // 전송량 세기(hong 11-07): 응답 본문 + 머리글 어림
   if (!r.ok) throw new Error(method + ' ' + table + ' ' + r.status + ': ' + t);
@@ -88,10 +89,10 @@ const NET = { bytes: 0, n: 0 };
 setInterval(() => {
   if (!auth.email || NET.bytes < 1024) return;
   const b = Math.round(NET.bytes), n = NET.n; NET.bytes = 0; NET.n = 0;
-  api('POST', 'sk_egress', '', { email: auth.email, bytes: b, what: 'relay api ' + n }).catch(() => { NET.bytes += b; });
+  api('POST', 'sk_egress', '', { email: auth.email, bytes: b, what: 'relay api ' + n }, 'return=minimal').catch(() => { NET.bytes += b; });
 }, 600000).unref();
 // 무료 한도 현황용: 중계가 받은 파일 크기(내려받기 추정치, migration 014). 실패해도 무시
-const egress = (bytes, what) => { if (bytes) api('POST', 'sk_egress', '', { email: auth.email, bytes, what }).catch(() => {}); };
+const egress = (bytes, what) => { if (bytes) api('POST', 'sk_egress', '', { email: auth.email, bytes, what }, 'return=minimal').catch(() => {}); };
 // ── Supabase 실제 사용량(hong 11-07): Usage 화면과 같은 값을 1시간마다 가져와 sk_usage_real 에 적는다 ──
 // 개인 토큰(sbp_…)은 이 PC 의 %USERPROFILE%\.sonik-supabase-token 파일에만 둔다(저장소·DB 에 올리지 않음). 파일이 없으면 건너뜀.
 // 대시보드가 쓰는 비공개 주소(/platform/…)라 Supabase 가 바꾸면 끊길 수 있다 → 실패하면 error 칸에 적고 웹 카드는 추정치만 보인다.
@@ -122,9 +123,7 @@ async function realUsage() {
       period_start: iso(ps) || (u.usage_billing_period_start ?? null), period_end: iso(pe) || (u.usage_billing_period_end ?? null), raw: u });
     if (row.egress == null) row.error = 'EGRESS 항목을 찾지 못함(응답 모양이 바뀜?)';
   } catch (e) { row.error = String(e.message || e).slice(0, 300); }
-  try { await api('POST', 'sk_usage_real', '?on_conflict=id', row); } catch (e) {
-    try { await api('PATCH', 'sk_usage_real', '?id=eq.1', row); } catch (e2) { log('실제 사용량 저장 실패', e2.message); }
-  }
+  try { await api('POST', 'sk_usage_real', '?on_conflict=id', row, 'resolution=merge-duplicates,return=minimal'); } catch (e) { log('실제 사용량 저장 실패', e.message); }
   if (row.error) log('실제 사용량', row.error); else log('실제 사용량', Math.round(row.egress / 1024 ** 2) + 'MB');
 }
 // 담당자(작성자·조회자) 대화: owner = 그 사람 이메일. 읽기 전용 질의응답만, 답은 그 사람에게만(hong 11/03)
