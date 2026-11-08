@@ -108,9 +108,9 @@ async function realUsage() {
     const iso = (v) => (v == null ? null : new Date(typeof v === 'number' ? (v < 1e12 ? v * 1000 : v) : v).toISOString());
     const list = Array.isArray(u) ? u : (u.usages || u.usage || []);
     const pick = (name) => list.find((x) => String(x.metric || x.name || '').toUpperCase() === name);
-    const bytes = (x) => { const v = x && +(x.usage ?? x.value ?? x.total); return v == null || isNaN(v) ? null : (!Number.isInteger(v) || v < 1000) ? Math.round(v * 1024 ** 3) : Math.round(v); }; // 소수·작은 수 = GB, 큰 정수 = 바이트
+    const bytes = (x) => { if (!x) return null; if (x.usage_original != null && !isNaN(+x.usage_original)) return Math.round(+x.usage_original); const v = +(x.usage ?? x.value ?? x.total); return isNaN(v) ? null : (!Number.isInteger(v) || v < 1000) ? Math.round(v * 1e9) : Math.round(v); }; // usage_original = 바이트, 아니면 소수·작은 수 = 10진 GB
     const eg = pick('EGRESS'), ce = pick('CACHED_EGRESS');
-    Object.assign(row, { egress: bytes(eg), cached_egress: bytes(ce), egress_free: bytes(eg && { usage: eg.pricing_free_units ?? eg.available_in_plan }),
+    Object.assign(row, { egress: bytes(eg), cached_egress: bytes(ce), egress_free: bytes(eg && { usage: eg.pricing_free_units }),
       period_start: iso(ps) || (u.usage_billing_period_start ?? null), period_end: iso(pe) || (u.usage_billing_period_end ?? null), raw: { usage: u, sub: sub || null } });
     if (row.egress == null) row.error = 'EGRESS 항목을 찾지 못함(응답 모양이 바뀜?)';
   } catch (e) {
