@@ -237,5 +237,6 @@ label.cd textarea{display:block;margin-top:3px}
 #btnClean{padding:3px 9px;font-size:12px;margin-left:8px}
 .cl-row{display:grid;grid-template-columns:auto 9em 1fr auto auto;gap:8px;align-items:center;font-size:12.5px;padding:2px 0;border-bottom:1px solid var(--line,#eee)}
 .cl-row .mono{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cl-tog{font-size:12px;font-weight:400;margin-left:8px}.cl-tog a{color:var(--accent,#2F5597)}p.cl-tog{margin:4px 0 0}
 #mBody h4{margin:12px 0 4px;font-size:13px}
 @media (max-width:640px){.cl-row{grid-template-columns:auto 1fr auto}.cl-row .mono,.cl-row .hint{display:none}}

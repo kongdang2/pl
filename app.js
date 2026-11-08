@@ -280,7 +280,7 @@
   // ── 저장소 정리(hong 11/05, 반자동) ── 관리자가 후보를 보고 골라서 지운다. 지우면 되돌릴 수 없으므로 자동 삭제는 하지 않는다.
   // 후보: ① 웹 엔진 — 현재 + 직전 2개(되돌리기용)를 뺀 옛 엔진(파일 + sk_engines 행) ② 목록·이전 저장 어디에도 안 쓰이는 저장 파일
   //       ③ 챗봇 첨부 — N일 지난 것. 단 끝나지 않은 수정요청이 가리키는 파일과 아직 「대기」인 글의 첨부는 빼고, 처음엔 체크하지 않는다(PC 소통\첨부 에 사본)
-  const CLEAN = { keepEngines: 2, days: 30, doneReq: ['반영', '완료', '반려', '취소'] };
+  const CLEAN = { keepEngines: 2, keepRevs: 1, days: 30, doneReq: ['반영', '완료', '반려', '취소'] };
   async function listAll(bucket, prefix) {
     const out = [];
     for (let off = 0; ; off += 1000) {
@@ -297,8 +297,8 @@
   async function cleanCandidates(days) {
     const [eng, snaps, revs, reqs, waits, engFiles, snapFiles, chFiles] = await Promise.all([
       sb.from('sk_engines').select('ver,storage_path,is_current,uploaded_at').order('uploaded_at', { ascending: false }),
-      sb.from('sk_snapshots').select('storage_path'),
-      sb.from('sk_snapshot_revs').select('storage_path'),
+      sb.from('sk_snapshots').select('id,storage_path,memo,base_ym'),
+      sb.from('sk_snapshot_revs').select('id,snapshot_id,rev,storage_path,size_bytes,saved_at').order('rev', { ascending: false }),
       sb.from('sk_requests').select('status,items'),
       sb.from('sk_channel').select('files').eq('status', '대기'),
       listAll(C.bucket, 'engines'), listAll(C.bucket, 'snapshots'),
@@ -315,6 +315,10 @@
     // ② 안 쓰이는 저장 파일
     const used = new Set((snaps.data || []).concat(revs.data || []).map((r) => r.storage_path));
     snapFiles.filter((f) => !used.has(f.path)).forEach((f) => out.push({ kind: 'file', bucket: f.bucket, path: f.path, size: f.size, at: f.at, label: '쓰이지 않는 저장 파일', on: true }));
+    // ②-1 추정자료 이전 저장본(되돌리기용, hong 11/08) — 자료마다 가장 최근 1개는 남기고(체크 안 함) 더 옛것은 체크. 지금 저장본은 후보가 아님
+    const snapName = new Map((snaps.data || []).map((r) => [r.id, (r.memo || '이름 없음') + (r.base_ym ? ' (' + r.base_ym + ')' : '')])), seen = new Map();
+    (revs.data || []).forEach((r) => { const n = (seen.get(r.snapshot_id) || 0) + 1; seen.set(r.snapshot_id, n);
+      out.push({ kind: 'rev', id: r.id, bucket: C.bucket, path: r.storage_path, size: size.get(r.storage_path) || r.size_bytes || 0, at: r.saved_at, label: (snapName.get(r.snapshot_id) || '추정자료') + ' · 저장 ' + r.rev + '번', on: n > CLEAN.keepRevs }); });
     // ③ 챗봇 첨부
     const hold = JSON.stringify((reqs.data || []).filter((r) => !CLEAN.doneReq.includes(r.status)).map((r) => r.items)) + JSON.stringify((waits.data || []).map((r) => r.files));
     const cut = Date.now() - days * 86400000;
@@ -328,14 +332,22 @@
       $('mBody').innerHTML = '<p class="hint">찾는 중…</p>';
       try { list = await cleanCandidates(days); } catch (e) { $('mBody').innerHTML = '<p>후보를 찾지 못했습니다: ' + esc(e.message) + '</p>'; return; }
       const row = (c, i) => '<label class="cl-row"><input type="checkbox" data-ci="' + i + '"' + (c.on ? ' checked' : '') + '><span>' + esc(c.label) + '</span><span class="mono">' + esc(c.path.split('/').pop()) + '</span><span>' + fmtB(c.size) + '</span><span class="hint">' + esc(fmtT(c.at)) + '</span></label>';
-      const grp = (t, f) => { const g = list.map((c, i) => [c, i]).filter(([c]) => f(c)); return '<h4>' + t + ' <span class="hint">' + g.length + '개 · ' + fmtB(g.reduce((s, [c]) => s + c.size, 0)) + '</span></h4>' + (g.length ? g.map(([c, i]) => row(c, i)).join('') : '<p class="hint">없음</p>'); };
-      $('mBody').innerHTML = '<p class="hint">지우면 되돌릴 수 없습니다. 웹 엔진은 현재 + 직전 ' + CLEAN.keepEngines + '개를 남기고, 챗봇 첨부는 처음엔 체크하지 않습니다(PC <span class="mono">소통\\첨부</span>에 사본이 있음).</p>'
-        + grp('웹 엔진(옛 버전)', (c) => c.kind === 'engine' || c.label === '목록에 없는 엔진 파일') + grp('쓰이지 않는 저장 파일', (c) => c.label === '쓰이지 않는 저장 파일')
-        + '<h4>챗봇 첨부 <select id="clDays">' + [7, 14, 30, 60, 90].map((d) => '<option value="' + d + '"' + (d === days ? ' selected' : '') + '>' + d + '일 지난 것</option>').join('') + '</select></h4>'
-        + (list.some((c) => c.label === '챗봇 첨부') ? list.map((c, i) => c.label === '챗봇 첨부' ? row(c, i) : '').join('') : '<p class="hint">없음 (끝나지 않은 수정요청·대기 글의 첨부는 뺐습니다)</p>')
+      // 묶음마다 [전체 선택]·[해제] (hong 11/08)
+      const tog = (gk) => ' <span class="cl-tog"><a href="#" data-cg="' + gk + '" data-on="1">전체 선택</a> · <a href="#" data-cg="' + gk + '" data-on="0">해제</a></span>';
+      const grp = (t, gk, f) => { const g = list.map((c, i) => [c, i]).filter(([c]) => f(c)); return '<h4>' + t + ' <span class="hint">' + g.length + '개 · ' + fmtB(g.reduce((s, [c]) => s + c.size, 0)) + '</span>' + (g.length ? tog(gk) : '') + '</h4>' + (g.length ? '<div data-g="' + gk + '">' + g.map(([c, i]) => row(c, i)).join('') + '</div>' : '<p class="hint">없음</p>'); };
+      const chat = list.some((c) => c.label === '챗봇 첨부');
+      $('mBody').innerHTML = '<p class="hint">지우면 되돌릴 수 없습니다. 웹 엔진은 현재 + 직전 ' + CLEAN.keepEngines + '개를 남기고, 추정자료는 지금 저장본은 그대로 두고 이전 저장본(되돌리기용)만 후보로 — 자료마다 가장 최근 ' + CLEAN.keepRevs + '개는 처음엔 체크하지 않습니다. 챗봇 첨부도 처음엔 체크하지 않습니다(PC <span class="mono">소통\\첨부</span>에 사본이 있음).</p>'
+        + '<p class="cl-tog">모두 <a href="#" data-cg="*" data-on="1">전체 선택</a> · <a href="#" data-cg="*" data-on="0">전체 해제</a></p>'
+        + grp('웹 엔진(옛 버전)', 'eng', (c) => c.kind === 'engine' || c.label === '목록에 없는 엔진 파일')
+        + grp('추정자료 이전 저장본(되돌리기용)', 'rev', (c) => c.kind === 'rev')
+        + grp('쓰이지 않는 저장 파일', 'file', (c) => c.label === '쓰이지 않는 저장 파일')
+        + '<h4>챗봇 첨부 <select id="clDays">' + [7, 14, 30, 60, 90].map((d) => '<option value="' + d + '"' + (d === days ? ' selected' : '') + '>' + d + '일 지난 것</option>').join('') + '</select>' + (chat ? tog('chat') : '') + '</h4>'
+        + (chat ? '<div data-g="chat">' + list.map((c, i) => c.label === '챗봇 첨부' ? row(c, i) : '').join('') + '</div>' : '<p class="hint">없음 (끝나지 않은 수정요청·대기 글의 첨부는 뺐습니다)</p>')
         + '<p><b id="clSum"></b></p>';
       const sum = () => { const sel = list.filter((c, i) => $('mBody').querySelector('[data-ci="' + i + '"]').checked); $('clSum').textContent = '고른 것 ' + sel.length + '개 · ' + fmtB(sel.reduce((s, c) => s + c.size, 0)) + ' 지움'; };
       $('mBody').querySelectorAll('[data-ci]').forEach((x) => { x.onchange = sum; }); sum();
+      $('mBody').querySelectorAll('[data-cg]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); const g = a.dataset.cg, on = a.dataset.on === '1';
+        $('mBody').querySelectorAll((g === '*' ? '' : '[data-g="' + g + '"] ') + '[data-ci]').forEach((x) => { x.checked = on; }); sum(); }; });
       $('clDays').onchange = () => { days = +$('clDays').value; draw(); };
     };
     const okP = ask('🧹 저장소 정리', '');
@@ -355,6 +367,8 @@
         for (let i = 0; i < ps.length; i += 100) { const r = await sb.storage.from(b).remove(ps.slice(i, i + 100)); if (r.error) fail.push(b + ': ' + r.error.message); }
       }
       for (const c of sel.filter((c) => c.kind === 'engine')) { const r = await sb.from('sk_engines').delete().eq('ver', c.ver).eq('is_current', false); if (r.error) fail.push(c.ver + ': ' + r.error.message); }
+      const revIds = sel.filter((c) => c.kind === 'rev').map((c) => c.id);
+      if (revIds.length) { const r = await sb.from('sk_snapshot_revs').delete().in('id', revIds); if (r.error) fail.push('이전 저장본 목록: ' + r.error.message); }
     } finally { busy(''); }
     const freed = sel.reduce((s, c) => s + c.size, 0);
     await log('storage_clean', null, sel.length + '개 ' + fmtB(freed) + ' · ' + sel.map((c) => c.bucket + '/' + c.path).join(', ').slice(0, 1800));
