@@ -240,3 +240,23 @@ label.cd textarea{display:block;margin-top:3px}
 .cl-tog{font-size:12px;font-weight:400;margin-left:8px}.cl-tog a{color:var(--accent,#2F5597)}p.cl-tog{margin:4px 0 0}
 #mBody h4{margin:12px 0 4px;font-size:13px}
 @media (max-width:640px){.cl-row{grid-template-columns:auto 1fr auto}.cl-row .mono,.cl-row .hint{display:none}}
+
+/* 챗봇 읽기 쉽게(11-11): 상황 한 줄 · 내 차례 띠 · 자세히 접기 · 선택 카드 · 에이전트 글 묶음 · 시스템 알림 */
+.chat-now{padding:5px 14px;font-size:12px;border-bottom:1px solid var(--line);background:rgba(122,90,248,.07);line-height:1.5}
+.chat-turn{padding:6px 14px;font-size:12px;border-bottom:1px solid var(--line);background:rgba(247,144,9,.09);display:flex;flex-direction:column;gap:2px;max-height:112px;overflow-y:auto}
+.chat-turn b{color:#B54708}.chat-turn a{display:flex;gap:6px;color:inherit;text-decoration:none;min-width:0;padding:1px 0}.chat-turn a:hover .ts{text-decoration:underline}
+.chat-turn .tw{flex:none;font-weight:600}.chat-turn .tt,.a2a-tg .tt{flex:none;color:var(--pri2);max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-turn .ts{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.chat-head #chFold.on{border-color:var(--pri2);color:var(--pri2)}
+.cm.flash .bub{box-shadow:0 0 0 3px rgba(247,144,9,.8)}
+.more-tg{display:block;border:none;background:none;padding:4px 0 0;font-size:12px;color:var(--pri2);cursor:pointer}
+.more-box{margin-top:6px;border-top:1px dashed var(--line);padding-top:6px;font-size:12.5px;color:var(--mut)}.more-box .txt b.lb{color:inherit}
+.pick{margin-top:8px;border:1px solid var(--pri2);border-radius:10px;padding:8px 10px;background:rgba(0,0,0,.02)}
+.pick-q{font-weight:600;margin:2px 0 5px}.pick-b{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}.pick-b button{padding:4px 12px;font-size:13px;border-radius:14px}
+.pick-b button.on{background:var(--pri2);border-color:var(--pri2);color:#fff}.pick-go{margin:2px 0 6px;font-size:13px}
+.pick.done{border-style:dashed}.pick-ok{font-size:12.5px;color:#2e7d32;font-weight:600}
+.cm.a2a,.cm.sys{align-items:stretch;margin:3px 0}
+.a2a-tg,.sys-tg{display:flex;gap:6px;align-items:baseline;width:100%;text-align:left;border:1px dashed var(--line);background:transparent;border-radius:9px;padding:4px 10px;font-size:12px;color:var(--mut);cursor:pointer;min-width:0;white-space:nowrap;overflow:hidden}
+.a2a-tg .ts{overflow:hidden;text-overflow:ellipsis;min-width:0}.sys-tg{border-style:solid;overflow:hidden;text-overflow:ellipsis;display:block}
+.a2a-box{border-left:2px solid var(--line);margin:2px 0 6px 6px;padding-left:8px}
+.stgc{font-size:11px;white-space:nowrap}.stgc i{font-style:normal;opacity:.5}.stgc b{color:#B54708}

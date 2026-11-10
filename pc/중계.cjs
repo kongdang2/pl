@@ -195,10 +195,11 @@ function eventLines(agent, e) {
 function liveSink(m, agent) {
   const list = Array.isArray(m.live) ? m.live : (m.live = []);
   let timer = null;
-  const flush = async () => { timer = null; try { await patchMsg(m.id, { live: list.slice(-150) }); } catch (e) { log('진행 기록 실패 #' + m.id, e.message); } };
+  // 전송량(hong 11-11): 글이 바뀔 때마다 그 줄 전체가 열려 있는 브라우저로 가므로, 작업 중에는 8초에 한 번·마지막 30줄만 올리고 끝날 때 한 번 전체(150줄까지)를 올린다
+  const flush = async (all) => { timer = null; try { await patchMsg(m.id, { live: list.slice(all ? -150 : -(conf.liveKeep || 30)) }); } catch (e) { log('진행 기록 실패 #' + m.id, e.message); } };
   return {
-    add(items) { for (const x of items) list.push(Object.assign({ at: new Date().toISOString(), a: agent }, x)); if (items.length && !timer) timer = setTimeout(flush, 2500); },
-    async end() { if (timer) { clearTimeout(timer); await flush(); } },
+    add(items) { for (const x of items) list.push(Object.assign({ at: new Date().toISOString(), a: agent }, x)); if (items.length && !timer) timer = setTimeout(flush, conf.liveMs || 8000); },
+    async end() { if (timer) clearTimeout(timer); if (list.length) await flush(true); },
   };
 }
 // 이벤트 어디에 있든 답 블록(<<<채널 … 채널>>>)이 든 문자열을 찾는다(형식이 바뀌어도 답을 놓치지 않게)
@@ -580,6 +581,7 @@ function prompt(agent, m, ch, group) {
     ch.map(fmt).join('\n\n'),
     '',
     group ? '이 대화는 hong·Claude·Codex 셋이 함께 하는 대화(받는이 모두)다. Claude 가 먼저 답하고 Codex 가 Claude 의 답까지 보고 이어서 답한다. 상대 답에 덧붙이거나 다른 의견을 내되 같은 말은 되풀이하지 않는다.' : '',
+    'hong 의 글이 「선택: …」으로 시작하면 바로 앞 답의 선택 블록에서 hong 이 그 선택지를 고른 것이다(hong 의 결정·승인과 같다).',
     '할 일: ' + (group ? 'hong 의 글(#' + m.id + ')' : '마지막 글(#' + m.id + ')') + '의 요청을 처리한다. 긴 결과는 지금처럼 검증자료\\vNNN\\ 등 파일에 쓰고 채널에는 요약과 경로만 남긴다.',
     '되돌리기 어려운 일(운영본 교체·보관 이동·파일 삭제·외부 전송)은 하지 말고 받는이를 hong 으로 해서 확인을 요청한다.',
     ...reqLines(m),
@@ -591,11 +593,30 @@ function prompt(agent, m, ch, group) {
     '<<<채널',
     group ? (agent === 'Codex' ? '받는이: 모두   (Claude 가 고치거나 처리해야 할 일이 남으면 받는이: Claude)' : '받는이: 모두') : '받는이: hong 또는 ' + other,
     group ? (agent === 'Codex' ? '상태: 안내   (받는이를 Claude 로 넘길 때만 대기)' : '상태: 안내') : '상태: 대기 또는 안내   (받는이가 답하거나 처리해야 하면 대기, 알리기만 하면 안내)',
-    '주제: ' + (m.topic || '짧은 제목'),
-    '(본문: 첫 줄에 결론 한 문장 → 빈 줄 → 「- 」 목록으로 핵심만. 항목 이름은 **굵게**, 파일·경로는 `백틱`. hong 이 결정할 일은 맨 끝에 번호 목록. 15줄 이내)',
+    '주제: ' + (m.topic || '짧은 제목') + TOPIC_HINT,
+    ...BODY_FORM,
     '채널>>>',
   ].join('\n');
 }
+
+// 답 본문 형식(hong 11-11 「채팅 내용을 이해하기 쉽게」): hong 에게 가는 글은 결론 → 선택 → 자세히 세 칸. 웹이 선택 블록은 단추로, 자세히 블록은 접어서 보여 준다
+const TOPIC_HINT = '   (다루는 요청·버전이 바뀌었으면 주제를 「수정요청 #N」 또는 「vNNN 짧은 이름」으로 새로 쓴다. 끝난 옛 주제를 물려 쓰지 않는다)';
+const BODY_FORM = [
+  '(본문 형식. 받는이가 hong·모두일 때 — hong 은 첫 칸만 읽고도 무슨 일인지, 무엇을 정해야 하는지 알 수 있어야 한다:',
+  ' ① 첫 줄 = 결론 한 문장. 쉬운 말로 쓴다. 해시·파일 이름·경로·시험 개수·결함 번호(W367-03)·「r3」 같은 말은 여기에 쓰지 않는다(챗봇 안내서 「쉬운 말」 표).',
+  ' ② 빈 줄 뒤 「- 」 목록 3줄 이내: hong 이 알아야 할 바뀐 점·영향·남은 일만. 항목 이름은 **굵게**.',
+  ' ③ hong 이 정해야 할 일이 있으면 선택 블록을 넣는다(웹이 단추로 보여 주고, hong 이 누르면 「선택: …」 글이 온다). 권하는 선택지를 맨 위에, 2~4개, 각 20자 이내. 정할 일이 여럿이면 블록을 일마다 하나씩(3개까지). 정할 일이 없으면 넣지 않는다:',
+  '    <<<선택',
+  '    질문: 운영본으로 올릴까요?',
+  '    - 운영 반영',
+  '    - 보류',
+  '    선택>>>',
+  ' ④ 근거와 기록(파일·경로는 `백틱`, 해시, 시험 결과, 원인 설명)은 모두 자세히 블록 안에 쓴다. 웹에서는 접혀 있다가 누르면 펼쳐진다:',
+  '    <<<자세히',
+  '    - **파일**: …',
+  '    자세히>>>',
+  ' 받는이가 Codex·Claude 일 때는 선택·자세히 블록 없이 첫 줄 결론 + 「- 」 목록으로 쓴다(웹에서 한 줄로 접혀 보인다). 같은 결과를 hong 과 상대 담당에게 따로따로 알리지 않는다.',
+  ' 전체 20줄 이내)'];
 
 // 수정요청에 관한 대화면: 요청 원문 위치, 진행 단계를 적는 「진행:」 줄 안내
 function reqLines(m) {
@@ -627,8 +648,8 @@ function followUp(agent, m, fresh, group) {
     '<<<채널',
     group ? (agent === 'Codex' ? '받는이: 모두   (Claude 가 고치거나 처리해야 할 일이 남으면 받는이: Claude)' : '받는이: 모두') : '받는이: hong 또는 ' + other,
     group ? (agent === 'Codex' ? '상태: 안내   (받는이를 Claude 로 넘길 때만 대기)' : '상태: 안내') : '상태: 대기 또는 안내',
-    '주제: ' + (m.topic || '짧은 제목'),
-    '(본문: 첫 줄에 결론 한 문장 → 빈 줄 → 「- 」 목록으로 핵심만. 항목 이름은 **굵게**, 파일·경로는 `백틱`. hong 이 결정할 일은 맨 끝에 번호 목록. 15줄 이내)',
+    '주제: ' + (m.topic || '짧은 제목') + TOPIC_HINT,
+    ...BODY_FORM,
     '채널>>>',
   ].join('\n');
 }
@@ -648,7 +669,7 @@ function parseReply(out, agent) {
   let st = get('상태').split(/\s/)[0]; if (!['대기', '안내'].includes(st)) st = '대기';
   const body = blk.split(/\r?\n/).filter((l) => !/^\s*(받는이|상태|주제|진행)\s*:/.test(l)).join('\n').trim();
   const pg = get('진행').match(/^(작업중|완료|검토|수정|검증|반영|보류)\s*[-–—:·]?\s*(.*)$/);
-  return { fileBlocks, to, st, topic: get('주제'), body, progress: pg ? { step: pg[1], text: pg[2].trim() || body.split('\n')[0] } : null };
+  return { fileBlocks, to, st, topic: get('주제').replace(/\s{2,}\(.*$/, '').trim(), body, progress: pg ? { step: pg[1], text: pg[2].trim() || body.split('\n')[0] } : null };
 }
 
 // 답에 붙은 파일 블록을 sonik-channel 에 올리고 글의 files 로 돌려준다. 담당자 답은 담당/<그 사람 이메일>/ 아래(그 사람만 읽음)

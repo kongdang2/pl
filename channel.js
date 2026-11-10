@@ -15,7 +15,7 @@
   const RUN = { 실행중: '⏳ 작업 중', 완료: '✓ 자동 처리', 실패: '✗ 자동 실패', 건너뜀: '⏸ 왕복 한도' };
   // 화면 글자(ctx.screen)는 크므로 목록에서는 자료 이름·위치만 읽는다(내려받기 용량)
   const COLS = 'id,at,sender,recipient,topic,status,reply_to,body,author_email,updated_at,run_state,run_note,files,request_id,quick,live,owner,ctx_memo:ctx->>snap_memo,ctx_loc:ctx->>loc,ctx_snap:ctx->>snap_id,ctx_base:ctx->>base_ym,ctx_ver:ctx->>engine_ver';
-  const ch = { fullAt: 0, live: null, ctxFn: null, sb: null, rows: [], replyTo: null, timer: null, onlyMine: false, to: 'Claude', relay: null, lastTop: 0, open: false, tick: 0, pending: [], urls: {}, quick: false, stopAsked: 0, liveOpen: {}, filed: {}, onDraft: null };
+  const ch = { fullAt: 0, live: null, ctxFn: null, sb: null, rows: [], replyTo: null, timer: null, onlyMine: false, to: 'Claude', relay: null, lastTop: 0, open: false, tick: 0, pending: [], urls: {}, quick: false, stopAsked: 0, liveOpen: {}, filed: {}, onDraft: null, moreOpen: {}, foldOpen: {}, sysOpen: {}, pick: {}, reqs: {}, reqAt: 0, maxUpd: '' };
   const BUCKET = 'sonik-channel', MAXB = 20 * 1024 * 1024; // 첨부: 비공개 버킷, 파일당 20MB
   // 마지막으로 본 글 번호(이 브라우저에만 저장). 저장이 막혀 있으면 배지만 덜 정확하다
   const seen = { get() { try { return +localStorage.getItem('sonik.ch.seen') || 0; } catch (_) { return 0; } }, set(v) { try { localStorage.setItem('sonik.ch.seen', String(v)); } catch (_) { /* 무시 */ } } };
@@ -23,11 +23,24 @@
   // 전송량(hong 11-06, Supabase 무료 한도 초과): 최근 150글(약 0.5MB)을 통째로 다시 읽는 일은 처음 열 때와 몇 분에 한 번(예비)만 한다.
   // 그 사이 새 글·바뀐 글은 Realtime 알림에 실려 온 행을 그대로 합친다(apply). Realtime 이 끊겨 있으면 예전처럼 주기적으로 다시 읽는다.
   const sig = (r) => r.map((m) => m.id + m.status + (m.run_state || '') + (m.run_note || '') + ':' + (m.live || []).length).join();
-  async function load() {
-    const { data, error } = await ch.sb.from('sk_channel').select(COLS).order('at', { ascending: false }).limit(150);
-    if (error) { $('chRows').innerHTML = '<p class="hint">채널을 읽지 못했습니다: ' + esc(error.message) + '</p>'; return; }
-    ch.fullAt = Date.now();
-    await after((data || []).reverse());
+  // full = 최근 150글 통째로. 아니면 마지막으로 읽은 뒤 바뀐 글만 받아 합친다(hong 11-11 전송량: 팝업을 열거나 예비로 다시 읽을 때마다 0.5MB 를 받지 않게).
+  // 바뀐 글만 읽기는 Realtime 이 이어져 있을 때만 쓴다(끊겨 있으면 놓친 변경이 있을 수 있어 통째로). 지워진 글은 1시간마다 통째로 읽을 때 빠진다.
+  const stampOf = (rows) => rows.reduce((a, m) => (m.updated_at && Date.parse(m.updated_at) > (Date.parse(a) || 0) ? m.updated_at : a), '');
+  async function load(full) {
+    const part = !full && ch.live && ch.rows.length && ch.maxUpd && Date.now() - (ch.fullAt || 0) < 3600000;
+    let q = ch.sb.from('sk_channel').select(COLS);
+    q = part ? q.gt('updated_at', ch.maxUpd).order('at', { ascending: false }).limit(150) : q.order('at', { ascending: false }).limit(150);
+    const { data, error } = await q;
+    if (error) { if (!part) $('chRows').innerHTML = '<p class="hint">채널을 읽지 못했습니다: ' + esc(error.message) + '</p>'; return; }
+    let rows = (data || []).reverse();
+    if (part) {
+      ch.partAt = Date.now();
+      if (!rows.length) return;
+      const by = new Map(ch.rows.map((m) => [m.id, m]));
+      rows.forEach((m) => by.set(m.id, m));
+      rows = [...by.values()].sort((a, b) => (Date.parse(a.at) - Date.parse(b.at)) || (a.id - b.id)).slice(-150);
+    } else { ch.fullAt = ch.partAt = Date.now(); }
+    await after(rows);
   }
   // Realtime 행(전체 열) → 목록 열 모양. 바뀌지 않은 큰 열은 알림에서 빠질 수 있어(TOAST) 들어온 값만 덮는다
   function apply(p) {
@@ -50,6 +63,8 @@
     const before = ch.rows.length && ch.rows[ch.rows.length - 1].id;
     const changed = sig(ch.rows) !== sig(rows);
     ch.rows = rows;
+    ch.maxUpd = stampOf(rows) || ch.maxUpd;
+    loadReqs();
     if (await loadFiled()) render(false);
     if (changed) render(before !== (ch.rows.length && ch.rows[ch.rows.length - 1].id));
     if (ch.open) sign();
@@ -311,16 +326,145 @@
       + (x.a ? '<span class="la">' + esc(x.a) + '</span>' : '') + '<span class="ls">' + esc(x.s) + '</span></li>').join('') + '</ul>';
   }
 
-  function bubble(m, byId) {
+  // ── 읽기 쉽게(hong 11-11): 답을 「결론 / 선택 / 자세히」로 나누고, Claude·Codex 가 서로 주고받은 글과 시스템 알림은 한 줄로 접는다 ──
+  const AGENTS = ['Claude', 'Codex'];
+  const isA2A = (m) => AGENTS.includes(m.sender) && AGENTS.includes(m.recipient);
+  const isSys = (m) => m.sender !== ME && m.status === '안내' && /^\s*\[(중계|웹 엔진 자동 갱신)\]/.test(m.body || '');
+  const fold = { on: null, get() { if (this.on === null) { try { this.on = localStorage.getItem('sonik.ch.fold') !== '0'; } catch (_) { this.on = true; } } return this.on; }, set(v) { this.on = !!v; try { localStorage.setItem('sonik.ch.fold', v ? '1' : '0'); } catch (_) { /* 무시 */ } } };
+  const MORE_RE = /<<<자세히[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*자세히>>>/g;
+  const PICK_RE = /<<<선택[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*선택>>>/g;
+  const plain = (t) => String(t || '').replace(/<<<[\s\S]*$/, '').replace(/[*`#>]/g, '').replace(/^\s*\[[^\]]{1,14}\]\s*/, '').trim();
+  const firstLine = (t, n) => { const x = (plain(t).split(/\r?\n/).find((l) => l.trim()) || '').trim(); return x.length > n ? x.slice(0, n) + '…' : x; };
+  // 본문 → { head: 늘 보이는 글, more: 접어 두는 글, picks: [{q, opts}] }
+  // 중계가 블록으로 나눠 준 답은 그대로, 블록이 없는 긴 답(옛 글)은 첫 문단(+ 맨 끝 번호 목록)만 남기고 가운데를 접는다
+  function splitBody(body) {
+    let t = String(body || '');
+    const picks = [], more = [];
+    t = t.replace(PICK_RE, (_, b) => {
+      const ls = b.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      const q = (ls.find((l) => /^질문\s*:/.test(l)) || '').replace(/^질문\s*:\s*/, '');
+      const opts = ls.filter((l) => /^[-*•]\s+/.test(l)).map((l) => l.replace(/^[-*•]\s+/, '').slice(0, 60)).slice(0, 4);
+      if (opts.length >= 2) picks.push({ q, opts });
+      return '';
+    });
+    t = t.replace(MORE_RE, (_, b) => { more.push(b.trim()); return ''; }).trim();
+    if (more.length) return { head: t, more: more.join('\n\n'), picks };
+    if (t.length <= 700) return { head: t, more: '', picks };
+    const blocks = t.split(/\r?\n[ \t]*\r?\n/).filter((b) => b.trim());
+    if (blocks.length < 3) return { head: t, more: '', picks };
+    const last = blocks[blocks.length - 1], ask = last.split(/\r?\n/).every((l) => /^\s*(\d+[.)]|[①-⑳])\s/.test(l));
+    const mid = blocks.slice(1, ask ? -1 : undefined);
+    if (!mid.length) return { head: t, more: '', picks };
+    return { head: blocks[0] + (ask ? '\n\n' + last : ''), more: mid.join('\n\n'), picks };
+  }
+  // 선택 카드: 선택지를 누르면 「선택: …」 글이 그 답에 이어 올라가고(= hong 의 답), 무엇을 골랐는지가 카드에 남는다
+  const pickedOf = (m) => ch.rows.find((r) => r.reply_to === m.id && r.sender === ME && /^선택\s*:/.test(r.body || ''));
+  function pickCard(m, picks) {
+    const done = pickedOf(m);
+    if (done) return '<div class="pick done"><div class="pick-ok">✔ ' + esc(done.body.replace(/^선택\s*:\s*/, '').replace(/\n선택\s*:\s*/g, ' · ')) + ' <span class="hint">' + esc(hm(done.at)) + '</span></div></div>';
+    const can = !ch.member && MINE(m), sel = ch.pick[m.id] || {};
+    return '<div class="pick">' + picks.map((p, i) => (p.q ? '<div class="pick-q">' + esc(p.q) + '</div>' : '')
+      + '<div class="pick-b">' + p.opts.map((o, j) => '<button' + (can ? '' : ' disabled') + ' class="' + (sel[i] === o ? 'on' : j === 0 ? 'pri' : '') + '" data-pick="' + m.id + ':' + i + ':' + j + '">' + esc(o) + '</button>').join('') + '</div>').join('')
+      + (picks.length > 1 && can ? '<button class="pri pick-go" data-pickgo="' + m.id + '"' + (picks.every((_, i) => sel[i]) ? '' : ' disabled') + '>고른 대로 보내기</button>' : '')
+      + (can ? '<div class="hint">다르게 답하려면 아래에 직접 쓰면 됩니다.</div>' : '') + '</div>';
+  }
+  async function sendPick(m, answers) {
+    const { data: s } = await ch.sb.auth.getSession();
+    const row = { sender: ME, recipient: m.recipient === '모두' ? '모두' : m.sender, topic: m.topic || '', status: '대기', reply_to: m.id,
+      body: answers.join('\n'), files: [], quick: false, author_email: (s.session.user.email || '').toLowerCase() };
+    const { error } = await ch.sb.from('sk_channel').insert(row);
+    if (error) { alertMsg('보내지 못했습니다: ' + error.message); return; }
+    delete ch.pick[m.id];
+    if (m.status === '대기') await setStatus(m.id, '답변'); else await load();
+    render(true);
+  }
+  function onPick(id, i, j) {
+    const m = ch.rows.find((x) => x.id === id); if (!m) return;
+    const picks = splitBody(m.body).picks, p = picks[i]; if (!p || !p.opts[j]) return;
+    if (picks.length === 1) return sendPick(m, ['선택: ' + p.opts[j]]);
+    (ch.pick[id] = ch.pick[id] || {})[i] = p.opts[j]; render(false);
+  }
+  function onPickGo(id) {
+    const m = ch.rows.find((x) => x.id === id); if (!m) return;
+    const picks = splitBody(m.body).picks, sel = ch.pick[id] || {};
+    if (!picks.every((_, i) => sel[i])) return;
+    return sendPick(m, picks.map((p, i) => '선택: ' + (p.q ? p.q + ' → ' : '') + sel[i]));
+  }
+  // 수정요청 단계(접수 › 작업중 › 완료): 글에 달린 요청 번호로 한 번에 읽어 둔다(30초에 한 번까지)
+  async function loadReqs() {
+    if (ch.member) return;
+    const ids = [...new Set(ch.rows.map((m) => m.request_id).filter(Boolean))];
+    if (!ids.length || Date.now() - ch.reqAt < 30000) return;
+    ch.reqAt = Date.now();
+    const { data, error } = await ch.sb.from('sk_requests').select('id,title,stage,status').in('id', ids);
+    if (error || !data) return;
+    const sigOf = (o) => JSON.stringify(Object.keys(o).sort().map((k) => [k, o[k].stage, o[k].status]));
+    const next = {}; data.forEach((r) => { next[r.id] = r; });
+    const changed = sigOf(next) !== sigOf(ch.reqs);
+    ch.reqs = next;
+    if (changed) render(false);
+  }
+  function stageChip(reqId) {
+    const r = ch.reqs[reqId]; if (!r) return '';
+    if (['취소', '반려', '승인대기'].includes(r.status)) return '<span class="stgc"><b>' + esc(r.status) + '</b></span>';
+    const n = r.status === '완료' || r.stage >= 4 ? 2 : r.stage >= 1 ? 1 : 0;
+    return '<span class="stgc">' + ['접수', '작업중', '완료'].map((t, i) => (i === n ? '<b>' + t + '</b>' : '<i>' + t + '</i>')).join(' › ') + '</span>';
+  }
+  // 맨 위 한 줄: 지금 누가 무엇을 몇 분째 하는지, 그 뒤에 기다리는 글이 몇 건인지
+  function nowLine() {
+    const el = $('chNow'); if (!el) return;
+    if (ch.member) { el.hidden = true; return; }
+    const run = ch.rows.filter((m) => m.run_state === '실행중');
+    const queued = ch.rows.filter((m) => m.status === '대기' && !m.run_state && !m.quick && [...AGENTS, '모두'].includes(m.recipient)).length;
+    el.hidden = !run.length && !queued;
+    if (el.hidden) return;
+    el.innerHTML = (run.length ? run.map((m) => {
+      const who = m.run_note || (m.recipient === '모두' ? 'Claude' : m.recipient);
+      const t0 = ((m.live || []).find((x) => !x.a || x.a === who) || {}).at || m.updated_at || m.at;
+      const min = Math.max(0, Math.round((Date.now() - Date.parse(t0)) / 60000));
+      return '⏳ <b>' + esc(who) + '</b> 작업 중 · ' + (min < 1 ? '방금 시작' : min + '분째') + (m.topic ? ' · ' + esc(m.topic) : '') + (m.quick ? ' ⚡' : '');
+    }).join('<br>') : '⏸ 실행 중인 작업 없음') + (queued ? ' <span class="hint">· 다음 차례 ' + queued + '건</span>' : '');
+  }
+  // 「내 차례」 띠: hong 이 답해야 하는 글만 한 줄씩(누르면 그 글로)
+  function turnStrip() {
+    const el = $('chTurn'); if (!el) return;
+    const mine = ch.member ? [] : ch.rows.filter((m) => MINE(m) && m.status === '대기');
+    el.hidden = !mine.length || ch.onlyMine;
+    if (el.hidden) return;
+    el.innerHTML = '<b>내 차례 ' + mine.length + '건</b>' + mine.slice(-4).reverse().map((m) => '<a href="#ch' + m.id + '" data-go="' + m.id + '"><span class="tw">' + esc(m.sender) + '</span>'
+      + (m.topic ? '<span class="tt">' + esc(m.topic) + '</span>' : '') + '<span class="ts">' + esc(firstLine(m.body, 46)) + '</span></a>').join('') + (mine.length > 4 ? '<span class="hint">… 나머지는 「내 대기」에서</span>' : '');
+    el.querySelectorAll('[data-go]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); const t = document.getElementById('ch' + a.getAttribute('data-go')); if (t) { t.scrollIntoView({ block: 'center' }); t.classList.add('flash'); setTimeout(() => t.classList.remove('flash'), 1500); } }; });
+  }
+  // 시스템 알림(중계·웹 엔진 자동 갱신): 한 줄 배지, 누르면 전문
+  function sysLine(m, byId) {
+    const open = ch.sysOpen[m.id];
+    return '<div class="cm sys" id="ch' + m.id + '"><button class="sys-tg" data-sys="' + m.id + '">🔧 ' + esc(firstLine(m.body, 70)) + ' <span class="hint">' + esc(hm(m.at)) + '</span> ' + (open ? '▾' : '▸') + '</button></div>'
+      + (open ? bubble(m, byId, true) : '');
+  }
+  // Claude ↔ Codex 사이 글 묶음: 한 줄(몇 개 · 주제 · 마지막 글 첫 줄), 누르면 펼침
+  function foldLine(run, byId) {
+    const k = run[0].id, open = ch.foldOpen[k], last = run[run.length - 1];
+    const req = run.map((m) => m.request_id).filter(Boolean).pop();
+    return '<div class="cm a2a"><button class="a2a-tg" data-fold="' + k + '">' + (open ? '▾' : '▸') + ' Claude ↔ Codex 글 ' + run.length + '개'
+      + (last.topic ? ' · <span class="tt">' + esc(last.topic) + '</span>' : '') + (req ? ' ' + stageChip(req) : '')
+      + (open ? '' : '<span class="ts">' + esc(last.sender) + ': ' + esc(firstLine(last.body, 60)) + '</span>') + '</button></div>'
+      + (open ? '<div class="a2a-box">' + run.map((m) => bubble(m, byId)).join('') + '</div>' : '');
+  }
+
+  function bubble(m, byId, noId) {
     const mine = m.sender === ME, re = m.reply_to && byId.get(m.reply_to);
     const wait = MINE(m) && m.status === '대기';
-    return '<div class="cm ' + (mine ? 'me' : 'them s-' + esc(m.sender)) + (wait ? ' wait' : '') + '" id="ch' + m.id + '">'
+    const sp = mine ? null : splitBody(m.body), dOpen = ch.moreOpen[m.id];
+    const txt = (t) => { const d = parseDraft(t); return d ? (d.rest ? '<div class="txt">' + md(d.rest) + '</div>' : '') + draftCard(m, d) : (t ? '<div class="txt">' + md(t) + '</div>' : ''); };
+    return '<div class="cm ' + (mine ? 'me' : 'them s-' + esc(m.sender)) + (wait ? ' wait' : '') + '"' + (noId ? '' : ' id="ch' + m.id + '"') + '>'
       + (mine ? '' : '<div class="who">' + esc(NAME(m.sender, m)) + (m.recipient !== ME ? ' <span class="hint">→ ' + esc(NAME(m.recipient, m)) + '</span>' : '') + '</div>')
       + '<div class="line">'
       + '<div class="bub">'
       + (mine ? '<div class="to">→ ' + esc(NAME(m.recipient, m)) + (m.topic ? ' · ' + esc(m.topic) : '') + '</div>' : m.topic ? '<div class="to">' + esc(m.topic) + '</div>' : '')
-      + (re ? '<a class="quote" href="#ch' + re.id + '">' + esc(NAME(re.sender, re)) + ': ' + esc(re.body.slice(0, 50)) + (re.body.length > 50 ? '…' : '') + '</a>' : '')
-      + (m.body ? (mine ? '<div class="txt">' + esc(m.body) + '</div>' : (() => { const d = parseDraft(m.body); return (d ? (d.rest ? '<div class="txt">' + md(d.rest) + '</div>' : '') + draftCard(m, d) : '<div class="txt">' + md(m.body) + '</div>'); })()) : '') + atts(m)
+      + (re ? '<a class="quote" href="#ch' + re.id + '">' + esc(NAME(re.sender, re)) + ': ' + esc(firstLine(re.body, 50)) + '</a>' : '')
+      + (m.body ? (mine ? '<div class="txt">' + esc(m.body) + '</div>' : txt(sp.head) + (sp.picks.length ? pickCard(m, sp.picks) : '')
+        + (sp.more ? '<button class="more-tg" data-more="' + m.id + '">' + (dOpen ? '▾ 자세히 접기' : '▸ 자세히') + '</button>' + (dOpen ? '<div class="more-box">' + txt(sp.more) + '</div>' : '') : '')) : '') + atts(m)
+      + (!mine && m.request_id && stageChip(m.request_id) ? '<div class="ctxline">수정요청 #' + m.request_id + ' ' + stageChip(m.request_id) + '</div>' : '')
       + (m.ctx_memo || m.ctx_loc ? '<div class="ctxline">📄 ' + esc([m.ctx_memo, m.ctx_loc].filter(Boolean).join(' · ')) + ' 기준</div>' : '') + '</div>'
       + '<div class="meta">' + (m.status !== '안내' ? '<span class="st st-' + esc(m.status) + '">' + esc(m.status) + '</span>' : '')
       + (!ch.member && (m.status === '대기' || m.status === '답변') ? '<button class="done-btn" data-done="' + m.id + '" title="이 글을 완료로 바꿉니다">✓ 완료</button>' : '')
@@ -360,12 +504,19 @@
     $('chMine').textContent = '내 대기 ' + waiting;
     $('chMine').classList.toggle('on', ch.onlyMine);
     const list = ch.onlyMine ? ch.rows.filter((m) => MINE(m) && m.status === '대기') : ch.rows;
-    let lastDay = '', html = '';
+    let lastDay = '', html = '', run = [];
+    const folding = !ch.member && !ch.onlyMine && fold.get();
+    if ($('chFold')) { $('chFold').hidden = !!ch.member; $('chFold').classList.toggle('on', fold.get()); }
+    const flush = () => { if (run.length) { html += foldLine(run, byId); run = []; } };
     list.forEach((m) => {
       const d = day(m.at);
-      if (d !== lastDay) { html += '<div class="day">' + esc(d) + '</div>'; lastDay = d; }
-      html += bubble(m, byId);
+      if (d !== lastDay) { flush(); html += '<div class="day">' + esc(d) + '</div>'; lastDay = d; }
+      if (folding && isA2A(m)) { run.push(m); return; }
+      flush();
+      html += folding && isSys(m) ? sysLine(m, byId) : bubble(m, byId);
     });
+    flush();
+    nowLine(); turnStrip();
     // 중계가 실행 중인 글이 있으면 받는이가 「작업 중」인 말풍선
     ch.rows.filter((m) => m.run_state === '실행중').forEach((m) => {
       const who = m.run_note || (m.recipient === '모두' ? 'Claude' : m.recipient); // 지금 답하는 담당(run_note)
@@ -379,6 +530,11 @@
     });
     const box = $('chRows'), atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
     box.innerHTML = html || '<p class="hint center">' + (ch.onlyMine ? '나에게 온 대기 글이 없습니다.' : '아직 대화가 없습니다. 아래에서 첫 글을 보내 보세요.') + '</p>';
+    box.querySelectorAll('[data-more]').forEach((b) => { b.onclick = () => { const id = +b.getAttribute('data-more'); ch.moreOpen[id] = !ch.moreOpen[id]; render(false); }; });
+    box.querySelectorAll('[data-fold]').forEach((b) => { b.onclick = () => { const id = +b.getAttribute('data-fold'); ch.foldOpen[id] = !ch.foldOpen[id]; render(false); }; });
+    box.querySelectorAll('[data-sys]').forEach((b) => { b.onclick = () => { const id = +b.getAttribute('data-sys'); ch.sysOpen[id] = !ch.sysOpen[id]; render(false); }; });
+    box.querySelectorAll('[data-pick]').forEach((b) => { b.onclick = () => { const [id, i, j] = b.getAttribute('data-pick').split(':').map(Number); box.querySelectorAll('[data-pick^="' + id + ':"]').forEach((x) => { x.disabled = splitBody((ch.rows.find((r) => r.id === id) || {}).body).picks.length === 1; }); onPick(id, i, j); }; });
+    box.querySelectorAll('[data-pickgo]').forEach((b) => { b.onclick = () => { b.disabled = true; onPickGo(+b.getAttribute('data-pickgo')); }; });
     box.querySelectorAll('[data-rqd]').forEach((b) => { b.onclick = () => fileDraft(+b.getAttribute('data-rqd')); });
     box.querySelectorAll('[data-live]').forEach((b) => { b.onclick = () => { const id = +b.getAttribute('data-live'); ch.liveOpen[id] = !ch.liveOpen[id]; render(false); }; });
     box.querySelectorAll('.live-box.all').forEach((x) => { x.scrollTop = x.scrollHeight; });
@@ -492,6 +648,8 @@
       $('chClaudeModel').onchange = $('chCodexModel').onchange = $('chCodexEffort').onchange = saveModels;
       $('chQuick').onclick = () => setQuick(!ch.quick);
       $('chMine').onclick = () => { ch.onlyMine = !ch.onlyMine; render(true); };
+      if ($('chFold')) $('chFold').onclick = () => { fold.set(!fold.get()); render(false); };
+      clearInterval(ch.nowTimer); ch.nowTimer = setInterval(() => { if (ch.open && !document.hidden) nowLine(); }, 30000);
       $('chReplyX').onclick = () => setReply(null);
       document.querySelectorAll('#chTo button').forEach((b) => { b.onclick = () => setTo(b.getAttribute('data-to')); });
       setTo(ch.to);
@@ -508,14 +666,15 @@
       card.ondrop = (e) => { e.preventDefault(); card.classList.remove('drop'); addFiles(e.dataTransfer.files); };
       // 한글 입력 중(조합 중) Enter 는 글자 확정이므로 보내지 않는다
       $('chBody').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); send(); } };
-      load();
+      if (ch.rows.length) render(false); // 역할이 바뀌면(관리자 ↔ 담당자) 접기·상황·내 차례를 그 역할에 맞게 다시 그린다
+      load(true);
       // 열려 있으면 10초마다, 닫혀 있으면 30초마다(배지용) 새로 읽는다
       // Realtime 연결 중: 열려 있으면 5분, 닫혀 있으면 15분마다 예비로 다시 읽는다. 끊겨 있으면 예전처럼 10초·30초
       ch.timer = setInterval(() => {
         ch.tick++;
         if (document.hidden) return;
-        const age = Date.now() - (ch.fullAt || 0);
-        if (ch.live ? age > (ch.open ? 300000 : 900000) : (ch.open || ch.tick % 3 === 0)) load();
+        const age = Date.now() - (ch.partAt || ch.fullAt || 0);
+        if (ch.live ? age > (ch.open ? 300000 : 900000) : (ch.open || ch.tick % 3 === 0)) load(!ch.live);
       }, 10000);
       // 새 글·답·작업 과정이 생기면 Realtime 알림에 실린 행을 바로 합친다(migration 012). 다시 읽지 않는다
       if (!ch.rt) {
@@ -523,7 +682,7 @@
           try { apply(p); } catch (_) { load(); }
         }).subscribe((status) => {
           const was = ch.live; ch.live = status === 'SUBSCRIBED';
-          if (ch.live && was === false) load(); // 다시 연결되면 끊긴 사이 놓친 글을 한 번 읽는다
+          if (ch.live && was === false) load(true); // 다시 연결되면 끊긴 사이 놓친 글을 한 번 통째로 읽는다
         });
       }
     },
