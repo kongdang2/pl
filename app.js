@@ -1183,22 +1183,39 @@
     if (!draft && st.cleanSig && st.mounted && dataSig() === st.cleanSig) return true;
     return !(canWrite() || draft) || await ask('목록으로', '<p>저장하지 않은 작업은 사라집니다.' + draft + ' 목록으로 갈까요?</p>');
   }
-  // 목록으로: 엔진에서 쌓인 브라우저 기록만큼 되돌아가 목록 자리로 간다(그래야 앞으로·뒤로가 꼬이지 않는다)
+  // 목록으로: 엔진에서 쌓인 브라우저 기록만큼 되돌아가 목록 자리로 간다(그래야 앞으로·뒤로가 꼬이지 않는다).
+  // 엔진 안에서 주소 조각(#)이 바뀌어 기록이 더 쌓였거나 되돌아가기가 안 끝나도 반드시 목록으로 간다(hong 11-10 「간헐적으로 목록으로 무반응」)
+  function finishLeave() {
+    clearTimeout(NAV.leaveT); NAV.leaveT = null; NAV.leaving = false; NAV.depth = 0;
+    try { history.replaceState({ sk: 'list' }, ''); } catch (_) { /* 무시 */ }
+    loadList();
+  }
   $('btnBack').onclick = async () => {
+    if (NAV.leaving) return finishLeave(); // 되돌아가는 중에 또 누르면 바로 목록
     if (!(await leaveOk())) return;
-    if (NAV.depth > 0) { NAV.leaving = true; history.go(-NAV.depth); } else loadList();
+    if (NAV.depth <= 0) return finishLeave();
+    NAV.leaving = true; navStop(); // 되돌아가는 동안 메뉴 기록을 새로 쌓지 않는다
+    NAV.leaveT = setTimeout(() => { if (NAV.leaving) finishLeave(); }, 800);
+    history.go(-NAV.depth);
   };
 
   // ── 브라우저 뒤로·앞으로 = 엔진 안에서 직전·직후 메뉴로 ──
   // 엔진 메뉴(구역·사업장·메뉴·서브탭)가 바뀔 때마다 기록을 하나 쌓고, 뒤로·앞으로 하면 그 메뉴로 되돌린다.
   // 처음 연 메뉴에서 더 뒤로 가면 목록으로(저장 안 한 작업 확인). 월 이동은 기록하지 않는다
-  const NAV = { timer: null, key: '', depth: 0, restoring: false, leaving: false };
+  const NAV = { timer: null, key: '', depth: 0, restoring: false, leaving: false, leaveT: null };
   function engLoc(win) {
     try { return win.eval('(function(){var s=S;return {zone:s._zone||"",site:s.site||"",menu:s.menu||"",sub:(s._sub&&s._sub[s.menu])||""};})()'); } catch (_) { return null; }
   }
   const locKey = (l) => l ? [l.zone, l.site, l.menu, l.sub].join('|') : '';
   function navPush(l) { NAV.depth++; NAV.key = locKey(l); history.pushState({ sk: 'eng', i: NAV.depth, loc: l }, ''); }
-  function navStart() { navStop(); NAV.depth = 0; navPush(engLoc(st.mounted.win)); NAV.timer = setInterval(navPoll, 400); }
+  function navStart() { navStop(); clearTimeout(NAV.leaveT); NAV.leaving = false; NAV.depth = 0; guardHash(st.mounted.win); navPush(engLoc(st.mounted.win)); NAV.timer = setInterval(navPoll, 400); }
+  // 엔진의 <a href="#"> 는 이동용이 아니다: 기본 동작(맨 위로·브라우저 기록 한 칸)만 막고 엔진의 클릭 처리는 그대로 둔다
+  function guardHash(win) {
+    try {
+      const d = win.document; if (d.__skHashGuard) return; d.__skHashGuard = true;
+      d.addEventListener('click', (e) => { const a = e.target && e.target.closest && e.target.closest('a[href="#"]'); if (a) e.preventDefault(); }, true);
+    } catch (_) { /* 엔진 구조가 다르면 그대로 둔다 */ }
+  }
   function navStop() { clearInterval(NAV.timer); NAV.timer = null; }
   function navPoll() {
     if (!st.mounted || NAV.restoring) return;
@@ -1219,12 +1236,13 @@
   window.addEventListener('popstate', async (e) => {
     const s = e.state || {}, inEngine = !$('vEngine').hidden && !!st.mounted;
     if (s.sk === 'eng') {
-      if (inEngine && !NAV.leaving) { NAV.depth = s.i || 1; navGo(s.loc || {}); }
+      if (inEngine && NAV.leaving) { finishLeave(); return; } // 엔진 안 기록 때문에 목록 자리까지 못 갔다: 여기서 끝낸다
+      if (inEngine) { NAV.depth = s.i || 1; navGo(s.loc || {}); }
       else if (!inEngine) history.replaceState({ sk: 'list' }, '');
       return;
     }
     if (!inEngine) return;
-    if (NAV.leaving || await leaveOk()) { NAV.leaving = false; NAV.depth = 0; loadList(); }
+    if (NAV.leaving || await leaveOk()) finishLeave();
     else navPush(engLoc(st.mounted.win)); // 취소: 엔진에 그대로 있고 기록을 다시 쌓는다
   });
   history.replaceState({ sk: 'list' }, '');
