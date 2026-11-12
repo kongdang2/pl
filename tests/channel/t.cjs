@@ -49,7 +49,9 @@ const html = '<!doctype html><meta charset="utf-8"><style>' + css + '</style><di
   const b = await chromium.launch();
   const pg = await b.newPage({ viewport: { width: 1100, height: 900 }, deviceScaleFactor: process.env.SHOT ? 2 : 1 });
   const errs = []; pg.on('pageerror', (e) => errs.push(e.message));
-  await pg.setContent(html);
+  // 브라우저 저장소(본 위치)를 쓰려고 빈 문서 대신 가짜 주소로 연다
+  await pg.route('http://chat.test/', (r) => r.fulfill({ contentType: 'text/html; charset=utf-8', body: html }));
+  await pg.goto('http://chat.test/');
   let fail = 0;
   const ok = (name, c, extra) => { console.log((c ? 'PASS ' : 'FAIL ') + name + (c ? '' : ' ' + JSON.stringify(extra))); if (!c) fail++; };
   const txt = (s) => pg.$$eval(s, (xs) => xs.map((x) => x.textContent));
@@ -99,6 +101,15 @@ const html = '<!doctype html><meta charset="utf-8"><style>' + css + '</style><di
   await pg.click('#chClose'); await pg.click('#chFab'); await pg.waitForTimeout(200);
   const calls = (await pg.evaluate(() => window.__calls)).filter((c) => c.table === 'sk_channel' && c.op === 'select');
   ok('다시 열 때는 바뀐 글만 읽음(updated_at 조건)', calls.length >= 1 && calls.every((c) => c.f.some((f) => /^gt:updated_at/.test(f))), calls);
+
+  // hong 11-13: 말풍선을 눌러 열어도 숫자가 안 없어짐 — 바뀐 글이 없으면 바뀐 글만 읽기가 일찍 끝나 「본 위치」를 안 바꿨다
+  await pg.evaluate(() => localStorage.setItem('sonik.ch.seen', '0'));
+  await pg.click('#chClose'); await pg.waitForTimeout(50);
+  const shown = await pg.$eval('#chBadge', (x) => (x.hidden ? '' : x.textContent));
+  await pg.click('#chFab'); await pg.waitForTimeout(200); await pg.click('#chClose'); await pg.waitForTimeout(50);
+  const after = await pg.$eval('#chBadge', (x) => (x.hidden ? '' : x.textContent));
+  ok('바뀐 글이 없어도 열었다 닫으면 숫자가 없어짐', !!shown && after === '', { shown, after });
+  await pg.click('#chFab'); await pg.waitForTimeout(200);
 
   await pg.click('#chFold');
   ok('접기를 끄면 모든 글이 그대로 보임', (await pg.$$('.a2a-tg')).length === 0 && (await pg.$$('.sys-tg')).length === 0 && (await pg.$$('#ch2')).length === 1);

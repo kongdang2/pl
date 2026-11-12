@@ -250,7 +250,8 @@
     $('chCard').hidden = !v;
     $('chFab').classList.toggle('open', v);
     if (v) refreshCtx();
-    if (v) { ch.lastTop = 0; load().then(() => { render(true); $('chBody').focus(); }); } else badge();
+    badge(); // 열면 지금 목록 끝까지 본 것으로 기록(바뀐 글이 없어 load 가 일찍 끝나도 — hong 11-13 숫자 안 없어짐), 닫으면 숫자 다시 계산
+    if (v) { ch.lastTop = 0; load().then(() => { render(true); $('chBody').focus(); }); }
   }
 
   // PC 중계 상태: 마지막 신호가 90초 안이면 작동 중
