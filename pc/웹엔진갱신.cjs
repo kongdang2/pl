@@ -4,7 +4,8 @@
 // PC 위치: 손익추정시스템\웹테스트\웹엔진갱신.cjs   (소통\중계.cjs 가 10분마다 부른다. 직접: node 웹테스트\웹엔진갱신.cjs [--force] [--dry])
 // 단계: ① AGENTS.md 의 운영본 줄 → 기반 vNNN  ② 검증자료\vNNN\교차검증.md 「통과」 확인  ③ 웹 현재 엔진이 이미 vNNN-n 이면 끝
 //       ④ 웹연결패치.py 로 웹판 생성(v312까지 10초·일반 두 파일, v313부터 운영본 한 파일. 이미 있으면 그대로)  ⑤ 웹 자동검증 extra 사본을 오프라인 extra 에 맞춤
-//       ⑥ 웹 quick 자동검증(FAIL·ERROR 0 이어야 다음 단계)  ⑦ 브라우저로 빈 엔진 생성·검사  ⑧ 웹 업로드(새 엔진을 올린 뒤 현재 엔진을 바꾼다)
+//       ⑥ 웹 연결 검사(runner --web-only: 웹 연결·스크립트 구문·재무손익 항등식·메뉴 열기만, FAIL·ERROR 0 이어야 다음 단계)
+//          (2026-11-06 hong 결정 카드 「웹 연결 검사만」: 엔진 계산은 오프라인 운영본에서 Codex 가 전체 검사했으므로 웹판은 웹 연결 부분만 본다)  ⑦ 브라우저로 빈 엔진 생성·검사  ⑧ 웹 업로드(새 엔진을 올린 뒤 현재 엔진을 바꾼다)
 //       ⑨ 이전 웹판을 보관\vOLD\ 로 옮기고, 검증자료\vNNN-1\ 기록, README·AGENTS 의 「현재 웹판」 줄 갱신  ⑩ 소통 채널에 결과 안내
 // 실패하면 웹 엔진은 그대로 두고 채널로 hong 에게 알린다. 같은 운영본으로는 다시 시도하지 않는다(--force 로 다시).
 'use strict';
@@ -17,6 +18,8 @@ const ROOT = path.resolve(WEB, '..');      // 손익추정시스템
 const LOGIN = process.env.SONIK_CODEX_LOGIN || path.join(os.homedir(), '.sonik-codex.json');
 const STATE = path.join(WEB, '웹엔진갱신상태.json');
 const force = process.argv.includes('--force'), dry = process.argv.includes('--dry');
+// --ver vNNN-n: 같은 번호 r 보정판(v314 r2 등)을 새 웹판 번호로 올릴 때(--force 와 함께). 없으면 기반+'-1'
+const verArg = (() => { const i = process.argv.indexOf('--ver'); return i > 0 ? process.argv[i + 1] : null; })();
 
 const p2 = (n) => String(n).padStart(2, '0');
 const now = new Date(), YMD = now.getFullYear() + p2(now.getMonth() + 1) + p2(now.getDate()), DAY = YMD.slice(0, 4) + '-' + YMD.slice(4, 6) + '-' + YMD.slice(6);
@@ -41,7 +44,9 @@ async function api(method, table, q, body, prefer) {
 }
 async function post(body, status) {
   if (dry) { log('[채널 글 생략(--dry)]', body.split('\n')[0]); return; }
-  await api('POST', 'sk_channel', '', { sender: 'Claude', recipient: 'hong', topic: '웹 엔진 자동 갱신', status: status || '안내', body: '[웹 엔진 자동 갱신] ' + body, author_email: auth.email });
+  const row = { sender: 'Claude', recipient: 'hong', topic: '웹 엔진 자동 갱신', status: status || '안내', body: '[웹 엔진 자동 갱신] ' + body, author_email: auth.email };
+  // 2026-11-05: 긴 검사 뒤 첫 요청이 끊긴 연결로 「fetch failed」가 나면 한 번 더 보낸다(진짜 결과가 가려지지 않게)
+  try { await api('POST', 'sk_channel', '', row); } catch (e) { await new Promise((r) => setTimeout(r, 3000)); await api('POST', 'sk_channel', '', row); }
 }
 
 function run(cmd, args, label) {
@@ -61,8 +66,13 @@ function syncExtra() {
   const mark = web.indexOf('// ── [v307-1 웹 시험판]');
   if (mark < 0) throw new Error('웹 extra.cjs 에서 「웹 연결」 검사 블록 표시를 찾지 못했습니다');
   const body = off.split('_v(\\d+)[_.]').join('_v(\\d+)(?:-\\d+)?[_.]').replace(/\};\s*$/, '');
-  const next = body + web.slice(mark);
+  // 웹 블록 뒤에 붙은 오프라인 버전 블록(// ── v3NN: … / // ── v3NN 제목 …)은 body 에 이미 있으므로 잘라 낸다(v313 중복 선언으로 웹 검증이 멈춘 원인).
+  // 2026-11-05(Codex #423): 콜론 없는 「// ── v321 보고서…」 머리를 못 잘라 SR321_SYNTH 가 두 번 선언됐다 → 버전 번호 뒤 공백·콜론 모두 경계로 본다
+  const tail = web.slice(mark), dup = tail.search(/\n\/\/ ── v\d+[\s:]/);
+  const next = body + (dup < 0 ? tail : tail.slice(0, dup) + '\n};\n');
   if (next === web) { log('웹 extra 사본은 오프라인과 같음'); return false; }
+  try { new (require('vm').Script)('(async function(){' + next.replace(/^'use strict';/, '').replace('module.exports=', 'const __extra=') + '\n})'); }
+  catch (e) { throw new Error('웹 extra 합성 결과 문법 오류(사본을 바꾸지 않음): ' + e.message); }
   if (!dry) { fs.copyFileSync(webPath, path.join(WEB, '자동검증', 'extra_' + YMD + '_갱신전.cjs')); fs.writeFileSync(webPath, next); }
   log('웹 extra 사본을 오프라인 extra 에 맞춤', sha(next).slice(0, 8));
   return true;
@@ -95,7 +105,8 @@ async function upload(html, ver, note) {
   const gz = zlib.gzipSync(Buffer.from(html, 'utf8')), h = sha(Buffer.from(html, 'utf8'));
   const sp = 'engines/' + ver + '_' + h.slice(0, 8) + '.html.gz';
   const r = await fetch(URL_ + '/storage/v1/object/sonik/' + sp, { method: 'POST', headers: { apikey: KEY, Authorization: 'Bearer ' + auth.tok, 'Content-Type': 'application/gzip', 'x-upsert': 'false' }, body: gz });
-  if (!r.ok && r.status !== 409) throw new Error('엔진 파일 올리기 실패 ' + r.status + ': ' + await r.text());
+  // 같은 내용이 이미 있으면(경로에 sha 앞 8자) 올린 것으로 본다. Supabase 저장소는 이것을 HTTP 400 + 본문 statusCode "409" 로 돌려준다(2026-11-05 #434)
+  if (!r.ok) { const t = await r.text(); if (r.status !== 409 && !/"statusCode"\s*:\s*"409"|KeyAlreadyExists|Duplicate/.test(t)) throw new Error('엔진 파일 올리기 실패 ' + r.status + ': ' + t); log('엔진 파일이 이미 있음(같은 내용) → 그대로 씀', sp); }
   // 새 엔진을 먼저 등록(현재 아님) → 기존 현재 해제 → 새 엔진을 현재로. 중간에 끊겨도 「현재 엔진 없음」이 되지 않게 기존 해제는 등록 뒤에 한다
   await api('POST', 'sk_engines', '', { ver, storage_path: sp, size_bytes: Buffer.byteLength(html), sha256: h, is_current: false, uploaded_by: auth.email, uploaded_at: new Date().toISOString(), note }, 'resolution=merge-duplicates,return=representation');
   await api('PATCH', 'sk_engines', '?is_current=eq.true', { is_current: false });
@@ -113,7 +124,7 @@ function updateDocs(oldLocal, ver, basever, base10, baseG, web10, moved) {
   let t = fs.readFileSync(rp, 'utf8');
   t = t.replace(/지금은 `[^`]+`\([^)\n]*\)/, '지금은 `' + ver + '`(오프라인 ' + basever + ' + 웹 연결, ' + D + ', 웹 반영 ' + DAY + ' 자동 갱신)');
   t = t.replace(/^python -I 웹테스트\/.*$/m, 'python -I 웹테스트/웹연결패치.py --ver ' + ver + ' --basever ' + basever + ' --date ' + fileDay + (baseG ? ' --base10 ' + base10 + ' --base ' + baseG : ' --base ' + base10) + ' --out 웹테스트');
-  t = t.replace(/^node 웹테스트\/자동검증\/runner\.cjs .*$/m, 'node 웹테스트/자동검증/runner.cjs --project 웹테스트 --mode quick --plan-year 2027 --file 웹테스트/' + web10 + ' --out 웹테스트/자동검증/runs/<날짜>-' + ver);
+  t = t.replace(/^node 웹테스트\/자동검증\/runner\.cjs .*$/m, 'node 웹테스트/자동검증/runner.cjs --project 웹테스트 --mode quick --web-only --plan-year 2027 --file 웹테스트/' + web10 + ' --out 웹테스트/자동검증/runs/<날짜>-' + ver);
   if (moved && t.indexOf('`보관\\' + oldLocal + '\\`') < 0) t = t.replace(/(\| `보관\\v[^\n]*\n)(?!\| `보관)/, '$1| `보관\\' + oldLocal + '\\` | 이전 웹판(' + oldLocal + ', ' + DAY + ' 자동 갱신 때 이동) |\n');
   if (!dry) fs.writeFileSync(rp, t);
   const ap = path.join(ROOT, 'AGENTS.md');
@@ -126,7 +137,60 @@ function updateDocs(oldLocal, ver, basever, base10, baseG, web10, moved) {
   }
 }
 
+// 수정요청 단계: 웹 현재 엔진에 운영본이 들어가면, 그 버전 SYS_CHANGELOG 첫 항목 제목의 「웹 요청 #3·#4」 요청을 「반영」으로 올린다(중계는 대화에 「진행:」 줄이 있을 때만 단계를 올린다).
+// 실패하면 표시를 남기지 않아 다음 확인(10분 뒤) 때 다시 한다. 이미 반영·보류인 요청은 건드리지 않는다.
+function requestIdsOf(file, basever) {
+  const m = /window\.SYS_CHANGELOG\s*=\s*\[\s*\{date:'[^']*',title:'([^']*)'/.exec(fs.readFileSync(file, 'utf8'));
+  if (!m || !m[1].startsWith(basever)) throw new Error('SYS_CHANGELOG 첫 항목이 ' + basever + ' 가 아닙니다');
+  const seg = /(?:웹\s*요청|수정요청)\s*((?:#\d+[·,\s]*)+)/.exec(m[1]);
+  return seg ? seg[1].match(/\d+/g).map(Number) : [];
+}
+async function markRequests(basever, ver, base10, st, saveState) {
+  if (st.reqMarked === basever) return;
+  try {
+    for (const id of requestIdsOf(path.join(ROOT, base10), basever)) {
+      const [r] = await api('GET', 'sk_requests', '?select=stage,status,progress&id=eq.' + id);
+      if (!r) { log('수정요청 #' + id, '없음 → 건너뜀'); continue; }
+      if (r.stage >= 4 || r.status === '보류') { log('수정요청 #' + id, r.status, '→ 그대로'); continue; }
+      if (dry) { log('[수정요청 단계 생략(--dry)] #' + id, '→ 반영'); continue; }
+      const at = new Date().toISOString();
+      const progress = (r.progress || []).concat([{ at, stage: 4, text: '[자동] ' + basever + ' Codex 교차검증 통과, 웹 엔진 ' + ver + ' 반영 완료' }]);
+      const done = await api('PATCH', 'sk_requests', '?id=eq.' + id, { stage: 4, status: '완료', progress, updated_at: at });
+      if (!done || !done.length) throw new Error('#' + id + ' 고칠 권한이 없습니다');
+      log('수정요청 #' + id, '반영으로 올림');
+    }
+    saveState({ reqMarked: basever });
+  } catch (e) { log('수정요청 단계 올리기 실패', e.message); }
+}
+
+// 동시 실행 잠금(hong #238): 두 실행이 겹치면 늦게 끝난 쪽이 처음에 읽은 옛 상태로 상태 파일을 덮고 잘못된 실패 글을 올린다(2026-11-02 #233).
+// 잠금 파일이 있고 그 pid 가 살아 있으며 3시간 안이면 건너뛴다. 아니면 남은 잠금으로 보고 지운 뒤 잡는다. 상태 파일은 잠금을 잡은 뒤에 읽는다.
+const LOCK = path.join(WEB, '웹엔진갱신.lock');
+let locked = false;
+function takeLock() {
+  for (let i = 0; i < 2; i++) {
+    try {
+      const fd = fs.openSync(LOCK, 'wx');
+      fs.writeSync(fd, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
+      fs.closeSync(fd);
+      return true;
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      let o = {};
+      try { o = JSON.parse(fs.readFileSync(LOCK, 'utf8')); } catch (_) {}
+      let alive = false;
+      try { process.kill(o.pid, 0); alive = true; } catch (er) { alive = er.code === 'EPERM'; }
+      if (alive && Date.now() - Date.parse(o.at) < 3 * 3600000) { log('다른 갱신이 실행 중(pid', o.pid + ',', o.at + ') → 건너뜀'); return false; }
+      log('남은 잠금 정리(pid', o.pid, o.at, ')');
+      try { fs.unlinkSync(LOCK); } catch (_) {}
+    }
+  }
+  return false;
+}
+
 (async () => {
+  locked = takeLock();
+  if (!locked) return;
   const st = (() => { try { return JSON.parse(fs.readFileSync(STATE, 'utf8')); } catch (_) { return {}; } })();
   const saveState = (v) => { if (!dry) fs.writeFileSync(STATE, JSON.stringify(Object.assign(st, v, { at: new Date().toISOString() }), null, 1)); };
   // ① 운영본
@@ -148,9 +212,11 @@ function updateDocs(oldLocal, ver, basever, base10, baseG, web10, moved) {
   // 현재 엔진이 안 보이면(중계 계정 권한 011 이 없을 때 등) 아무것도 하지 않는다. 웹에는 늘 현재 엔진이 하나 있다
   if (!cur) { log('웹 현재 엔진을 읽지 못함(권한 확인: supabase/011_relay_engines.sql) → 대기'); return; }
   const curVer = cur ? cur.ver : null, curBase = curVer ? +(/^v(\d+)/.exec(curVer) || [0, 0])[1] : 0;
-  if (curBase >= NNN && !force) { log('웹 엔진', curVer, '이 운영본', basever, '과 같거나 새 버전 → 할 일 없음'); return; }
+  // 번호 크기가 아니라 「운영본 번호와 같은가」로 본다(hong 11-08: v344 가 먼저 운영본이 되고 v344 위에 만든 v343 이 다음 운영본 → 번호가 더 작아도 갱신)
+  if (curBase === NNN && !force) { await markRequests(basever, curVer, base10, st, saveState); log('웹 엔진', curVer, '이 운영본', basever, '과 같은 버전 → 할 일 없음'); return; }
   if (st.failed === base10 && !force) { log('이 운영본으로 지난번에 실패함(', st.reason, ') → 건너뜀. 다시 하려면 --force'); return; }
-  const ver = basever + '-1';
+  const ver = verArg || basever + '-1';
+  if (verArg && !/^v\d+-\d+$/.test(verArg) || verArg && !verArg.startsWith(basever + '-')) throw new Error('--ver ' + verArg + ' 는 ' + basever + '-n 꼴이어야 합니다');
   log('웹 엔진 갱신 시작:', curVer || '(없음)', '→', ver, '(운영본', base10 + ')');
   const fail = async (step, why, extra) => {
     log('실패', step, why);
@@ -173,14 +239,15 @@ function updateDocs(oldLocal, ver, basever, base10, baseG, web10, moved) {
     } else log('이미 있는 웹판을 씀:', web10);
     // ⑤ extra 사본
     const synced = syncExtra();
-    // ⑥ 웹 quick
+    // ⑥ 웹 연결 검사(--web-only)
     const runDir = path.join('웹테스트', '자동검증', 'runs', YMD + '-' + ver);
-    const t = run(process.execPath, [path.join('웹테스트', '자동검증', 'runner.cjs'), '--project', '웹테스트', '--mode', 'quick', '--plan-year', '2027', '--file', path.join('웹테스트', web10), '--out', runDir], '웹 quick');
+    const t = run(process.execPath, [path.join('웹테스트', '자동검증', 'runner.cjs'), '--project', '웹테스트', '--mode', 'quick', '--web-only', '--plan-year', '2027', '--file', path.join('웹테스트', web10), '--out', runDir], '웹 연결 검사');
     const cnt = (k) => (t.out.match(new RegExp('^' + k + ' ', 'gm')) || []).length;
     const counts = { PASS: cnt('PASS'), FAIL: cnt('FAIL'), ERROR: cnt('ERROR'), UNVERIFIED: cnt('UNVERIFIED') };
+    const webTests = (t.out.match(/^PASS \S+ 웹 /gm) || []).length;
     fs.writeFileSync(path.join(dir, 'quick_출력.txt'), t.out);
     log('웹 quick', JSON.stringify(counts), 'code', t.code);
-    if (t.code !== 0 || counts.FAIL || counts.ERROR || !counts.PASS) return await fail('웹 자동검증', 'PASS ' + counts.PASS + ' / FAIL ' + counts.FAIL + ' / ERROR ' + counts.ERROR, runDir + '\\검증결과.html');
+    if (t.code !== 0 || counts.FAIL || counts.ERROR || !counts.PASS || !webTests) return await fail('웹 연결 검사', 'PASS ' + counts.PASS + ' / FAIL ' + counts.FAIL + ' / ERROR ' + counts.ERROR, runDir + '\\검증결과.html');
     // ⑦ 빈 엔진
     const html = await emptyEngine(path.join(WEB, web10));
     const ck = checkEmpty(html);
@@ -213,15 +280,17 @@ function updateDocs(oldLocal, ver, basever, base10, baseG, web10, moved) {
       '데이터 머리: 엔진만 교체(오프라인 ' + basever + ' 운영본 데이터 그대로). 웹판은 정규화 전까지 Codex 교차검증 대상 아님(웹테스트\\README.md).', '',
       '| 항목 | 값 |', '|---|---|',
       '| ' + web10 + ' | ' + h10 + ' |'].concat(webG ? ['| ' + webG + ' | ' + hG + ' |'] : [], [
-      '| 웹 quick | PASS ' + counts.PASS + ' / FAIL 0 / ERROR 0 / UNVERIFIED ' + counts.UNVERIFIED + ' — ' + runDir + ' |',
+      '| 웹 연결 검사(--web-only) | PASS ' + counts.PASS + ' (웹 연결 ' + webTests + '건)' + ' / FAIL 0 / ERROR 0 / UNVERIFIED ' + counts.UNVERIFIED + ' — ' + runDir + ' |',
       '| 웹 extra 사본 | ' + (synced ? '오프라인 extra 에 맞춤(이전 사본 extra_' + YMD + '_갱신전.cjs)' : '변경 없음') + ' |',
       '| 빈 엔진(웹 업로드) | ' + up.h + ' · ' + up.sp + ' |',
       '| 이전 웹 엔진(웹) | ' + (curVer || '없음') + ' |', '| 이전 웹판 파일(PC) | ' + (oldVer ? oldVer + (moved ? ' → 웹테스트\\보관\\' + oldVer + '\\' : ' (옮길 것 없음)') : '없음') + ' |', '',
       '결론: 웹 시험판 ' + ver + ' 를 웹 현재 엔진으로 올림. 사업계획 웹판은 만들지 않았다(필요하면 웹판에서 [📘 사업계획 시스템 다운로드]).']).join('\n') + '\n');
     try { updateDocs(oldVer, ver, basever, base10, baseG, web10, moved); } catch (e) { log('README·AGENTS 갱신 실패', e.message); }
     saveState({ failed: null, reason: null, done: base10, ver });
+    await markRequests(basever, ver, base10, st, saveState);
     fs.writeFileSync(path.join(dir, '웹엔진갱신.log'), lines.join('\n') + '\n');
-    await post('웹 엔진을 **' + ver + '** 로 바꿨습니다(운영본 ' + basever + ' + 웹 연결).\n\n- **웹 자동검증**: PASS ' + counts.PASS + ' / FAIL 0 / 미검증 ' + counts.UNVERIFIED + '\n- **이전 웹 엔진**: ' + (curVer || '없음') + (moved ? '\n- **이전 웹판 파일**: `웹테스트\\보관\\' + oldVer + '\\`' : '') + '\n- **기록**: `웹테스트\\검증자료\\' + ver + '\\`\n\n웹에서 Ctrl+F5 로 새로고침하면 새 엔진으로 열립니다. 스냅샷은 그대로 쓸 수 있습니다.');
+    await post('웹 엔진을 **' + ver + '** 로 바꿨습니다(운영본 ' + basever + ' + 웹 연결).\n\n- **웹 연결 검사**: PASS ' + counts.PASS + ' (웹 연결 ' + webTests + '건)' + ' / FAIL 0 / 미검증 ' + counts.UNVERIFIED + '\n- **이전 웹 엔진**: ' + (curVer || '없음') + (moved ? '\n- **이전 웹판 파일**: `웹테스트\\보관\\' + oldVer + '\\`' : '') + '\n- **기록**: `웹테스트\\검증자료\\' + ver + '\\`\n\n웹에서 Ctrl+F5 로 새로고침하면 새 엔진으로 열립니다. 스냅샷은 그대로 쓸 수 있습니다.');
     log('끝');
   } catch (e) { await fail('실행 중 오류', e.message); }
-})().catch((e) => { log('중단', e.message); process.exitCode = 1; });
+})().catch((e) => { log('중단', e.message); process.exitCode = 1; })
+  .finally(() => { if (locked) try { fs.unlinkSync(LOCK); } catch (_) {} });
