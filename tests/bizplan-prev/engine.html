@@ -1,0 +1,15 @@
+<!doctype html><html><head><meta charset="utf-8"><title>fake</title></head><body><div id="v">engine</div><script>
+// 사업계획 「당해」 연동 시험용 가짜 엔진: 화면 = 지금 메뉴와 S._bvPrev(전년 연간 비교자료) 값, refresh() 횟수를 센다
+window.SYS_CHANGELOG=[{date:'2026-11-13',title:'v377-1 시험'}];
+var S=null, CONFIRMED_DB={c:1}, PLAN_DB=null, __REFRESH=0;
+function draw(){document.getElementById('v').textContent='menu='+S.menu+' prev='+(S._bvPrev&&S._bvPrev.stores?S._bvPrev.stores.v:'-')+' val='+S.val;}
+function refresh(){__REFRESH++;draw();}
+function switchMenu(m){S.menu=m;draw();}
+function p88PackYear(y){return {kind:'pnl-annual-kpi',year:+y,stores:{v:S.val}};}
+window.__sonikWebBridge={info:function(){return {sysVer:'v377-1',baseYm:S?S.session.baseYm:''};},
+ buildDb:function(){var p={};Object.keys(S).forEach(function(k){if(['site','ym'].indexOf(k)<0)p[k]=JSON.parse(JSON.stringify(S[k]));});
+  return {format:'pnl-db/1',scope:'all',sysVer:'v377-1',mode:window.__BIZPLAN__?'bizplan':'sonik',baseYm:S.session.baseYm,months:JSON.parse(JSON.stringify(S.session.months)),payload:p,confirmed:JSON.parse(JSON.stringify(CONFIRMED_DB)),plan:null,savedAt:new Date().toISOString()};},
+ applyDb:function(db){S=JSON.parse(JSON.stringify(db.payload));if(!S.site)S.site='onsan';if(!S.menu)S.menu='overview';CONFIRMED_DB=JSON.parse(JSON.stringify(db.confirmed));draw();return {verify:null};}};
+window.T={val:function(v){S.val=v;draw();},S:function(){return S;},text:function(){return document.getElementById('v').textContent;},n:function(){return __REFRESH;},
+ scroll:function(){document.body.style.height='4000px';window.scrollTo(0,700);return window.scrollY;},y:function(){return window.scrollY;}};
+</script></body></html>

@@ -59,13 +59,26 @@
     return out;
   }
   // 사업계획에 손익추정 연간 비교자료 넣기(「전년 연간 비교자료 불러오기」와 같은 처리). 연도가 계획연도-1 이 아니면 넣지 않는다
-  function applyAnnual(win, o) {
+  function applyAnnual(win, o, noRedraw) {
     if (!isBiz(win) || !o || o.kind !== 'pnl-annual-kpi' || !o.stores) return false;
     if (+o.year !== +win.__BIZPLAN__.planYear - 1) return false;
-    const S = win.eval('S');
-    S._bvPrev = JSON.parse(JSON.stringify(o)); delete S._annual88;
-    try { if (typeof win.renderVarView === 'function' && S.menu === 'h_analysis') win.renderVarView(); } catch (_) { /* 화면은 다음 이동 때 */ }
+    const S = win.eval('S'), txt = JSON.stringify(o);
+    if (!S._annual88 && S._bvPrev && JSON.stringify(S._bvPrev) === txt) return true; // 이미 같은 자료(다시 그릴 것 없음)
+    S._bvPrev = JSON.parse(txt); delete S._annual88;
+    try { if (win.NaphthaVariance315 && typeof win.NaphthaVariance315.invalidate === 'function') win.NaphthaVariance315.invalidate(); } catch (_) { /* 납사 구매가 분석은 열 때 다시 계산 */ }
+    if (!noRedraw) redraw(win);
     return true;
+  }
+  // 지금 보고 있는 화면을 그 자리에서 다시 그린다(메뉴·하위메뉴·스크롤 그대로). 예전에는 차이분석 화면만 다시 그려서
+  // 요약 등 다른 화면은 메뉴를 옮겨야 새 「당해」 값이 보였다(hong 11-13 「26년 손익을 수정하면 곧바로 연동이 안 되고 시차」)
+  function redraw(win) {
+    try {
+      const S = win.eval('S'), d = win.document, se = d.scrollingElement || d.documentElement, x = se.scrollLeft, y = se.scrollTop;
+      try { if (win.__dbBustCalcCaches) win.__dbBustCalcCaches(); } catch (_) { /* 무시 */ }
+      if (typeof win.refresh === 'function') win.refresh(); // 엔진의 「지금 메뉴 다시 그리기」(12월 값 다시 이어받기도 이것을 쓴다)
+      else if (typeof win.renderVarView === 'function' && S.menu === 'h_analysis') win.renderVarView();
+      se.scrollLeft = x; se.scrollTop = y;
+    } catch (_) { /* 화면은 다음 이동 때 */ }
   }
   // 손익추정에 사업계획 DB 넣기. v312부터는 연도별 보관(같은 연도만 교체), 그 전 엔진은 계획DB가 비었거나 같은 연도일 때만 넣는다
   function applyPlan(win, db) {
@@ -127,7 +140,7 @@
     }));
     if (sd.decInput && win._bizDecHasTxn(sd.decInput)) { sd.decInput.src = srcLabel; out.dec = win._bizApplyDecInput(sd.decInput); }
     if (pk.prevYear && +pk.prevYear.year === py - 1) { win.__BIZPLAN__.prevYear = pk.prevYear; }
-    if (pk.annual) out.annual = applyAnnual(win, pk.annual);
+    if (pk.annual) out.annual = applyAnnual(win, pk.annual, true); // 다시 그리기는 아래 refresh 한 번
     try { if (win.__dbBustCalcCaches) win.__dbBustCalcCaches(); if (win.__perfV17Bust) win.__perfV17Bust(); } catch (_) { /* 무시 */ }
     ['refresh', 'saveToStorage', 'syncUndoBaseline'].forEach((fn) => { try { if (typeof win[fn] === 'function') win[fn](); } catch (_) { /* 무시 */ } });
     return out;
