@@ -89,6 +89,12 @@
     $('btnSave').hidden = $('btnSaveNew').hidden = !(inEngine && canWrite());
     $('btnReq').hidden = !inEngine;
     $('btnLink').hidden = !(inEngine && st.open && modeOf(st.open) === 'bizplan' && canWrite());
+    const bizOpen = !!(inEngine && st.open && modeOf(st.open) === 'bizplan' && !st.open.preview), pyB = bizOpen && st.mounted && st.mounted.win && st.mounted.win.__BIZPLAN__ ? +st.mounted.win.__BIZPLAN__.planYear : 0;
+    const pre = $('btnPrevRe'); pre.hidden = !bizOpen;
+    pre.textContent = '⟳ ' + (pyB ? '’' + String(pyB - 1).slice(2) + '년' : '전년') + ' 다시 받기';
+    pre.classList.toggle('warn', !!st.prevNewer); pre.classList.toggle('more', !st.prevNewer); // 다시 저장됐으면 눈에 띄게(좁은 화면에서도 ⋯ 밖)
+    pre.title = st.prevNewer ? '연동 손익추정이 ' + (st.prevNewer.name ? st.prevNewer.name + ' · ' : '') + (st.prevNewer.at ? fmtT(st.prevNewer.at) + ' ' : '') + '다시 저장됐습니다. 누르면 그 값으로 「당해」 비교자료를 바꿉니다(저장해야 남음)'
+      : '연동 손익추정의 최신 저장본에서 「당해」 비교자료(전년 실적·추정)를 다시 받아 지금 화면을 다시 그립니다(저장해야 남음). 1월 기초·12월 기준은 「🔗 연동 손익추정」에서';
     $('btnOffline').hidden = !inEngine;
     $('btnZoom').hidden = !inEngine;
     $('btnMerge').hidden = !(inEngine && st.newer && !(st.open && st.open.preview));
@@ -537,13 +543,50 @@
   // 열고 나서 상대편 웹 저장본의 자료를 넣는다: 손익추정 ← 최신 사업계획 DB, 사업계획 ← 연동 손익추정(고른 것, 없으면 최신)의 연간 비교자료
   const bizSrcs = (py) => st.snaps.filter((x) => modeOf(x) === 'sonik' && String(x.base_ym || '').slice(0, 4) === String(py - 1))
     .sort((a, b) => String(b.updated_at || b.created_at).localeCompare(String(a.updated_at || a.created_at)));
-  async function linkAfterOpen(s) {
+  // 연동할 손익추정 행은 목록에 기억해 둔 것 대신 서버에서 다시 읽는다. 목록을 띄운 뒤 다른 창·다른 사람이 그 손익추정을 다시 저장했으면
+  // 기억한 행은 이전 저장본 파일을 가리켜 예전 값이 들어갔다(hong 11-13 「26년 손익을 수정하면 곧바로 연동이 안 되고 시차」).
+  // 표의 행 몇 줄만 읽고(파일 아님) 실패하면 기억한 행을 그대로 쓴다
+  async function freshBizSrcs(py) {
+    try {
+      const yr = String(py - 1), { data, error } = await sb.from('sk_snapshots').select('*').eq('mode', 'sonik').like('base_ym', yr + '%');
+      if (!error && Array.isArray(data)) {
+        const ids = new Set(data.map((r) => r.id));
+        st.snaps = st.snaps.filter((x) => !(modeOf(x) === 'sonik' && String(x.base_ym || '').slice(0, 4) === yr) || ids.has(x.id));
+        data.forEach((r) => { const i = st.snaps.findIndex((x) => x.id === r.id); if (i >= 0) st.snaps[i] = r; else st.snaps.push(r); });
+      }
+    } catch (_) { /* 기억한 행 */ }
+    return bizSrcs(py);
+  }
+  // 열어 둔 사업계획: 연동 손익추정이 다시 저장되면 바로 알리고 「⟳ 다시 받기」 단추를 띄운다(자료는 누를 때 바꾼다 — 입력 중인 화면을 갑자기 다시 그리지 않음).
+  // 그 손익추정 저장본의 실시간 통로에서 「저장」 알림만 듣는다(함께 여는 사람 명단에는 안 들어감). 통로가 막혀도 1분 확인(pollRev)이 잡는다
+  const PREV = { ch: null, id: null };
+  function prevWatchStop() { const ch = PREV.ch; PREV.ch = null; PREV.id = null; if (ch) { try { sb.removeChannel(ch); } catch (_) { /* 무시 */ } } }
+  function prevWatchStart() {
+    const id = st.prevSrc && st.prevSrc.id;
+    if (!id || PREV.id === id) return;
+    prevWatchStop();
+    try {
+      const ch = sb.channel('sk-snap-' + id);
+      ch.on('broadcast', { event: 'saved' }, (m) => { if (PREV.ch === ch) onPrevNewer(id, (m && m.payload) || {}); });
+      ch.subscribe();
+      PREV.ch = ch; PREV.id = id;
+    } catch (_) { PREV.ch = null; PREV.id = null; }
+  }
+  function onPrevNewer(id, p) {
+    if (!st.prevSrc || st.prevSrc.id !== id || !st.open || modeOf(st.open) !== 'bizplan' || !(+p.rev > +st.prevSrc.rev)) return;
+    if (st.prevNewer && st.prevNewer.rev >= +p.rev) return;
+    const name = p.email && st.me && p.email === st.me.email ? '내 다른 창' : (p.name || '');
+    st.prevNewer = { rev: +p.rev, at: p.at || null, name };
+    renderBar();
+    toast('연동 손익추정 「' + (st.prevSrc.memo || '') + '」을 ' + (name ? name + (name === '내 다른 창' ? '에서 ' : '님이 ') : '') + (p.at ? fmtT(p.at) + '에 ' : '') + '다시 저장했습니다. 「' + $('btnPrevRe').textContent + '」를 누르면 「당해」 비교자료를 새 값으로 바꿉니다.', 9000);
+  }
+  async function linkAfterOpen(s, again) {
     const win = st.mounted && st.mounted.win; if (!win) return;
     const biz = modeOf(s) === 'bizplan';
     const py = biz ? +win.__BIZPLAN__.planYear : 0;
     let src = null, note = '';
     if (biz) {
-      const cand = bizSrcs(py);
+      const cand = await freshBizSrcs(py);
       src = st.link && st.snaps.find((x) => x.id === st.link.id && modeOf(x) === 'sonik');
       if (st.link && !src) note = ' (연동해 둔 손익추정 「' + (st.link.memo || '') + '」이 목록에 없어 최신 것을 썼습니다)';
       if (!src) src = cand[0];
@@ -556,10 +599,13 @@
     try {
       const db = await fetchSnapDb(src), when = fmtT(src.updated_at || src.created_at), name = '「' + (src.memo || src.base_ym) + '」(' + when + ')';
       if (biz) {
-        if (db.annual && B.applyAnnual(win, db.annual)) { toast('손익추정 ' + name + '의 ' + (py - 1) + '년 실적·추정을 「당해」 비교자료로 넣었습니다.' + note, 6000); log('link_annual', s.id, src.id); }
-        else toast('손익추정 ' + name + '에 연간 비교자료가 없어 넣지 않았습니다. 그 자료를 웹에서 한 번 저장하면 생깁니다.' + note, 7000);
+        if (db.annual && B.applyAnnual(win, db.annual)) {
+          st.prevNewer = null;
+          toast('손익추정 ' + name + '의 ' + (py - 1) + '년 실적·추정을 「당해」 비교자료로 ' + (again ? '다시 받았습니다.' : '넣었습니다.') + note, 6000); log(again ? 'link_annual_again' : 'link_annual', s.id, src.id);
+        } else toast('손익추정 ' + name + '에 연간 비교자료가 없어 넣지 않았습니다. 그 자료를 웹에서 한 번 저장하면 생깁니다.' + note, 7000);
+        st.prevSrc = { id: src.id, memo: src.memo || src.base_ym, rev: +src.rev || 1 }; prevWatchStart(); renderBar(); // 지금 「당해」로 쓴 손익추정(그 판 번호)을 지켜본다
         // 연동 손익추정이 마지막으로 이어받은 뒤 다시 저장됐으면 알린다(1월 기초·12월 기준은 자동으로 바꾸지 않는다)
-        if (st.link && st.link.id === src.id && st.link.synced && String(src.updated_at || '') > String(st.link.synced)) {
+        if (!again && st.link && st.link.id === src.id && st.link.synced && String(src.updated_at || '') > String(st.link.synced)) {
           setTimeout(() => toast('연동 손익추정 ' + name + '이 이 사업계획이 12월 값을 이어받은 뒤에 다시 저장됐습니다. 「🔗 연동 손익추정」에서 12월 값을 다시 이어받을 수 있습니다.', 9000), 6200);
         }
       } else if (db.planDb) {
@@ -573,7 +619,8 @@
   // 🔗 연동 손익추정: 사업계획이 이어받을 손익추정을 고르고(저장하면 기억), 원하면 그 12월 값으로 다시 이어받는다
   async function linkDialog() {
     const win = st.mounted && st.mounted.win; if (!win || !B.isBiz(win)) return;
-    const py = +win.__BIZPLAN__.planYear, cand = bizSrcs(py);
+    const py = +win.__BIZPLAN__.planYear;
+    busy('손익추정 목록 확인 중…'); const cand = await freshBizSrcs(py); busy(null);
     if (!cand.length) { toast((py - 1) + '년 기준 손익추정 자료가 웹에 없습니다.', 6000); return; }
     const cur = st.link && st.link.id;
     const ok = await ask('🔗 연동 손익추정', '<p class="hint">이 ' + py + '년 사업계획이 이어받을 ' + (py - 1) + '년 손익추정을 고릅니다. 저장하면 기억해서, 다음에 열 때도 이 손익추정의 연간 실적·추정을 「당해」 비교자료로 넣습니다.</p>'
@@ -590,6 +637,7 @@
         const db = await fetchSnapDb(src);
         st.link = { id: src.id, memo: src.memo || src.base_ym, synced: st.link && st.link.id === src.id ? st.link.synced : null };
         const a = db.annual && B.applyAnnual(win, db.annual);
+        if (a) { st.prevSrc = { id: src.id, memo: src.memo || src.base_ym, rev: +src.rev || 1 }; st.prevNewer = null; prevWatchStart(); }
         toast('연동 손익추정을 ' + name + '으로 바꿨습니다' + (a ? '(「당해」 비교자료도 이 자료로 바꿈)' : '') + '. 저장하면 기억합니다.', 7000);
         log('link_set', st.open.id, src.id);
       } catch (e) { toast('연동 자료를 받지 못했습니다: ' + e.message, 8000); }
@@ -611,6 +659,7 @@
     try {
       const r = B.applySeedPack(win, pk, '웹 손익추정 ' + name);
       st.link = { id: src.id, memo: src.memo || src.base_ym, synced: src.updated_at || src.created_at };
+      if (r.annual) { st.prevSrc = { id: src.id, memo: src.memo || src.base_ym, rev: +src.rev || 1 }; st.prevNewer = null; prevWatchStart(); }
       toast(name + '의 ' + (py - 1) + '년 12월 값으로 다시 이어받았습니다: 1월 기초 ' + r.inv + '개 항목'
         + (r.dec ? ' · 12월 추정 입력 ' + r.dec + '건(손익시뮬레이션 기준)' : ' · 12월 판매·구매가 비어 있어 손익시뮬레이션 기준은 그대로')
         + (r.annual ? ' · 「당해」 비교자료' : '') + '. 저장하면 남습니다.', 10000);
@@ -619,6 +668,12 @@
     busy(null); renderBar();
   }
   $('btnLink').onclick = linkDialog;
+  // ⟳ 전년 다시 받기: 사업계획을 닫지 않고 연동 손익추정의 최신 저장본에서 「당해」 비교자료를 다시 받는다(저장해야 남음).
+  // 보기 전용이어도 화면 확인용으로 쓸 수 있다
+  $('btnPrevRe').onclick = async () => {
+    const win = st.mounted && st.mounted.win; if (!win || !B.isBiz(win) || !st.open) return;
+    await linkAfterOpen(st.open, true);
+  };
   // 새 사업계획: 고른 손익추정 자료를 화면 밖에서 열어 「📘 사업계획 시스템 다운로드」와 같은 결과를 받아 바로 연다
   async function newBizplan() {
     const srcs = st.snaps.filter((x) => modeOf(x) === 'sonik');
@@ -641,6 +696,7 @@
     if (!html) { busy(null); return; }
     try {
       st.link = { id: s.id, memo: s.memo || s.base_ym, synced: s.updated_at || s.created_at };
+      st.prevSrc = { id: s.id, memo: s.memo || s.base_ym, rev: +s.rev || 1 }; st.prevNewer = null;
       show('vEngine'); st.open = { id: null, srcId: s.id, mode: 'bizplan', memo: '새 사업계획', base_ym: '', source: 'new', rev: 0 }; renderBar(); fitEngine();
       busy('사업계획 여는 중… (10~30초)');
       st.mounted = await E.mount($('engineBox'), html, onEngineMsg);
@@ -648,7 +704,7 @@
       if (window.SonikChannel && window.SonikChannel.setContext) window.SonikChannel.setContext(chatContext);
       const info = st.mounted.bridge.info();
       st.open.base_ym = info.baseYm || ''; st.open.memo = '새 사업계획 ' + String(info.baseYm || '').slice(0, 4); renderBar();
-      trimHeader(st.mounted.win); hookPrint(st.mounted.win); navStart();
+      trimHeader(st.mounted.win); hookPrint(st.mounted.win); navStart(); prevWatchStart(); renderBar();
       log('bizplan_new', null, 'from=' + s.id);
     } catch (e) { toast(e.message, 8000); await loadList(); }
     busy(null);
@@ -792,7 +848,7 @@
     if (full) { c.screen = sc.text; c.cut = sc.cut; c.dirty = !!st.dirty; }
     return c;
   }
-  function unmount() { presStop(); st.base = null; st.newer = null; st.peers = []; if (window.SonikChannel && window.SonikChannel.setContext) window.SonikChannel.setContext(null); navStop(); try { rqClose(true); } catch (e) { console.warn('수정요청 패널 정리 실패', e); } if (st.mounted) { st.mounted.dispose(); st.mounted = null; } $('engineBox').innerHTML = ''; st.open = null; }
+  function unmount() { presStop(); prevWatchStop(); st.prevSrc = null; st.prevNewer = null; st.base = null; st.newer = null; st.peers = []; if (window.SonikChannel && window.SonikChannel.setContext) window.SonikChannel.setContext(null); navStop(); try { rqClose(true); } catch (e) { console.warn('수정요청 패널 정리 실패', e); } if (st.mounted) { st.mounted.dispose(); st.mounted = null; } $('engineBox').innerHTML = ''; st.open = null; }
   // 추정자료 삭제(관리자만): 저장 파일·이전 저장(백업)까지 지운다. 되돌릴 수 없다
   // 추정자료명 바꾸기(hong 11/03): 관리자는 모든 자료, 작성자는 내가 웹에 만든 자료만(DB 함수 sk_rename_snapshot 이 다시 확인)
   const canRename = (s) => !!st.me && (st.me.role === 'admin' || (st.me.role === 'writer' && s.source === 'web' && s.author_email === st.me.email));
@@ -1167,8 +1223,13 @@
   async function pollRev(id) {
     if (document.hidden || !st.open || st.open.id !== id) return;
     try {
-      const { data } = await sb.from('sk_snapshots').select('*').eq('id', id).maybeSingle();
-      if (data && st.open && st.open.id === id && data.rev > st.open.rev) onNewer({ rev: data.rev, at: data.updated_at, email: data.last_saved_by || '', name: data.last_saved_name || data.last_saved_by || '' });
+      const pv = st.prevSrc && st.prevSrc.id !== id ? st.prevSrc.id : null; // 사업계획이면 연동 손익추정 판 번호도 같은 요청으로 본다
+      const { data: rows } = await (pv ? sb.from('sk_snapshots').select('*').in('id', [id, pv]) : sb.from('sk_snapshots').select('*').eq('id', id));
+      const who = (r) => ({ rev: r.rev, at: r.updated_at, email: r.last_saved_by || '', name: r.last_saved_name || r.last_saved_by || '' });
+      (rows || []).forEach((data) => {
+        if (data.id === id && st.open && st.open.id === id && data.rev > st.open.rev) onNewer(who(data));
+        else if (pv && data.id === pv) onPrevNewer(pv, who(data));
+      });
     } catch (_) { /* 다음 번에 */ }
   }
   function onNewer(p) {
