@@ -180,6 +180,7 @@
         + '<td><button data-open="' + s.id + '"' + (eng ? '' : ' disabled') + '>열기</button>'
         + ' <button data-dl="' + s.id + '" title="DB 내보내기 ▸ 전체와 같은 .json (PC에서 DB 불러오기)">JSON</button>'
         + ' <button data-html="' + s.id + '"' + (eng ? '' : ' disabled') + ' title="웹 엔진 + 이 추정자료를 합친 HTML 한 파일. PC에서 바로 열립니다">오프라인 파일</button>'
+        + (s.rev > 1 ? ' <button data-bk="' + s.id + '" title="덮어쓰기 전 판(최근 3개)을 엽니다. 열어서 저장하면 새 자료로 남습니다">이전 저장</button>' : '') // 11-03 뺐다가 11-17 되살림(잘못 저장한 판 되돌리기)
         + (st.me.role === 'admin' ? ' <button data-del="' + s.id + '" class="danger">삭제</button>' : '') + '</td></tr>';
     }).join('') : '<tr><td colspan="6" class="hint">' + (biz ? '아직 웹 사업계획이 없습니다. 「📘 새 사업계획」으로 손익추정 자료에서 만듭니다.' : '아직 추정자료가 없습니다.') + '</td></tr>';
     $('snapRows').querySelectorAll('[data-open]').forEach((b) => { b.onclick = () => openSnap(b.getAttribute('data-open')); });
@@ -440,7 +441,7 @@
     let undo = null;
     try { if (typeof win.__skWebUnTrim === 'function') undo = win.__skWebUnTrim(); } catch (_) { undo = null; }
     let html;
-    try { html = win.__buildEngineHtml({ embedData: true, emptyEngine: false, stripAdminBar: false }); }
+    try { html = E.inMain(win, () => win.__buildEngineHtml({ embedData: true, emptyEngine: false, stripAdminBar: false })); }
     finally { if (undo) try { undo(); } catch (_) { /* 무시 */ } }
     if (!/id=["']__SAVED_DATA__["']/.test(html)) throw new Error('데이터를 넣지 못했습니다');
     if (B.isBiz(win)) html = B.offlineFlag(win, html); // 사업계획 모드 표시를 다시 넣어야 PC에서도 사업계획으로 열린다
@@ -985,12 +986,18 @@
     try {
       // 연동 자료도 함께 싣는다(손익추정: 올해 연간 비교자료 / 사업계획: 사업계획 DB) — 상대편이 열 때 자동으로 넣는다
       const buildFull = async () => {
-        if (MG) { const S = engS(st.mounted.win); if (S) MG.stamp(S, false); } // 새로 넣은 행에 숨은 번호
+        if (MG) E.inMain(st.mounted.win, () => { const S = engS(st.mounted.win); if (S) MG.stamp(S, false); }); // 새로 넣은 행에 숨은 번호(중장기 화면이면 차년도 자료에)
         const d = Object.assign(st.mounted.bridge.buildDb(), await B.extras(st.mounted.win));
         if (B.isBiz(st.mounted.win)) d.linkSonik = st.link || null; // 이 사업계획이 이어받는 손익추정(다시 열 때 그것을 쓴다)
         return d;
       };
       let db = await buildFull();
+      // 두 번째 안전장치(2026-11-17): 사업계획의 기준월은 바뀌지 않는다. 다르면 다른 기간 자료(예: 중장기 2028-12)가 들어온 것이므로 덮어쓰지 않는다
+      if (memo === null && B.isBiz(st.mounted.win) && st.open.base_ym && db.baseYm && db.baseYm !== st.open.base_ym) {
+        toast('저장하지 않았습니다: 저장할 자료의 기준월(' + db.baseYm + ')이 이 사업계획(' + st.open.base_ym + ')과 다릅니다. 차년도계획 화면으로 돌아와 다시 저장하세요.', 12000);
+        log('save_block', st.open.id, 'baseYm ' + db.baseYm + ' ≠ ' + st.open.base_ym);
+        return;
+      }
       if (memo === null) {
         // 그사이 다른 창·다른 사람이 저장했으면(CONFLICT) 최신 판에 내가 바꾼 칸만 얹어 다시 저장한다(hong 11/04, 최대 3번)
         let merged = null;
@@ -1134,8 +1141,9 @@
     }
     busy('합친 값으로 다시 계산하는 중…');
     try {
-      const win = st.mounted.win, S = engS(win) || {};
-      const view = {}; MERGE_VIEW.forEach((k) => { if (S[k] !== undefined) view[k] = JSON.parse(JSON.stringify(S[k])); else if (mineDb.payload[k] !== undefined) view[k] = mineDb.payload[k]; });
+      const win = st.mounted.win;
+      // 화면 위치는 차년도(본체) 자료의 것으로(중장기 화면이면 그 기간 ym 2028-12 등이 본체에 들어가면 안 된다). 합친 뒤엔 차년도 화면으로 돌아온다
+      const view = E.inMain(win, () => { const S = engS(win) || {}, v = {}; MERGE_VIEW.forEach((k) => { if (S[k] !== undefined) v[k] = JSON.parse(JSON.stringify(S[k])); else if (mineDb.payload[k] !== undefined) v[k] = mineDb.payload[k]; }); return v; });
       const mdb = Object.assign({}, mineDb, { payload: Object.assign({}, res.result.payload, view), confirmed: res.result.confirmed, plan: res.result.plan });
       delete mdb.verify; // 합친 자료는 저장된 손익 숫자가 없으므로 재현 확인 창을 띄우지 않는다(새로 계산)
       st.mounted.bridge.applyDb(mdb);

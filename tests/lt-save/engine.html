@@ -1,0 +1,34 @@
+<!doctype html><html><head><meta charset="utf-8"><title>fake</title></head><body><div id="v">engine</div><script>
+// 중장기 저장 시험용 가짜 엔진: 실제 엔진처럼 중장기 화면에 들어가면 S·CONFIRMED_DB 를 중장기(5개년) 자료로 바꿔 끼운다(ltEnter/ltExit/ltSuspend).
+// 웹 연결 통로(buildDb)도 실제와 같이 Object.keys(S) 로 자료를 꺼낸다(= 중장기 화면에서는 중장기 자료가 나온다)
+window.SYS_CHANGELOG=[{date:'2026-11-17',title:'v395-1 시험'}];
+var S={}, CONFIRMED_DB={c:'main'}, PLAN_DB=null, __LT={};
+function draw(){document.getElementById('v').textContent='zone='+(window.__LT_ON?'lt':'est')+' base='+S.session.baseYm+' val='+S.val;}
+function refresh(){draw();}
+function switchMenu(m){S.menu=m;draw();}
+function p88PackYear(y){return {kind:'pnl-annual-kpi',year:+y,stores:{v:S.val}};}
+function ltEnter(){ if(window.__LT_ON) return true;
+  if(!S.ltPlan||!S.ltPlan.S) S.ltPlan={years:[2028,2029,2030,2031,2032],S:{session:{baseYm:'2028-12',baseYear:2028,months:['2028-12','2029-12','2030-12','2031-12','2032-12']},menu:'overview',ym:'2028-12',val:999},C:{c:'lt'}};
+  var lp=S.ltPlan, main={}; Object.keys(S).forEach(function(k){main[k]=S[k];delete S[k];});
+  var mainC={}; Object.keys(CONFIRMED_DB).forEach(function(k){mainC[k]=CONFIRMED_DB[k];delete CONFIRMED_DB[k];});
+  __LT.main=main;__LT.mainC=mainC;__LT.plan=lp;
+  Object.keys(lp.S).forEach(function(k){S[k]=lp.S[k];}); Object.keys(lp.C).forEach(function(k){CONFIRMED_DB[k]=lp.C[k];});
+  S._zone='lt'; window.__LT_ON=true; return true; }
+function ltExit(){ if(!window.__LT_ON) return;
+  var cur={}; Object.keys(S).forEach(function(k){cur[k]=S[k];delete S[k];});
+  var curC={}; Object.keys(CONFIRMED_DB).forEach(function(k){curC[k]=CONFIRMED_DB[k];delete CONFIRMED_DB[k];});
+  Object.keys(__LT.main).forEach(function(k){S[k]=__LT.main[k];}); Object.keys(__LT.mainC).forEach(function(k){CONFIRMED_DB[k]=__LT.mainC[k];});
+  var lp=__LT.plan; lp.S=cur; lp.C=curC; S.ltPlan=lp; __LT={}; window.__LT_ON=false; }
+function ltSuspend(fn){ if(!window.__LT_ON) return fn(); ltExit(); try{ return fn(); } finally { ltEnter(); } }
+var EDIT=null; // 고치던 칸(저장 직전에 commitActiveEditBeforeSave 가 지금 S 에 넣는다)
+function commitActiveEditBeforeSave(){ if(EDIT!==null){ S.val=EDIT; EDIT=null; } }
+function switchZone(z){ if(z==='lt') ltEnter(); else ltExit(); draw(); }
+function exportPlanDb(){ var b=new Blob([JSON.stringify({format:'plan-db/1',baseYm:S.session.baseYm,val:S.val})],{type:'application/json'}); var a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download='plan.json'; a.click(); }
+window.__sonikWebBridge={info:function(){return {sysVer:'v395-1',baseYm:S&&S.session?S.session.baseYm:''};},
+ buildDb:function(){ commitActiveEditBeforeSave(); var p={};Object.keys(S).forEach(function(k){if(['site','ym'].indexOf(k)<0)p[k]=JSON.parse(JSON.stringify(S[k]));});
+  return {format:'pnl-db/1',scope:'all',sysVer:'v395-1',mode:window.__BIZPLAN__?'bizplan':'sonik',baseYm:(window.__BAD?'2028-12':S.session.baseYm),months:JSON.parse(JSON.stringify(S.session.months)),payload:p,confirmed:JSON.parse(JSON.stringify(CONFIRMED_DB)),plan:null,savedAt:new Date().toISOString()};},
+ applyDb:function(db){ Object.keys(S).forEach(function(k){delete S[k];}); Object.assign(S,JSON.parse(JSON.stringify(db.payload))); if(!S.menu)S.menu='overview';
+  Object.keys(CONFIRMED_DB).forEach(function(k){delete CONFIRMED_DB[k];}); Object.assign(CONFIRMED_DB,JSON.parse(JSON.stringify(db.confirmed))); draw(); return {verify:null};}};
+window.T={S:function(){return S;},C:function(){return CONFIRMED_DB;},lt:function(){return !!window.__LT_ON;},edit:function(v){EDIT=v;},val:function(v){S.val=v;draw();},
+ bad:function(on){window.__BAD=!!on;}};
+</script></body></html>
