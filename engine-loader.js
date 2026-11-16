@@ -30,6 +30,32 @@
     return html.slice(0, j) + FLAG + html.slice(j);
   }
 
+  // 사업계획 중장기계획: 엔진은 중장기 화면에 있는 동안 S·CONFIRMED_DB 를 중장기(5개년) 자료로 바꿔 끼운다(ltEnter, 차년도 자료는 따로 보관).
+  // 웹 저장·변경 확인·합치기는 늘 차년도(본체) 자료로 해야 한다 — 2026-11-17 hong 「이거 왜이래?」: 중장기 화면에서 저장한 판이
+  // 차년도 자리에 2028~2032 자료로 저장됨(기준월 2028-12, 손익 재현 차이 1154건). PC 「저장」은 엔진이 이미 이렇게 한다(buildSaveHtml ← ltSuspend).
+  // inMain: 동기 작업 fn 을 차년도 자료로 잠깐 돌아가 실행하고 중장기 화면으로 그대로 돌아온다(화면은 다시 그리지 않음).
+  function inMain(win, fn) {
+    if (!win || !win.__LT_ON || typeof win.ltSuspend !== 'function') return fn();
+    try { if (typeof win.commitActiveEditBeforeSave === 'function') win.commitActiveEditBeforeSave(); } catch (_) { /* 무시 */ } // 고치던 칸은 중장기 자료에 먼저 넣는다
+    return win.ltSuspend(fn);
+  }
+  // leaveLt: 자료를 통째로 바꿔 넣기 전(applyDb)에 중장기 화면을 닫고 차년도로 돌아온다(엔진의 「DB 불러오기」와 같은 처리)
+  function leaveLt(win) {
+    if (!win || !win.__LT_ON) return;
+    if (win.__LT_TAB && typeof win._ltTabOff === 'function') win._ltTabOff();
+    else { try { if (typeof win.switchZone === 'function') win.switchZone('est'); } catch (_) { /* 아래 */ } }
+    if (win.__LT_ON && typeof win.ltExit === 'function') win.ltExit();
+  }
+  function guardBridge(win, b) {
+    if (!b || b.__ltGuard) return b;
+    const bd = b.buildDb, ad = b.applyDb;
+    return Object.assign(Object.create(b), {
+      __ltGuard: true,
+      buildDb: function () { const a = arguments; return inMain(win, () => bd.apply(b, a)); },
+      applyDb: function () { leaveLt(win); return ad.apply(b, arguments); },
+    });
+  }
+
   // iframe을 만들고 엔진이 준비될 때까지 기다린다. 반환: {frame, win, bridge}
   async function mount(container, html, onMessage, timeoutMs) {
     container.innerHTML = '';
@@ -49,7 +75,7 @@
     }
     await new Promise((r) => setTimeout(r, 800)); // 부팅 직후 refresh 마무리
     URL.revokeObjectURL(url);
-    return { frame, win: frame.contentWindow, bridge: frame.contentWindow.__sonikWebBridge, dispose: () => window.removeEventListener('message', handler) };
+    return { frame, win: frame.contentWindow, bridge: guardBridge(frame.contentWindow, frame.contentWindow.__sonikWebBridge), dispose: () => window.removeEventListener('message', handler) };
   }
 
   async function gzip(text) {
@@ -123,5 +149,5 @@
     },
   };
 
-  window.SonikEngine = { checkEmptyEngine, inject, mount, gzip, gunzipToText, sha256, checkSnapshot, LocalCache };
+  window.SonikEngine = { checkEmptyEngine, inject, mount, inMain, leaveLt, gzip, gunzipToText, sha256, checkSnapshot, LocalCache };
 })();

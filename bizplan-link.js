@@ -52,7 +52,7 @@
     if (isBiz(win)) {
       out.bizplanYear = +win.__BIZPLAN__.planYear;
       out.bizPrev = win.__BIZPLAN__.prevYear || null;
-      try { const r = await capture(win, () => win.exportPlanDb()); out.planDb = r ? JSON.parse(r.text) : null; } catch (_) { out.planDb = null; }
+      try { const r = await capture(win, () => window.SonikEngine.inMain(win, () => win.exportPlanDb())); out.planDb = r ? JSON.parse(r.text) : null; } catch (_) { out.planDb = null; }
     } else {
       try { const S = win.eval('S'); out.annual = win.p88PackYear(+S.session.baseYear); } catch (_) { out.annual = null; }
     }
