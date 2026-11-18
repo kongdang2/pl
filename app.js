@@ -400,15 +400,18 @@
     const data = await fetchStored(snap.storage_path, 'snap', 'snapshot ' + snap.id);
     return JSON.parse(await E.gunzipToText(data));
   }
+  // 받는 파일 이름에 추정자료명(사업계획명)을 넣는다(hong 11-18). 파일 이름에 못 쓰는 글자는 빼고 공백은 _, 너무 길면 40자까지.
+  function memoPart(s) {
+    const m = String((s && s.memo) || '').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '').replace(/\s+/g, '_').replace(/^[._]+|[._]+$/g, '').slice(0, 40);
+    return m ? '_' + m : '';
+  }
   async function downloadSnap(id) {
     const s = st.snaps.find((x) => x.id === id); if (!s) return;
     busy('추정자료 받는 중…');
     try {
       const db = await fetchSnapDb(s);
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([JSON.stringify(db)], { type: 'application/json' }));
-      a.download = (modeOf(s) === 'bizplan' ? '사업계획DB_전체_' : '손익추정DB_전체_') + s.base_ym + '_' + (s.source === 'pc' ? 'PC' : '웹') + '_' + (s.updated_at || s.created_at).slice(0, 16).replace(/[-:T]/g, '') + '.json';
-      a.click(); URL.revokeObjectURL(a.href);
+      saveBlob(new Blob([JSON.stringify(db)], { type: 'application/json' }),
+        (modeOf(s) === 'bizplan' ? '사업계획DB_전체_' : '손익추정DB_전체_') + s.base_ym + memoPart(s) + '_' + (s.source === 'pc' ? 'PC' : '웹') + '_' + (s.updated_at || s.created_at).slice(0, 16).replace(/[-:T]/g, '') + '.json');
       log('download', s.id);
     } catch (e) { toast(e.message, 6000); }
     busy(null);
@@ -447,7 +450,7 @@
     if (B.isBiz(win)) html = B.offlineFlag(win, html); // 사업계획 모드 표시를 다시 넣어야 PC에서도 사업계획으로 열린다
     return html;
   }
-  const offlineName = (s, ver) => (modeOf(s) === 'bizplan' ? '사업계획시스템_웹받음_' : '손익추정_웹받음_') + (ver || 'v') + '_' + (s.base_ym || '') + '_' + stamp() + '.html';
+  const offlineName = (s, ver) => (modeOf(s) === 'bizplan' ? '사업계획시스템_웹받음_' : '손익추정_웹받음_') + (ver || 'v') + '_' + (s.base_ym || '') + memoPart(s) + '_' + stamp() + '.html';
   async function downloadOffline() {
     if (!st.mounted || !st.open) return;
     busy('오프라인 파일 만드는 중…');
