@@ -25,7 +25,7 @@ button:disabled{opacity:.5;cursor:default}
 .grid th{color:var(--mut);font-weight:600}
 .grid td.memo{white-space:normal;min-width:160px}
 .grid td.descr{font-size:12.5px;max-width:520px}.grid td.memo[title]{cursor:help}
-.grid td.psum{white-space:normal;font-size:12.5px;color:var(--mut);max-width:480px;min-width:260px}.grid td.psum .ps{display:inline-block;white-space:nowrap;margin-right:10px}.grid td.psum b{color:var(--ink);font-weight:600}.grid td.psum b.neg{color:#C0392B}
+.grid td.psum{white-space:normal;font-size:12.5px;color:var(--mut);max-width:480px;min-width:260px}.grid td.psum .ps{display:inline-block;white-space:nowrap;margin-right:10px}.grid td.psum b{color:var(--ink);font-weight:600}.grid td.psum b.neg{color:#C0392B}.grid td.psum .ps.pl{display:block;margin-right:0}.grid td.psum .ps.pl i{font-style:normal;color:var(--ink);display:inline-block;min-width:5.8em}
 .tag{font-size:11.5px;padding:1px 7px;border-radius:9px;border:1px solid var(--line)}
 .tag.pc{color:var(--pri2)}.tag.web{color:var(--ok)}.tag.old{color:var(--warn);border-color:var(--warn)}
 .engine-line{font-size:12.5px;color:var(--mut)}

@@ -169,7 +169,7 @@
     $('btnNewBiz').disabled = !eng;
     $('listHint').hidden = biz; $('bizHint').hidden = !biz;
     $('snapHead').textContent = biz ? '사업계획명' : '추정자료명';
-    $('sumHead').hidden = !biz;
+    $('sumHead').hidden = false; // 개요: 사업계획(계획 12개월) · 손익추정(추정월별 + 누계, hong 11/20)
     $('engineLine').innerHTML = eng
       ? '웹 엔진: <b>' + esc(eng.ver) + '</b> · ' + esc(fmtT(eng.uploaded_at)) + ' 올림'
       : '<span class="tag old">웹 엔진이 아직 없습니다</span> 관리자가 빈 엔진을 올려야 열 수 있습니다.';
@@ -180,13 +180,13 @@
       const dsc = canRename(s) ? ' <button class="ren" data-dsc="' + s.id + '" title="설명 고치기">✏️</button>' : '';
       return '<tr><td>' + esc(s.base_ym) + '</td><td class="memo" title="' + esc(meta) + '"><b>' + esc(s.memo || '(이름 없음)') + '</b>' + ren + '</td>'
         + '<td class="memo descr" data-l="설명">' + (s.descr ? esc(s.descr) : '<span class="hint">—</span>') + dsc + '</td>'
-        + (biz ? '<td class="psum" data-l="개요">' + sumHtml(s.summary) + '</td>' : '')
+        + '<td class="psum" data-l="개요">' + sumHtml(s.summary) + '</td>'
         + '<td><button data-open="' + s.id + '"' + (eng ? '' : ' disabled') + '>열기</button>'
         + ' <button data-dl="' + s.id + '" title="DB 내보내기 ▸ 전체와 같은 .json (PC에서 DB 불러오기)">JSON</button>'
         + ' <button data-html="' + s.id + '"' + (eng ? '' : ' disabled') + ' title="웹 엔진 + 이 추정자료를 합친 HTML 한 파일. PC에서 바로 열립니다">오프라인 파일</button>'
         + (s.rev > 1 ? ' <button data-bk="' + s.id + '" title="덮어쓰기 전 판(최근 3개)을 엽니다. 열어서 저장하면 새 자료로 남습니다">이전 저장</button>' : '') // 11-03 뺐다가 11-17 되살림(잘못 저장한 판 되돌리기)
         + (st.me.role === 'admin' ? ' <button data-del="' + s.id + '" class="danger">삭제</button>' : '') + '</td></tr>';
-    }).join('') : '<tr><td colspan="' + (biz ? 5 : 4) + '" class="hint">' + (biz ? '아직 웹 사업계획이 없습니다. 「📘 새 사업계획」으로 손익추정 자료에서 만듭니다.' : '아직 추정자료가 없습니다.') + '</td></tr>';
+    }).join('') : '<tr><td colspan="5" class="hint">' + (biz ? '아직 웹 사업계획이 없습니다. 「📘 새 사업계획」으로 손익추정 자료에서 만듭니다.' : '아직 추정자료가 없습니다.') + '</td></tr>';
     $('snapRows').querySelectorAll('[data-open]').forEach((b) => { b.onclick = () => openSnap(b.getAttribute('data-open')); });
     $('snapRows').querySelectorAll('[data-dl]').forEach((b) => { b.onclick = () => downloadSnap(b.getAttribute('data-dl')); });
     $('snapRows').querySelectorAll('[data-html]').forEach((b) => { b.onclick = () => offlineFromList(b.getAttribute('data-html')); });
@@ -878,9 +878,18 @@
   }
   // 자료별 핵심 숫자(hong 11/20 「버전 개요 정도만 대기실에서도」 → 카드 「자료별 핵심 숫자」): 사업계획을 저장한 직후 엔진에서
   // 계획 12개월 재무·관리 영업이익 합(억원), NCC 상업수율, 나프타 MOPJ 첫 달→끝 달, 평균 환율을 계산해 sk_snapshots.summary 에 둔다(1초 안팎).
-  // 손익추정 자료는 아직 하지 않는다. 계산·기록이 실패해도 저장에는 영향 없음
+  // 손익추정 자료(hong 11/20 「추정구간 월별로 평균MOPJ, 재무, 관리 … (누계)」): 추정월마다 MOPJ·재무·관리 영업이익(억원), 그리고 누계 =
+  // 첫 추정월 연도 1월 ~ 추정 끝(그해 12월까지, 엔진 보고서 2p 누계와 같은 범위)의 재무·관리 합과 월 MOPJ 단순평균. 값은 보고서와 같은 reportMonthMetric(확정월은 확정DB).
+  // 계산·기록이 실패해도 저장에는 영향 없음
   const sgn = (v) => (v > 0 ? '+' : v < 0 ? 'Δ' : '') + Math.abs(v).toLocaleString('ko-KR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const n1 = (v) => (v == null ? '—' : Number(v).toLocaleString('ko-KR', { maximumFractionDigits: 1 }));
+  const fm = (m) => '재무 <b class="' + (m.fin < 0 ? 'neg' : '') + '">' + sgn(m.fin) + '</b> / 관리 <b class="' + (m.mg < 0 ? 'neg' : '') + '">' + sgn(m.mg) + '</b>';
   function sumHtml(m) {
+    if (m && m.kind === 'est' && Array.isArray(m.m)) {
+      const c = m.cum, cl = c ? (c.ym1 && c.ym1.slice(5, 7) === '12' ? '연간' : '누계(1~' + (+String(c.ym1 || '').slice(5, 7)) + '월)') : '';
+      return m.m.map((x) => '<span class="ps pl"><i>' + (+String(x.ym).slice(5, 7)) + '월</i> 납사 ' + n1(x.nap) + ' · ' + fm(x) + '</span>').join('')
+        + (c ? '<span class="ps pl"><i>' + cl + '</i> 납사 ' + n1(c.nap) + ' · ' + fm(c) + '</span>' : '');
+    }
     if (!m || m.fin == null) return '<span class="hint">—</span>';
     const nap = m.nap0 != null ? (m.nap0 === m.nap1 || m.nap1 == null ? String(m.nap0) : m.nap0 + '→' + m.nap1) : '';
     return '<span class="ps">재무 <b class="' + (m.fin < 0 ? 'neg' : '') + '">' + sgn(m.fin) + '</b></span><span class="ps">관리 <b class="' + (m.mg < 0 ? 'neg' : '') + '">' + sgn(m.mg) + '</b></span>'
@@ -888,7 +897,20 @@
       + (m.fx ? '<span class="ps">환율 ' + Math.round(m.fx).toLocaleString('ko-KR') + '</span>' : '');
   }
   function planSummary(win) {
-    if (!win || !B.isBiz(win)) return null;
+    if (!win) return null;
+    if (!B.isBiz(win)) {
+      try {
+        return E.inMain(win, () => JSON.parse(win.eval(`(()=>{ if(typeof reportMonthMetric!=='function'||typeof estimateYms!=='function') return 'null';
+          if(typeof __perfV17Bust==='function') __perfV17Bust();
+          const est=estimateYms(); if(!est.length) return 'null';
+          const r1=v=>Math.round((+v||0)*10)/10, M={}, get=ym=>M[ym]||(M[ym]=reportMonthMetric(ym));
+          const m=est.map(ym=>{const o=get(ym);return {ym,nap:r1(o.nap),fin:r1(o.opTotal),mg:r1(o.mgOpTotal)};});
+          const y=est[0].slice(0,4); let end=est[est.length-1]; if(end>y+'-12') end=y+'-12';
+          let fin=0,mg=0,ns=0,nn=0;
+          for(let i=1;i<=+end.slice(5,7);i++){const o=get(y+'-'+String(i).padStart(2,'0')); fin+=+o.opTotal||0; mg+=+o.mgOpTotal||0; if(o.nap>0){ns+=+o.nap;nn++;}}
+          return JSON.stringify({kind:'est',m,cum:{ym0:y+'-01',ym1:end,nap:nn?r1(ns/nn):null,fin:r1(fin),mg:r1(mg)}});})()`)));
+      } catch (e) { console.warn('개요 계산 실패', e); return null; }
+    }
     try {
       return E.inMain(win, () => JSON.parse(win.eval(`(()=>{ if(typeof __perfV17Bust==='function') __perfV17Bust();
         const yms=_bvPlanYms().slice().sort(); let fin=0,mg=0,num=0,den=0;
