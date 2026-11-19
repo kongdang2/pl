@@ -174,21 +174,24 @@
       : '<span class="tag old">웹 엔진이 아직 없습니다</span> 관리자가 빈 엔진을 올려야 열 수 있습니다.';
     $('snapRows').innerHTML = rows.length ? rows.map((s) => {
       const ren = canRename(s) ? ' <button class="ren" data-ren="' + s.id + '" title="이름 바꾸기">✏️</button>' : '';
-      return '<tr><td>' + esc(s.base_ym) + '</td><td class="memo"><b>' + esc(s.memo || '(이름 없음)') + '</b>' + ren + '</td>'
-        + '<td><span class="tag ' + s.source + '">' + (s.source === 'pc' ? 'PC 원본' : '웹 저장') + '</span></td>'
-        + '<td>' + esc(s.author_name || s.author_email) + '</td><td>' + esc(fmtT(s.updated_at || s.created_at)) + (s.rev > 1 ? ' <span class="hint">(' + s.rev + '회 저장)</span>' : '') + '</td>'
+      // hong 11/20: 출처·작성자·마지막 저장 열은 숨기고 자료명에 마우스를 올리면 보이게, 자료명 옆에 설명 칸
+      const meta = (s.source === 'pc' ? 'PC 원본' : '웹 저장') + ' · 작성자 ' + (s.author_name || s.author_email || '') + ' · 마지막 저장 ' + fmtT(s.updated_at || s.created_at) + (s.rev > 1 ? ' (' + s.rev + '회 저장)' : '');
+      const dsc = canRename(s) ? ' <button class="ren" data-dsc="' + s.id + '" title="설명 고치기">✏️</button>' : '';
+      return '<tr><td>' + esc(s.base_ym) + '</td><td class="memo" title="' + esc(meta) + '"><b>' + esc(s.memo || '(이름 없음)') + '</b>' + ren + '</td>'
+        + '<td class="memo descr" data-l="설명">' + (s.descr ? esc(s.descr) : '<span class="hint">—</span>') + dsc + '</td>'
         + '<td><button data-open="' + s.id + '"' + (eng ? '' : ' disabled') + '>열기</button>'
         + ' <button data-dl="' + s.id + '" title="DB 내보내기 ▸ 전체와 같은 .json (PC에서 DB 불러오기)">JSON</button>'
         + ' <button data-html="' + s.id + '"' + (eng ? '' : ' disabled') + ' title="웹 엔진 + 이 추정자료를 합친 HTML 한 파일. PC에서 바로 열립니다">오프라인 파일</button>'
         + (s.rev > 1 ? ' <button data-bk="' + s.id + '" title="덮어쓰기 전 판(최근 3개)을 엽니다. 열어서 저장하면 새 자료로 남습니다">이전 저장</button>' : '') // 11-03 뺐다가 11-17 되살림(잘못 저장한 판 되돌리기)
         + (st.me.role === 'admin' ? ' <button data-del="' + s.id + '" class="danger">삭제</button>' : '') + '</td></tr>';
-    }).join('') : '<tr><td colspan="6" class="hint">' + (biz ? '아직 웹 사업계획이 없습니다. 「📘 새 사업계획」으로 손익추정 자료에서 만듭니다.' : '아직 추정자료가 없습니다.') + '</td></tr>';
+    }).join('') : '<tr><td colspan="4" class="hint">' + (biz ? '아직 웹 사업계획이 없습니다. 「📘 새 사업계획」으로 손익추정 자료에서 만듭니다.' : '아직 추정자료가 없습니다.') + '</td></tr>';
     $('snapRows').querySelectorAll('[data-open]').forEach((b) => { b.onclick = () => openSnap(b.getAttribute('data-open')); });
     $('snapRows').querySelectorAll('[data-dl]').forEach((b) => { b.onclick = () => downloadSnap(b.getAttribute('data-dl')); });
     $('snapRows').querySelectorAll('[data-html]').forEach((b) => { b.onclick = () => offlineFromList(b.getAttribute('data-html')); });
     $('btnEngDl').disabled = !eng;
     $('snapRows').querySelectorAll('[data-bk]').forEach((b) => { b.onclick = () => showBackups(b.getAttribute('data-bk')); });
     $('snapRows').querySelectorAll('[data-ren]').forEach((b) => { b.onclick = () => renameSnap(b.getAttribute('data-ren')); });
+    $('snapRows').querySelectorAll('[data-dsc]').forEach((b) => { b.onclick = () => editDescr(b.getAttribute('data-dsc')); });
     $('snapRows').querySelectorAll('[data-del]').forEach((b) => { b.onclick = () => deleteSnap(b.getAttribute('data-del')); });
     if (st.me.role === 'admin') loadMembers();
     loadUsage();
@@ -869,6 +872,20 @@
     s.memo = memo;
     if (st.open && st.open.id === id) { st.open.memo = memo; renderBar(); }
     toast('이름을 「' + memo + '」로 바꿨습니다.');
+    loadList();
+  }
+  // 자료 설명 고치기(hong 11/20): 이름 바꾸기와 같은 권한(DB 함수 sk_set_snapshot_descr 가 다시 확인). 비우면 설명을 지운다
+  async function editDescr(id) {
+    const s = st.snaps.find((x) => x.id === id); if (!s) return;
+    const go = await ask('설명 고치기', '<p><b>' + esc(s.memo || '') + '</b></p><label>설명<textarea id="dscIn" maxlength="300" rows="3" style="width:100%">' + esc(s.descr || '') + '</textarea></label><p class="hint">목록에서 자료명 옆에 보이는 한 줄 설명입니다. 비우면 지웁니다. 자료 내용은 그대로입니다.</p>');
+    if (!go) return;
+    const v = (($('dscIn') || {}).value || '').trim();
+    if (v === (s.descr || '')) return;
+    const { data, error } = await sb.rpc('sk_set_snapshot_descr', { p_id: id, p_descr: v });
+    if (error) { toast('설명 저장 실패: ' + error.message, 7000); return; }
+    log('descr', id, v);
+    s.descr = data || null;
+    toast(v ? '설명을 저장했습니다.' : '설명을 지웠습니다.');
     loadList();
   }
   async function deleteSnap(id) {
