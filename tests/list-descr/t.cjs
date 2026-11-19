@@ -4,8 +4,8 @@ const { chromium } = require('playwright');
 const REPO=path.resolve(__dirname,'../..'), MOCK=path.resolve(__dirname,'../storage-clean/mock.js'), HONG='kongdang2@gmail.com', KIM='kim@x.com';
 const day=(d)=>new Date(Date.now()-d*86400000).toISOString();
 const DB={sk_members:[{email:HONG,name:'hong',role:'admin'},{email:KIM,name:'김작성',role:'writer'}],sk_engines:[{ver:'v405-1',storage_path:'engines/v405-1.html.gz',is_current:true,uploaded_at:day(0)}],sk_snapshots:[],sk_snapshot_revs:[],sk_log:[],sk_requests:[],sk_channel:[]};
-DB.sk_snapshots.push({id:'b1',base_ym:'2027-01',mode:'bizplan',source:'web',author_email:HONG,author_name:'hong',memo:'2차안_예산조정중',descr:'역송 월 5억 · 타계정 4억/2억',storage_path:'snapshots/b1/r7.json.gz',rev:7,created_at:day(3),updated_at:day(0)});
-DB.sk_snapshots.push({id:'b2',base_ym:'2027-01',mode:'bizplan',source:'web',author_email:HONG,author_name:'hong',memo:'2차_납사1안',storage_path:'snapshots/b2/r11.json.gz',rev:11,created_at:day(3),updated_at:day(0)});
+DB.sk_snapshots.push({id:'b1',base_ym:'2027-01',mode:'bizplan',source:'web',author_email:HONG,author_name:'hong',memo:'2차안_예산조정중',descr:'역송 월 5억 · 타계정 4억/2억',summary:{fin:-681.4,mg:-105.5,cy:78.1,nap0:800,nap1:800,fx:1330},storage_path:'snapshots/b1/r7.json.gz',rev:7,created_at:day(3),updated_at:day(0)});
+DB.sk_snapshots.push({id:'b2',base_ym:'2027-01',mode:'bizplan',source:'web',author_email:HONG,author_name:'hong',memo:'2차_납사1안',summary:{fin:-305.9,mg:477,cy:78.1,nap0:800,nap1:700,fx:1330},storage_path:'snapshots/b2/r11.json.gz',rev:11,created_at:day(3),updated_at:day(0)});
 DB.sk_snapshots.push({id:'b3',base_ym:'2027-01',mode:'bizplan',source:'web',author_email:KIM,author_name:'김작성',memo:'김 시험안',storage_path:'snapshots/b3/r1.json.gz',rev:1,created_at:day(1),updated_at:day(1)});
 const calls=[];
 function srv(j){const m=JSON.parse(j);
@@ -35,30 +35,35 @@ async function page(br,me){const p=await br.newPage({viewport:{width:1300,height
  await p.waitForSelector('#snapRows tr',{timeout:20000});
  await p.click('#listTabs button[data-t="bizplan"]');await p.waitForFunction(()=>/예산조정중/.test(document.getElementById('snapRows').innerText),null,{timeout:10000});return p;}
 const rowOf=(p,name)=>p.evaluate(n=>{const tr=[...document.querySelectorAll('#snapRows tr')].find(t=>t.children[1]&&t.children[1].innerText.includes(n));if(!tr)return null;
- return {cells:tr.children.length,title:tr.children[1].getAttribute('title'),descr:tr.children[2].innerText.trim(),dsc:!!tr.querySelector('[data-dsc]'),ren:!!tr.querySelector('[data-ren]')};},name);
+ return {sum:(tr.querySelector('td.psum')||{}).innerText||null,cells:tr.children.length,title:tr.children[1].getAttribute('title'),descr:tr.children[2].innerText.trim(),dsc:!!tr.querySelector('[data-dsc]'),ren:!!tr.querySelector('[data-ren]')};},name);
 (async()=>{const br=await chromium.launch();
  let p=await page(br,HONG);
  const heads=await p.$$eval('#vList thead',ts=>ts[0].innerText.replace(/\s+/g,' ').trim());
- ok(heads==='기준월 사업계획명 설명','머리줄 = 기준월·사업계획명·설명 (출처·작성자·마지막 저장 숨김)',heads);
+ ok(heads==='기준월 사업계획명 설명 개요','머리줄 = 기준월·사업계획명·설명·개요 (출처·작성자·마지막 저장 숨김)',heads);
  let r=await rowOf(p,'예산조정중');
- ok(r&&r.cells===4,'한 줄 4칸',r);
+ ok(r&&r.cells===5,'한 줄 5칸',r);
+ ok(r&&/재무 −681\.4/.test(r.sum)&&/관리 −105\.5/.test(r.sum)&&/수율 78\.10%/.test(r.sum)&&/납사 800(?!→)/.test(r.sum)&&/환율 1,330/.test(r.sum),'개요 = 재무·관리·수율·납사·환율',r);
  ok(r&&/웹 저장/.test(r.title)&&/작성자 hong/.test(r.title)&&/마지막 저장/.test(r.title)&&/7회 저장/.test(r.title),'자료명 툴팁에 출처·작성자·마지막 저장',r);
  ok(r&&r.descr.startsWith('역송 월 5억 · 타계정 4억/2억'),'설명 표시',r);
  r=await rowOf(p,'납사1안');ok(r&&r.descr.startsWith('—')&&r.dsc,'설명 없으면 — · 관리자 ✏️',r);
+ ok(r&&/관리 \+477\.0/.test(r.sum)&&/납사 800→700/.test(r.sum),'개요 + 부호·납사 첫→끝',r);
+ r=await rowOf(p,'김 시험안');ok(r&&/^—/.test(r.sum),'개요 없으면 —',r);
  // 실제 클릭·입력으로 설명 넣기
  const tr=p.locator('#snapRows tr',{hasText:'납사1안'});await tr.locator('[data-dsc]').click();
- await p.waitForSelector('#dscIn');await p.locator('#dscIn').click();await p.keyboard.type('납사 800→700 · 프리미엄 20/5');await p.click('#mOk');
- await p.waitForFunction(()=>/800→700/.test(document.getElementById('snapRows').innerText),null,{timeout:10000});
- r=await rowOf(p,'납사1안');ok(r&&r.descr.startsWith('납사 800→700 · 프리미엄 20/5'),'입력한 설명이 목록에 보임',r);
+ await p.waitForSelector('#dscIn');await p.locator('#dscIn').click();await p.keyboard.type('상반기 프리미엄 20 · 하반기 5');await p.click('#mOk');
+ await p.waitForFunction(()=>/하반기 5/.test(document.getElementById('snapRows').innerText),null,{timeout:10000});
+ r=await rowOf(p,'납사1안');ok(r&&r.descr.startsWith('상반기 프리미엄 20 · 하반기 5'),'입력한 설명이 목록에 보임',r);
  ok(calls.some(c=>c.fn==='sk_set_snapshot_descr'&&c.a.p_id==='b2'),'DB 함수 호출',calls.map(c=>c.fn));
  await p.screenshot({path:path.join(__dirname,'list.png'),clip:{x:0,y:0,width:1300,height:600}});
  // 취소하면 그대로
  await tr.locator('[data-dsc]').click();await p.waitForSelector('#dscIn');await p.fill('#dscIn','바뀌면 안 됨');await p.click('#mCancel');await p.waitForTimeout(500);
- r=await rowOf(p,'납사1안');ok(r&&r.descr.startsWith('납사 800→700'),'취소하면 그대로',r);
+ r=await rowOf(p,'납사1안');ok(r&&r.descr.startsWith('상반기 프리미엄 20'),'취소하면 그대로',r);
  // 비우면 지움
  await tr.locator('[data-dsc]').click();await p.waitForSelector('#dscIn');await p.fill('#dscIn','');await p.click('#mOk');
- await p.waitForFunction(()=>!/800→700/.test(document.getElementById('snapRows').innerText),null,{timeout:10000});
+ await p.waitForFunction(()=>!/하반기 5/.test(document.getElementById('snapRows').innerText),null,{timeout:10000});
  r=await rowOf(p,'납사1안');ok(r&&r.descr.startsWith('—'),'비우면 지움',r);
+ await p.click('#listTabs button[data-t="sonik"]');await p.waitForTimeout(400);
+ const h2=await p.$$eval('#vList thead',ts=>ts[0].innerText.replace(/\s+/g,' ').trim());ok(h2==='기준월 추정자료명 설명','손익추정 탭은 개요 열 없음',h2);
  ok(!p.errs.length,'페이지 오류 없음',p.errs);await p.close();
  // 작성자(writer): 내 웹 자료만 ✏️
  p=await page(br,KIM);
