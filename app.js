@@ -881,20 +881,25 @@
   // 손익추정 자료(hong 11/20 「추정구간 월별로 평균MOPJ, 재무, 관리 … (누계)」): 추정월마다 MOPJ·재무·관리 영업이익(억원), 그리고 누계 =
   // 첫 추정월 연도 1월 ~ 추정 끝(그해 12월까지, 엔진 보고서 2p 누계와 같은 범위)의 재무·관리 합과 월 MOPJ 단순평균. 값은 보고서와 같은 reportMonthMetric(확정월은 확정DB).
   // 계산·기록이 실패해도 저장에는 영향 없음
-  const sgn = (v) => (v > 0 ? '+' : v < 0 ? 'Δ' : '') + Math.abs(v).toLocaleString('ko-KR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-  const n1 = (v) => (v == null ? '—' : Number(v).toLocaleString('ko-KR', { maximumFractionDigits: 1 }));
-  const fm = (m) => '재무 <b class="' + (m.fin < 0 ? 'neg' : '') + '">' + sgn(m.fin) + '</b> / 관리 <b class="' + (m.mg < 0 ? 'neg' : '') + '">' + sgn(m.mg) + '</b>';
+  // 표시(hong 11/20 1안 「작은 표」·정수): 칸 맞춘 미니 표 납사·재무·관리(사업계획은 + 수율·환율), 누계·연간 줄 굵게 + 위 선, 음수 Δ·빨강
+  const ri = (v) => { const x = +v || 0; return x < 0 ? -Math.round(-x) : Math.round(x); }; // 반올림은 부호 대칭(Δ105.5 → Δ106)
+  const sgn = (v) => { const r = ri(v); return (r > 0 ? '+' : r < 0 ? 'Δ' : '') + Math.abs(r).toLocaleString('ko-KR'); };
+  const n0 = (v) => (v == null ? '—' : ri(v).toLocaleString('ko-KR'));
+  const vc = (v) => '<td' + (ri(v) < 0 ? ' class="neg"' : '') + '>' + sgn(v) + '</td>';
+  const mo = (ym) => +String(ym || '').slice(5, 7);
   function sumHtml(m) {
     if (m && m.kind === 'est' && Array.isArray(m.m)) {
-      const c = m.cum, cl = c ? (c.ym1 && c.ym1.slice(5, 7) === '12' ? '연간' : '누계(1~' + (+String(c.ym1 || '').slice(5, 7)) + '월)') : '';
-      return m.m.map((x) => '<span class="ps pl"><i>' + (+String(x.ym).slice(5, 7)) + '월</i> 납사 ' + n1(x.nap) + ' · ' + fm(x) + '</span>').join('')
-        + (c ? '<span class="ps pl"><i>' + cl + '</i> 납사 ' + n1(c.nap) + ' · ' + fm(c) + '</span>' : '');
+      const row = (l, x, cls) => '<tr' + (cls ? ' class="' + cls + '"' : '') + '><td class="l">' + l + '</td><td>' + n0(x.nap) + '</td>' + vc(x.fin) + vc(x.mg) + '</tr>';
+      const c = m.cum, cl = c ? (mo(c.ym1) === 12 ? '연간' : mo(c.ym1) + '월 누계') : '';
+      return '<table class="mt"><tr><th></th><th>납사</th><th>재무</th><th>관리</th></tr>'
+        + m.m.map((x) => row(mo(x.ym) + '월', x)).join('')
+        + (m.q ? row(m.q.q + 'Q', m.q, 'qtr') : '')
+        + (c ? row(cl, c, 'cum') : '') + '</table>';
     }
     if (!m || m.fin == null) return '<span class="hint">—</span>';
-    const nap = m.nap0 != null ? (m.nap0 === m.nap1 || m.nap1 == null ? String(m.nap0) : m.nap0 + '→' + m.nap1) : '';
-    return '<span class="ps">재무 <b class="' + (m.fin < 0 ? 'neg' : '') + '">' + sgn(m.fin) + '</b></span><span class="ps">관리 <b class="' + (m.mg < 0 ? 'neg' : '') + '">' + sgn(m.mg) + '</b></span>'
-      + (m.cy != null ? '<span class="ps">수율 ' + Number(m.cy).toFixed(2) + '%</span>' : '') + (nap ? '<span class="ps">납사 ' + esc(nap) + '</span>' : '')
-      + (m.fx ? '<span class="ps">환율 ' + Math.round(m.fx).toLocaleString('ko-KR') + '</span>' : '');
+    const nap = m.nap0 != null ? (m.nap0 === m.nap1 || m.nap1 == null ? n0(m.nap0) : n0(m.nap0) + '→' + n0(m.nap1)) : '—';
+    return '<table class="mt"><tr><th></th><th>납사</th><th>재무</th><th>관리</th><th>수율</th><th>환율</th></tr><tr class="cum"><td class="l">연간</td><td>' + nap + '</td>'
+      + vc(m.fin) + vc(m.mg) + '<td>' + (m.cy != null ? Number(m.cy).toFixed(2) + '%' : '—') + '</td><td>' + (m.fx ? n0(m.fx) : '—') + '</td></tr></table>';
   }
   function planSummary(win) {
     if (!win) return null;
@@ -905,10 +910,13 @@
           const est=estimateYms(); if(!est.length) return 'null';
           const r1=v=>Math.round((+v||0)*10)/10, M={}, get=ym=>M[ym]||(M[ym]=reportMonthMetric(ym));
           const m=est.map(ym=>{const o=get(ym);return {ym,nap:r1(o.nap),fin:r1(o.opTotal),mg:r1(o.mgOpTotal)};});
-          const y=est[0].slice(0,4); let end=est[est.length-1]; if(end>y+'-12') end=y+'-12';
-          let fin=0,mg=0,ns=0,nn=0;
-          for(let i=1;i<=+end.slice(5,7);i++){const o=get(y+'-'+String(i).padStart(2,'0')); fin+=+o.opTotal||0; mg+=+o.mgOpTotal||0; if(o.nap>0){ns+=+o.nap;nn++;}}
-          return JSON.stringify({kind:'est',m,cum:{ym0:y+'-01',ym1:end,nap:nn?r1(ns/nn):null,fin:r1(fin),mg:r1(mg)}});})()`)));
+          const agg=yms=>{let fin=0,mg=0,ns=0,nn=0; for(const ym of yms){const o=get(ym); fin+=+o.opTotal||0; mg+=+o.mgOpTotal||0; if(o.nap>0){ns+=+o.nap;nn++;}} return {ym0:yms[0],ym1:yms[yms.length-1],nap:nn?r1(ns/nn):null,fin:r1(fin),mg:r1(mg)};};
+          let qy=+est[0].slice(0,4), qn=Math.floor((+est[0].slice(5,7)-1)/3)+1;
+          try{ const rp=typeof reportPeriods==='function'?reportPeriods():null; if(rp&&rp.qCur_y&&rp.qCur_q){qy=+rp.qCur_y;qn=+rp.qCur_q;} }catch(e){}
+          const qYms=[0,1,2].map(k=>qy+'-'+String((qn-1)*3+1+k).padStart(2,'0'));
+          const y=String(qy); let end=est[est.length-1]; if(end>y+'-12') end=y+'-12'; if(end<y+'-01') end=qYms[2];
+          const cYms=[]; for(let i=1;i<=+end.slice(5,7);i++) cYms.push(y+'-'+String(i).padStart(2,'0'));
+          return JSON.stringify({kind:'est',m,q:Object.assign({y:qy,q:qn},agg(qYms)),cum:agg(cYms)});})()`)));
       } catch (e) { console.warn('개요 계산 실패', e); return null; }
     }
     try {

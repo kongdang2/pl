@@ -7,7 +7,7 @@ const DB={sk_members:[{email:HONG,name:'hong',role:'admin'},{email:KIM,name:'김
 DB.sk_snapshots.push({id:'b1',base_ym:'2027-01',mode:'bizplan',source:'web',author_email:HONG,author_name:'hong',memo:'2차안_예산조정중',descr:'역송 월 5억 · 타계정 4억/2억',summary:{fin:-681.4,mg:-105.5,cy:78.1,nap0:800,nap1:800,fx:1330},storage_path:'snapshots/b1/r7.json.gz',rev:7,created_at:day(3),updated_at:day(0)});
 DB.sk_snapshots.push({id:'b2',base_ym:'2027-01',mode:'bizplan',source:'web',author_email:HONG,author_name:'hong',memo:'2차_납사1안',summary:{fin:-305.9,mg:477,cy:78.1,nap0:800,nap1:700,fx:1330},storage_path:'snapshots/b2/r11.json.gz',rev:11,created_at:day(3),updated_at:day(0)});
 DB.sk_snapshots.push({id:'b3',base_ym:'2027-01',mode:'bizplan',source:'web',author_email:KIM,author_name:'김작성',memo:'김 시험안',storage_path:'snapshots/b3/r1.json.gz',rev:1,created_at:day(1),updated_at:day(1)});
-DB.sk_snapshots.push({id:'s1',base_ym:'2026-11',source:'web',author_email:HONG,author_name:'hong',memo:'26년_추정_11/19',summary:{kind:'est',m:[{ym:'2026-11',nap:950,fin:-222.8,mg:-232.1},{ym:'2026-12',nap:930,fin:-49.1,mg:-136.8}],cum:{ym0:'2026-01',ym1:'2026-12',nap:850.5,fin:48.2,mg:-713.6}},storage_path:'snapshots/s1/r1.json.gz',rev:1,created_at:day(1),updated_at:day(1)});
+DB.sk_snapshots.push({id:'s1',base_ym:'2026-11',source:'web',author_email:HONG,author_name:'hong',memo:'26년_추정_11/19',summary:{kind:'est',m:[{ym:'2026-11',nap:950,fin:-222.8,mg:-232.1},{ym:'2026-12',nap:930,fin:-49.1,mg:-136.8}],q:{y:2026,q:4,ym0:'2026-10',ym1:'2026-12',nap:956.7,fin:-306.9,mg:-603.5},cum:{ym0:'2026-01',ym1:'2026-12',nap:850.5,fin:48.2,mg:-713.6}},storage_path:'snapshots/s1/r1.json.gz',rev:1,created_at:day(1),updated_at:day(1)});
 DB.sk_snapshots.push({id:'s2',base_ym:'2026-10',source:'pc',author_email:HONG,author_name:'hong',memo:'10말 PC',summary:{kind:'est',m:[{ym:'2026-10',nap:900,fin:12,mg:3.5}],cum:{ym0:'2026-01',ym1:'2026-10',nap:820,fin:100,mg:-50}},storage_path:'snapshots/s2/r1.json.gz',rev:1,created_at:day(2),updated_at:day(2)});
 DB.sk_snapshots.push({id:'s3',base_ym:'2026-09',source:'pc',author_email:HONG,author_name:'hong',memo:'9말 개요 없음',storage_path:'snapshots/s3/r1.json.gz',rev:1,created_at:day(3),updated_at:day(3)});
 const calls=[];
@@ -38,18 +38,18 @@ async function page(br,me){const p=await br.newPage({viewport:{width:1300,height
  await p.waitForSelector('#snapRows tr',{timeout:20000});
  await p.click('#listTabs button[data-t="bizplan"]');await p.waitForFunction(()=>/예산조정중/.test(document.getElementById('snapRows').innerText),null,{timeout:10000});return p;}
 const rowOf=(p,name)=>p.evaluate(n=>{const tr=[...document.querySelectorAll('#snapRows tr')].find(t=>t.children[1]&&t.children[1].innerText.includes(n));if(!tr)return null;
- return {sum:(tr.querySelector('td.psum')||{}).innerText||null,cells:tr.children.length,title:tr.children[1].getAttribute('title'),descr:tr.children[2].innerText.trim(),dsc:!!tr.querySelector('[data-dsc]'),ren:!!tr.querySelector('[data-ren]')};},name);
+ return {mt:[...tr.querySelectorAll('td.psum table.mt tr')].map(x=>[...x.children].map(c=>c.innerText.trim()).join('|')),cum:(tr.querySelector('td.psum tr.cum td.l')||{}).className||'',sum:(tr.querySelector('td.psum')||{}).innerText||null,cells:tr.children.length,title:tr.children[1].getAttribute('title'),descr:tr.children[2].innerText.trim(),dsc:!!tr.querySelector('[data-dsc]'),ren:!!tr.querySelector('[data-ren]')};},name);
 (async()=>{const br=await chromium.launch();
  let p=await page(br,HONG);
  const heads=await p.$$eval('#vList thead',ts=>ts[0].innerText.replace(/\s+/g,' ').trim());
  ok(heads==='기준월 사업계획명 설명 개요','머리줄 = 기준월·사업계획명·설명·개요 (출처·작성자·마지막 저장 숨김)',heads);
  let r=await rowOf(p,'예산조정중');
  ok(r&&r.cells===5,'한 줄 5칸',r);
- ok(r&&/재무 Δ681\.4/.test(r.sum)&&/관리 Δ105\.5/.test(r.sum)&&/수율 78\.10%/.test(r.sum)&&/납사 800(?!→)/.test(r.sum)&&/환율 1,330/.test(r.sum),'개요 = 재무·관리·수율·납사·환율',r);
+ ok(r&&r.mt.join(' / ')==='|납사|재무|관리|수율|환율 / 연간|800|Δ681|Δ106|78.10%|1,330','사업계획 개요 = 1안 표(정수, 부호 대칭 반올림 Δ105.5→Δ106)',r);
  ok(r&&/웹 저장/.test(r.title)&&/작성자 hong/.test(r.title)&&/마지막 저장/.test(r.title)&&/7회 저장/.test(r.title),'자료명 툴팁에 출처·작성자·마지막 저장',r);
  ok(r&&r.descr.startsWith('역송 월 5억 · 타계정 4억/2억'),'설명 표시',r);
  r=await rowOf(p,'납사1안');ok(r&&r.descr.startsWith('—')&&r.dsc,'설명 없으면 — · 관리자 ✏️',r);
- ok(r&&/관리 \+477\.0/.test(r.sum)&&/납사 800→700/.test(r.sum),'개요 + 부호·납사 첫→끝',r);
+ ok(r&&r.mt[1]==='연간|800→700|Δ306|+477|78.10%|1,330','개요 + 부호·납사 첫→끝',r);
  r=await rowOf(p,'김 시험안');ok(r&&/^—/.test(r.sum),'개요 없으면 —',r);
  // 실제 클릭·입력으로 설명 넣기
  const tr=p.locator('#snapRows tr',{hasText:'납사1안'});await tr.locator('[data-dsc]').click();
@@ -67,12 +67,14 @@ const rowOf=(p,name)=>p.evaluate(n=>{const tr=[...document.querySelectorAll('#sn
  r=await rowOf(p,'납사1안');ok(r&&r.descr.startsWith('—'),'비우면 지움',r);
  await p.click('#listTabs button[data-t="sonik"]');await p.waitForTimeout(400);
  const h2=await p.$$eval('#vList thead',ts=>ts[0].innerText.replace(/\s+/g,' ').trim());ok(h2==='기준월 추정자료명 설명 개요','손익추정 탭도 개요 열',h2);
- r=await rowOf(p,'26년_추정_11/19');const L=r&&r.sum.split('\n').map(x=>x.trim()).filter(Boolean);
- ok(r&&r.cells===5&&L.length===3,'손익추정 개요 = 추정월 2줄 + 누계 1줄',{r,L});
- ok(L&&/^11월 납사 950 · 재무 Δ222\.8 \/ 관리 Δ232\.1$/.test(L[0])&&/^12월 납사 930 · 재무 Δ49\.1 \/ 관리 Δ136\.8$/.test(L[1]),'월별 = (0월) 납사 · 재무/관리, 음수 Δ',L);
- ok(L&&/^연간 납사 850\.5 · 재무 \+48\.2 \/ 관리 Δ713\.6$/.test(L[2]),'12월까지면 「연간」',L);
- r=await rowOf(p,'10말 PC');ok(r&&/누계\(1~10월\) 납사 820 · 재무 \+100\.0 \/ 관리 Δ50\.0/.test(r.sum),'12월 전이면 「누계(1~N월)」',r);
- const neg=await p.evaluate(()=>[...document.querySelectorAll('#snapRows td.psum b.neg')].length);ok(neg===6,'음수는 빨간 글씨(6칸)',neg);
+ r=await rowOf(p,'26년_추정_11/19');const L=r&&r.mt;
+ ok(r&&r.cells===5&&L.length===5,'손익추정 개요 = 머리줄 + 추정월 2줄 + 당분기 + 누계',{r});
+ ok(L&&L[0]==='|납사|재무|관리'&&L[1]==='11월|950|Δ223|Δ232'&&L[2]==='12월|930|Δ49|Δ137','월별 = (0월) 납사·재무·관리, 정수·음수 Δ',L);
+ ok(L&&L[3]==='4Q|957|Δ307|Δ604','당분기 줄 (추정 대상 분기)',L);
+ ok(L&&L[4]==='연간|851|+48|Δ714'&&r.cum==='l','12월까지면 「연간」, 누계 줄 굵게',L);
+ r=await rowOf(p,'10말 PC');ok(r&&r.mt[r.mt.length-1]==='10월 누계|820|+100|Δ50'&&r.mt.length===3,'12월 전이면 「N월 누계」, 당분기 없는 옛 기록도 표시',r);
+ const neg=await p.evaluate(()=>[...document.querySelectorAll('#snapRows td.psum td.neg')].length);ok(neg===8,'음수는 빨간 글씨(8칸)',neg);
+ const st=await p.evaluate(()=>{const t=[...document.querySelectorAll('#snapRows tr.cum td')][1];const s=getComputedStyle(t);return {w:s.fontWeight,b:s.borderTopStyle};});ok(+st.w>=700&&st.b==='solid','누계 줄 굵게 + 위 선',st);
  r=await rowOf(p,'9말 개요 없음');ok(r&&/^—/.test(r.sum),'개요 없는 손익추정 = —',r);
  await p.screenshot({path:path.join(__dirname,'list-sonik.png'),clip:{x:0,y:0,width:1300,height:600}});
  ok(!p.errs.length,'페이지 오류 없음',p.errs);await p.close();
@@ -84,5 +86,7 @@ const rowOf=(p,name)=>p.evaluate(n=>{const tr=[...document.querySelectorAll('#sn
  await p.setViewportSize({width:390,height:800});await p.waitForTimeout(300);
  const vis=await p.evaluate(()=>{const td=[...document.querySelectorAll('#snapRows td.descr')].find(t=>/역송/.test(t.innerText));const b=td.getBoundingClientRect();return {w:b.width,h:b.height,over:document.documentElement.scrollWidth>innerWidth+1};});
  ok(vis.w>0&&vis.h>0&&!vis.over,'휴대폰 폭: 설명 보임·가로 넘침 없음',vis);
+ const mv=await p.evaluate(()=>{const t=document.querySelector('#snapRows td.psum table.mt');const r=t.getBoundingClientRect();const tds=[...t.querySelectorAll('tr')[1].children].map(c=>Math.round(c.getBoundingClientRect().top));return {w:r.width,one:new Set(tds).size===1,over:document.documentElement.scrollWidth>innerWidth+1};});
+ ok(mv.w>0&&mv.one&&!mv.over,'휴대폰 폭: 개요 표가 한 줄 칸으로 보임',mv);
  ok(!p.errs.length,'페이지 오류 없음(작성자)',p.errs);
  await br.close();server.close();console.log('PASS',pass,'FAIL',fail);process.exit(fail?1:0);})().catch(e=>{console.error(e);process.exit(2);});
