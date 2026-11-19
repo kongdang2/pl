@@ -879,7 +879,7 @@
   // 자료별 핵심 숫자(hong 11/20 「버전 개요 정도만 대기실에서도」 → 카드 「자료별 핵심 숫자」): 사업계획을 저장한 직후 엔진에서
   // 계획 12개월 재무·관리 영업이익 합(억원), NCC 상업수율, 나프타 MOPJ 첫 달→끝 달, 평균 환율을 계산해 sk_snapshots.summary 에 둔다(1초 안팎).
   // 손익추정 자료는 아직 하지 않는다. 계산·기록이 실패해도 저장에는 영향 없음
-  const sgn = (v) => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toLocaleString('ko-KR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const sgn = (v) => (v > 0 ? '+' : v < 0 ? 'Δ' : '') + Math.abs(v).toLocaleString('ko-KR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   function sumHtml(m) {
     if (!m || m.fin == null) return '<span class="hint">—</span>';
     const nap = m.nap0 != null ? (m.nap0 === m.nap1 || m.nap1 == null ? String(m.nap0) : m.nap0 + '→' + m.nap1) : '';
