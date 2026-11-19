@@ -815,10 +815,11 @@
       const d = win.document, bar = d.getElementById('dbAdminBar'), head = d.getElementById('appHeader');
       if (!bar || !head || head.dataset.skTrim) return;
       const undo = d.getElementById('undoBtn'), redo = d.getElementById('redoBtn'), print = head.querySelector('[onclick^="printCurrentMenu"]');
+      const undoList = d.getElementById('undoListBtn400'); // 엔진 v400 되돌리기 목록 ▾ — 같이 옮기지 않으면 숨긴 머리줄에 남는다(hong 11/19)
       const at = bar.querySelector('span[style*="flex:1"]');
       const box = d.createElement('span'); box.id = 'skWebBox'; box.style.cssText = 'display:inline-flex;gap:6px;align-items:center;';
       const homes = [];   // 옮긴 엔진 버튼의 원래 자리 [버튼, 부모, 다음 형제]
-      [undo, redo, print].forEach((b) => { if (b) { homes.push([b, b.parentNode, b.nextSibling]); box.appendChild(b); } });
+      [undo, redo, undoList, print].forEach((b) => { if (b) { homes.push([b, b.parentNode, b.nextSibling]); box.appendChild(b); } });
       // PC 파일 저장·연결 버튼(웹 요청 #9)은 뺐다(hong 11/03): 웹에서는 파일 연결이 필요 없고 헷갈린다.
       // 파일 받기는 사이트 위쪽 「오프라인 파일」 하나로 하고, 받은 HTML 에는 PC 원래 머리줄(파일 연결·저장)이 그대로 들어간다
       if (at) at.after(box); else bar.appendChild(box);
