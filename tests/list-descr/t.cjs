@@ -42,7 +42,7 @@ const rowOf=(p,name)=>p.evaluate(n=>{const tr=[...document.querySelectorAll('#sn
  ok(heads==='기준월 사업계획명 설명 개요','머리줄 = 기준월·사업계획명·설명·개요 (출처·작성자·마지막 저장 숨김)',heads);
  let r=await rowOf(p,'예산조정중');
  ok(r&&r.cells===5,'한 줄 5칸',r);
- ok(r&&/재무 −681\.4/.test(r.sum)&&/관리 −105\.5/.test(r.sum)&&/수율 78\.10%/.test(r.sum)&&/납사 800(?!→)/.test(r.sum)&&/환율 1,330/.test(r.sum),'개요 = 재무·관리·수율·납사·환율',r);
+ ok(r&&/재무 Δ681\.4/.test(r.sum)&&/관리 Δ105\.5/.test(r.sum)&&/수율 78\.10%/.test(r.sum)&&/납사 800(?!→)/.test(r.sum)&&/환율 1,330/.test(r.sum),'개요 = 재무·관리·수율·납사·환율',r);
  ok(r&&/웹 저장/.test(r.title)&&/작성자 hong/.test(r.title)&&/마지막 저장/.test(r.title)&&/7회 저장/.test(r.title),'자료명 툴팁에 출처·작성자·마지막 저장',r);
  ok(r&&r.descr.startsWith('역송 월 5억 · 타계정 4억/2억'),'설명 표시',r);
  r=await rowOf(p,'납사1안');ok(r&&r.descr.startsWith('—')&&r.dsc,'설명 없으면 — · 관리자 ✏️',r);
