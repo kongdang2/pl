@@ -922,7 +922,8 @@
     return g + '</svg>';
   }
   function planSummary(win) {
-    if (!win) return null;
+    planSummary.err = null;
+    if (!win) { planSummary.err = '열린 엔진 없음'; return null; }
     if (!B.isBiz(win)) {
       try {
         return E.inMain(win, () => JSON.parse(win.eval(`(()=>{ if(typeof reportMonthMetric!=='function'||typeof estimateYms!=='function') return 'null';
@@ -938,8 +939,8 @@
           const cYms=[]; for(let i=1;i<=+end.slice(5,7);i++) cYms.push(y+'-'+String(i).padStart(2,'0'));
           const add=(ym,k)=>{let yy=+ym.slice(0,4),mm=+ym.slice(5,7)-1+k; yy+=Math.floor(mm/12); mm=((mm%12)+12)%12; return yy+'-'+String(mm+1).padStart(2,'0');};
           const sp=[-6,-5,-4,-3,-2,-1].map(k=>add(est[0],k)).concat(est).map(ym=>{const o=get(ym);return [ym,r1(o.opTotal),r1(o.mgOpTotal),est.includes(ym)?1:0];});
-          return JSON.stringify({kind:'est',m,q:Object.assign({y:qy,q:qn},agg(qYms)),cum:agg(cYms),sp});})()`)));
-      } catch (e) { console.warn('개요 계산 실패', e); return null; }
+          return JSON.stringify({kind:'est',m,q:Object.assign({y:qy,q:qn},agg(qYms)),cum:agg(cYms),sp});})()`))) || ((planSummary.err = '추정월 없음'), null);
+      } catch (e) { console.warn('개요 계산 실패', e); planSummary.err = String((e && e.message) || e).slice(0, 160); return null; }
     }
     try {
       return E.inMain(win, () => JSON.parse(win.eval(`(()=>{ if(typeof __perfV17Bust==='function') __perfV17Bust();
@@ -948,15 +949,29 @@
         const P=S.onsan.prices||{}, nap=yms.map(y=>+((P[y]||{}).nap)||null), fx=yms.map(y=>+((P[y]||{}).fx)||0).filter(Boolean);
         const r1=(v)=>Math.round(v*10)/10;
         return JSON.stringify({fin:r1(fin/100),mg:r1(mg/100),cy:den>0?Math.round(num/den*1e4)/100:null,nap0:nap[0],nap1:nap[nap.length-1],fx:fx.length?Math.round(fx.reduce((a,b)=>a+b,0)/fx.length):null,ym0:yms[0]||null,ym1:yms[yms.length-1]||null,sp});})()`)));
-    } catch (e) { console.warn('개요 계산 실패', e); return null; }
+    } catch (e) { console.warn('개요 계산 실패', e); planSummary.err = String((e && e.message) || e).slice(0, 160); return null; }
   }
-  async function saveSummary(id) {
-    const m = planSummary(st.mounted && st.mounted.win); if (!m || !id) return;
+  // 목록 「개요」 기록. why = 'save'(저장 직후) · 'open'(열었는데 개요가 마지막 저장보다 오래됨 → 다시 채움, hong 11/21)
+  // 계산이 안 되면 1.5초 뒤 한 번 더, 그래도 안 되거나 기록이 안 되면 sk_log 'summary_fail' 에 사유를 남긴다(예전: 콘솔에만 → 원인을 못 찾음)
+  async function saveSummary(id, why) {
+    if (!id) return false;
+    why = why || 'save';
+    let m = planSummary(st.mounted && st.mounted.win);
+    if (!m && planSummary.err !== '추정월 없음') {
+      await new Promise((r) => setTimeout(r, 1500));
+      if (!st.open || st.open.id !== id) { log('summary_fail', id, why + ': 다시 계산하기 전에 다른 자료로 바뀜 (' + (planSummary.err || '') + ')'); return false; }
+      m = planSummary(st.mounted && st.mounted.win);
+    }
+    if (!m) { if (planSummary.err !== '추정월 없음') log('summary_fail', id, why + ': 계산 실패 ' + (planSummary.err || '')); return false; }
     m.ver = st.engine ? st.engine.ver : null; m.at = new Date().toISOString();
     const { error } = await sb.rpc('sk_set_snapshot_summary', { p_id: id, p_summary: m });
-    if (error) { console.warn('개요 기록 실패', error.message); return; }
+    if (error) { console.warn('개요 기록 실패', error.message); log('summary_fail', id, why + ': 기록 실패 ' + error.message); return false; }
     const x = (st.snaps || []).find((y) => y.id === id); if (x) x.summary = m;
+    if (st.open && st.open.id === id) st.open.summary = m;
+    return true;
   }
+  // 저장본의 개요가 비었거나 마지막 저장보다 오래됐는가(개요 기록 시각 < 저장 시각). 1초 여유
+  const summaryStale = (s) => { const at = s && s.summary && Date.parse(s.summary.at), up = s && Date.parse(s.updated_at || s.created_at || ''); return !at || (up > 0 && at < up - 1000); };
   window.__sonikPlanSummary = () => planSummary(st.mounted && st.mounted.win); // 콘솔 점검용(저장 안 함)
   window.__sonikFillSummary = () => (st.open && st.open.id ? saveSummary(st.open.id) : null); // 이미 저장된 자료의 개요 채우기(자료 파일은 저장하지 않음)
   // 자료 설명 고치기(hong 11/20): 이름 바꾸기와 같은 권한(DB 함수 sk_set_snapshot_descr 가 다시 확인). 비우면 설명을 지운다
@@ -1029,6 +1044,8 @@
       const n = r.verify ? r.verify.diffs.length : null;
       log('open', s.id, (backup ? 'rev=' + backup.rev + ' ' : '') + (n == null ? 'verify 없음' : ('diffs=' + n)));
       if (!backup && !pv) await linkAfterOpen(s);
+      // 개요가 비었거나 마지막 저장보다 오래됐으면(저장 때 기록이 빠짐·PC 파일 올리기) 연 김에 다시 채운다 — 자료 파일은 저장하지 않음(hong 11/21)
+      if (!backup && !pv && canWrite() && summaryStale(s)) setTimeout(() => { if (st.open && st.open.id === s.id && !st.open.backupOf) saveSummary(s.id, 'open').then((ok) => { if (ok) log('summary_heal', s.id, '개요 ' + ((s.summary && s.summary.at) || '없음') + ' < 저장 ' + (s.updated_at || '')); }); }, 1500);
       if (pv) toast('수정 엔진 미리보기입니다. 저장되지 않습니다.', 6000);
     } catch (e) { toast(e.message, 8000); await loadList(); }
     busy(null);
@@ -1149,7 +1166,7 @@
         toast('새 ' + RO(KIND(st.open)) + ' 저장했습니다. 다음 저장부터는 여기에 덮어씁니다.', 5000);
       }
       renderBar();
-      if (st.open && st.open.id) saveSummary(st.open.id); // 목록 「개요」 (기다리지 않음)
+      if (st.open && st.open.id) saveSummary(st.open.id, 'save'); // 목록 「개요」 (기다리지 않음)
     } catch (e) { toast(e.message, 8000); }
     finally { saveFromEngine.busy = false; busy(null); }
   }

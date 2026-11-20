@@ -1,0 +1,18 @@
+<!doctype html><html><head><meta charset="utf-8"><title>fake</title></head><body><div id="v">engine</div><script>
+// 목록 「개요」 시험용 가짜 사업계획 엔진: 계획 2개월, 재무 = val×2, 관리 = val, 납사 = S.onsan.prices. __FAIL 회만큼 계산이 예외를 던진다
+window.SYS_CHANGELOG=[{date:'2026-11-21',title:'v409-1 시험'}];
+var S=null, CONFIRMED_DB={c:1}, __FAIL=0;
+function draw(){document.getElementById('v').textContent='val='+(S&&S.val);}
+function refresh(){draw();}
+function switchMenu(m){S.menu=m;draw();}
+function p88PackYear(y){return {kind:'pnl-annual-kpi',year:+y,stores:{v:S.val}};}
+function _bvPlanYms(){return ['2027-01','2027-02'];}
+function calcFinPnL(ym){if(__FAIL>0){__FAIL--;throw new Error('계산 중 예외(시험)');}return {opIncome:{total:S.val*100}};}
+function calcMgmtAll(ym){return {pnl:{opD:S.val*50}};}
+function cpNccBasis142(ym){return {num:78,den:100};}
+window.__sonikWebBridge={info:function(){return {sysVer:'v409-1',baseYm:S?S.session.baseYm:''};},
+ buildDb:function(){var p={};Object.keys(S).forEach(function(k){if(['site','ym'].indexOf(k)<0)p[k]=JSON.parse(JSON.stringify(S[k]));});
+  return {format:'pnl-db/1',scope:'all',sysVer:'v409-1',mode:window.__BIZPLAN__?'bizplan':'sonik',baseYm:S.session.baseYm,months:JSON.parse(JSON.stringify(S.session.months)),payload:p,confirmed:JSON.parse(JSON.stringify(CONFIRMED_DB)),plan:null,savedAt:new Date().toISOString()};},
+ applyDb:function(db){S=JSON.parse(JSON.stringify(db.payload));if(!S.site)S.site='onsan';if(!S.menu)S.menu='overview';CONFIRMED_DB=JSON.parse(JSON.stringify(db.confirmed));draw();return {verify:null};}};
+window.T={val:function(v){S.val=v;draw();},nap:function(a,b){S.onsan.prices['2027-01'].nap=a;S.onsan.prices['2027-02'].nap=b;},fail:function(n){__FAIL=n;}};
+</script></body></html>
