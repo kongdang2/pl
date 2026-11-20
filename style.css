@@ -263,3 +263,27 @@ label.cd textarea{display:block;margin-top:3px}
 .a2a-tg .ts{overflow:hidden;text-overflow:ellipsis;min-width:0}.sys-tg{border-style:solid;overflow:hidden;text-overflow:ellipsis;display:block}
 .a2a-box{border-left:2px solid var(--line);margin:2px 0 6px 6px;padding-left:8px}
 .stgc{font-size:11px;white-space:nowrap}.stgc i{font-style:normal;opacity:.5}.stgc b{color:#B54708}
+
+/* 휴대폰 세로(hong 11/20): 자료 목록 한 줄 = 작은 카드. 칸 이름 줄을 없애고
+   1줄 자료명 + 기준월, 2줄 설명, 3줄 개요 표 + 추이(같은 줄), 4줄 단추 한 줄 */
+@media (max-width:700px){
+#snapRows>tr{display:grid;grid-template-columns:auto minmax(0,1fr) auto;column-gap:12px;row-gap:4px;align-items:center;padding:10px 2px 12px}
+#snapRows>tr>td{padding:0;min-width:0}
+#snapRows>tr>td::before{display:none}
+#snapRows>tr>td[colspan]{grid-column:1/-1}
+#snapRows>tr>td:nth-child(1){grid-row:1;grid-column:3;font-size:12px;color:var(--mut);white-space:nowrap}
+#snapRows>tr>td:nth-child(2){grid-row:1;grid-column:1/3;font-size:15px;line-height:1.35;overflow-wrap:anywhere}
+#snapRows>tr>td.descr{grid-row:2;grid-column:1/-1;font-size:12.5px;color:var(--mut);line-height:1.4}
+#snapRows>tr>td.descr.empty,#snapRows>tr>td.psum.none,#snapRows>tr>td.spk.none{display:none}
+#snapRows>tr>td.psum{grid-row:3;grid-column:1;max-width:none;align-self:start}
+#snapRows>tr>td.psum table.mt td,#snapRows>tr>td.psum table.mt th{padding:1px 6px}
+#snapRows>tr>td.psum table.mt td.l{padding-left:0}
+#snapRows>tr>td.spk{grid-row:3;grid-column:2/-1;display:flex;flex-wrap:wrap;align-items:center;align-self:center;gap:0 8px;font-size:11px}
+#snapRows>tr>td.spk::before{display:inline;content:"━ 재무";color:#244A70;font-size:11px;margin:0;min-width:0}
+#snapRows>tr>td.spk::after{content:"━ 관리";color:#D9822B}
+#snapRows>tr>td.spk>svg.spark{order:3;flex:1 0 100%;width:100%;max-width:220px;height:auto;margin-top:2px}
+#snapRows>tr>td.acts{grid-row:4;grid-column:1/-1;margin-top:6px}
+#snapRows>tr>td.acts .bt{display:flex;gap:6px}
+#snapRows>tr>td.acts button{flex:1 1 0;min-width:0;min-height:34px;padding:0 2px;font-size:12.5px;white-space:nowrap}
+}
+@media (max-width:700px) and (prefers-color-scheme: dark){:root:not([data-theme="light"]) #snapRows>tr>td.spk::before{color:#8FB4D9}}
