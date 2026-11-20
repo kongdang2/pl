@@ -181,12 +181,14 @@
       return '<tr><td>' + esc(s.base_ym) + '</td><td class="memo" title="' + esc(meta) + '"><b>' + esc(s.memo || '(이름 없음)') + '</b>' + ren + '</td>'
         + '<td class="memo descr" data-l="설명">' + (s.descr ? esc(s.descr) : '<span class="hint">—</span>') + dsc + '</td>'
         + '<td class="psum" data-l="개요">' + sumHtml(s.summary) + '</td>'
-        + '<td><button data-open="' + s.id + '"' + (eng ? '' : ' disabled') + '>열기</button>'
-        + ' <button data-dl="' + s.id + '" title="DB 내보내기 ▸ 전체와 같은 .json (PC에서 DB 불러오기)">JSON</button>'
-        + ' <button data-html="' + s.id + '"' + (eng ? '' : ' disabled') + ' title="웹 엔진 + 이 추정자료를 합친 HTML 한 파일. PC에서 바로 열립니다">오프라인 파일</button>'
-        + (s.rev > 1 ? ' <button data-bk="' + s.id + '" title="덮어쓰기 전 판(최근 3개)을 엽니다. 열어서 저장하면 새 자료로 남습니다">이전 저장</button>' : '') // 11-03 뺐다가 11-17 되살림(잘못 저장한 판 되돌리기)
-        + (st.me.role === 'admin' ? ' <button data-del="' + s.id + '" class="danger">삭제</button>' : '') + '</td></tr>';
-    }).join('') : '<tr><td colspan="5" class="hint">' + (biz ? '아직 웹 사업계획이 없습니다. 「📘 새 사업계획」으로 손익추정 자료에서 만듭니다.' : '아직 추정자료가 없습니다.') + '</td></tr>';
+        + '<td class="spk" data-l="추이">' + sparkHtml(s.summary) + '</td>'
+        // 단추(hong 11/20): 같은 크기·작게 3+2 두 줄(가로 스크롤 없게), 「열기」만 테두리 진하게
+        + '<td class="acts"><div class="bt"><button class="open" data-open="' + s.id + '"' + (eng ? '' : ' disabled') + '>열기</button>'
+        + '<button data-dl="' + s.id + '" title="DB 내보내기 ▸ 전체와 같은 .json (PC에서 DB 불러오기)">JSON</button>'
+        + '<button data-html="' + s.id + '"' + (eng ? '' : ' disabled') + ' title="오프라인 파일: 웹 엔진 + 이 추정자료를 합친 HTML 한 파일. PC에서 바로 열립니다">오프라인</button>'
+        + (s.rev > 1 ? '<button data-bk="' + s.id + '" title="덮어쓰기 전 판(최근 3개)을 엽니다. 열어서 저장하면 새 자료로 남습니다">이전 저장</button>' : '') // 11-03 뺐다가 11-17 되살림(잘못 저장한 판 되돌리기)
+        + (st.me.role === 'admin' ? '<button data-del="' + s.id + '" class="danger">삭제</button>' : '') + '</div></td></tr>';
+    }).join('') : '<tr><td colspan="6" class="hint">' + (biz ? '아직 웹 사업계획이 없습니다. 「📘 새 사업계획」으로 손익추정 자료에서 만듭니다.' : '아직 추정자료가 없습니다.') + '</td></tr>';
     $('snapRows').querySelectorAll('[data-open]').forEach((b) => { b.onclick = () => openSnap(b.getAttribute('data-open')); });
     $('snapRows').querySelectorAll('[data-dl]').forEach((b) => { b.onclick = () => downloadSnap(b.getAttribute('data-dl')); });
     $('snapRows').querySelectorAll('[data-html]').forEach((b) => { b.onclick = () => offlineFromList(b.getAttribute('data-html')); });
@@ -898,8 +900,26 @@
     }
     if (!m || m.fin == null) return '<span class="hint">—</span>';
     const nap = m.nap0 != null ? (m.nap0 === m.nap1 || m.nap1 == null ? n0(m.nap0) : n0(m.nap0) + '→' + n0(m.nap1)) : '—';
-    return '<table class="mt"><tr><th></th><th>납사</th><th>재무</th><th>관리</th><th>수율</th><th>환율</th></tr><tr class="cum"><td class="l">연간</td><td>' + nap + '</td>'
-      + vc(m.fin) + vc(m.mg) + '<td>' + (m.cy != null ? Number(m.cy).toFixed(2) + '%' : '—') + '</td><td>' + (m.fx ? n0(m.fx) : '—') + '</td></tr></table>';
+    return '<table class="mt"><tr><th></th><th>납사</th><th>재무</th><th>관리</th></tr><tr class="cum"><td class="l">연간</td><td>' + nap + '</td>'
+      + vc(m.fin) + vc(m.mg) + '</tr></table>'; // 수율·환율은 기록만 하고 표시 안 함(hong 11/20)
+  }
+  // 월별 추이(hong 11/20 A안): 재무(남색)·관리(주황) 두 선, 점선 = 0, 끝 점 = 마지막 달, 손익추정 추정월은 노란 띠.
+  // 손익추정 = 첫 추정월 직전 6개월 + 추정 구간, 사업계획 = 계획 12개월. summary.sp = [[ym, 재무, 관리, 추정?1:0], …] (억원)
+  function sparkHtml(m) {
+    const sp = m && Array.isArray(m.sp) ? m.sp.filter((x) => Array.isArray(x) && x.length >= 3) : [];
+    if (sp.length < 2) return '<span class="hint">—</span>';
+    const W = 150, H = 40, vals = sp.flatMap((x) => [+x[1] || 0, +x[2] || 0]), lo = Math.min(0, ...vals), hi = Math.max(0, ...vals), rg = (hi - lo) || 1;
+    const step = (W - 8) / (sp.length - 1), X = (i) => 4 + i * step, Y = (v) => 3 + (hi - v) * (H - 6) / rg, f1 = (v) => v.toFixed(1);
+    const ei = sp.findIndex((x) => x[3]);
+    let g = '<svg class="spark" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" role="img">';
+    g += '<title>' + esc(sp.map((x) => mo(x[0]) + '월 ' + sgn(x[1]) + '/' + sgn(x[2]) + (x[3] ? '(E)' : '')).join(' · ')) + ' (재무/관리, 억원)</title>';
+    if (ei >= 0) { const x0 = Math.max(0, X(ei) - step / 2); g += '<rect class="est" x="' + f1(x0) + '" y="0" width="' + f1(W - x0) + '" height="' + H + '"/>'; }
+    g += '<line class="zero" x1="2" x2="' + (W - 2) + '" y1="' + f1(Y(0)) + '" y2="' + f1(Y(0)) + '"/>';
+    [[1, 'fin'], [2, 'mg']].forEach(([k, c]) => {
+      g += '<polyline class="' + c + '" points="' + sp.map((x, i) => f1(X(i)) + ',' + f1(Y(+x[k] || 0))).join(' ') + '"/>';
+      g += '<circle class="' + c + '" cx="' + f1(X(sp.length - 1)) + '" cy="' + f1(Y(+sp[sp.length - 1][k] || 0)) + '" r="2.2"/>';
+    });
+    return g + '</svg>';
   }
   function planSummary(win) {
     if (!win) return null;
@@ -916,16 +936,18 @@
           const qYms=[0,1,2].map(k=>qy+'-'+String((qn-1)*3+1+k).padStart(2,'0'));
           const y=String(qy); let end=est[est.length-1]; if(end>y+'-12') end=y+'-12'; if(end<y+'-01') end=qYms[2];
           const cYms=[]; for(let i=1;i<=+end.slice(5,7);i++) cYms.push(y+'-'+String(i).padStart(2,'0'));
-          return JSON.stringify({kind:'est',m,q:Object.assign({y:qy,q:qn},agg(qYms)),cum:agg(cYms)});})()`)));
+          const add=(ym,k)=>{let yy=+ym.slice(0,4),mm=+ym.slice(5,7)-1+k; yy+=Math.floor(mm/12); mm=((mm%12)+12)%12; return yy+'-'+String(mm+1).padStart(2,'0');};
+          const sp=[-6,-5,-4,-3,-2,-1].map(k=>add(est[0],k)).concat(est).map(ym=>{const o=get(ym);return [ym,r1(o.opTotal),r1(o.mgOpTotal),est.includes(ym)?1:0];});
+          return JSON.stringify({kind:'est',m,q:Object.assign({y:qy,q:qn},agg(qYms)),cum:agg(cYms),sp});})()`)));
       } catch (e) { console.warn('개요 계산 실패', e); return null; }
     }
     try {
       return E.inMain(win, () => JSON.parse(win.eval(`(()=>{ if(typeof __perfV17Bust==='function') __perfV17Bust();
-        const yms=_bvPlanYms().slice().sort(); let fin=0,mg=0,num=0,den=0;
-        for(const ym of yms){ fin+=calcFinPnL(ym).opIncome.total; mg+=calcMgmtAll(ym).pnl.opD; const c=cpNccBasis142(ym); if(c&&c.num!=null&&c.den>0){num+=c.num;den+=c.den;} }
+        const yms=_bvPlanYms().slice().sort(); let fin=0,mg=0,num=0,den=0; const sp=[];
+        for(const ym of yms){ const f=calcFinPnL(ym).opIncome.total, g=calcMgmtAll(ym).pnl.opD; fin+=f; mg+=g; sp.push([ym,Math.round(f/10)/10,Math.round(g/10)/10,0]); const c=cpNccBasis142(ym); if(c&&c.num!=null&&c.den>0){num+=c.num;den+=c.den;} }
         const P=S.onsan.prices||{}, nap=yms.map(y=>+((P[y]||{}).nap)||null), fx=yms.map(y=>+((P[y]||{}).fx)||0).filter(Boolean);
         const r1=(v)=>Math.round(v*10)/10;
-        return JSON.stringify({fin:r1(fin/100),mg:r1(mg/100),cy:den>0?Math.round(num/den*1e4)/100:null,nap0:nap[0],nap1:nap[nap.length-1],fx:fx.length?Math.round(fx.reduce((a,b)=>a+b,0)/fx.length):null,ym0:yms[0]||null,ym1:yms[yms.length-1]||null});})()`)));
+        return JSON.stringify({fin:r1(fin/100),mg:r1(mg/100),cy:den>0?Math.round(num/den*1e4)/100:null,nap0:nap[0],nap1:nap[nap.length-1],fx:fx.length?Math.round(fx.reduce((a,b)=>a+b,0)/fx.length):null,ym0:yms[0]||null,ym1:yms[yms.length-1]||null,sp});})()`)));
     } catch (e) { console.warn('개요 계산 실패', e); return null; }
   }
   async function saveSummary(id) {
