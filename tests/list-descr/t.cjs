@@ -93,5 +93,22 @@ const rowOf=(p,name)=>p.evaluate(n=>{const tr=[...document.querySelectorAll('#sn
  ok(vis.w>0&&vis.h>0&&!vis.over,'휴대폰 폭: 설명 보임·가로 넘침 없음',vis);
  const mv=await p.evaluate(()=>{const t=document.querySelector('#snapRows td.psum table.mt');const r=t.getBoundingClientRect();const tds=[...t.querySelectorAll('tr')[1].children].map(c=>Math.round(c.getBoundingClientRect().top));return {w:r.width,one:new Set(tds).size===1,over:document.documentElement.scrollWidth>innerWidth+1};});
  ok(mv.w>0&&mv.one&&!mv.over,'휴대폰 폭: 개요 표가 한 줄 칸으로 보임',mv);
+ // 휴대폰 세로 카드(hong 11/20): 칸 이름 줄 없이 1줄 자료명+기준월, 개요 표와 추이 같은 줄, 단추 한 줄, 빈 설명·빈 추이 줄 숨김
+ const card=await p.evaluate(()=>{const R=(e)=>e?e.getBoundingClientRect():null;const row=(n)=>[...document.querySelectorAll('#snapRows>tr')].find(t=>t.children[1]&&t.children[1].innerText.includes(n));
+  const a=row('예산조정중'),b=row('납사1안'),c=row('김 시험안');const td=(t,k)=>t.children[k];
+  const bt=[...a.querySelectorAll('td.acts button')].map(x=>Math.round(R(x).top));
+  return {h:Math.round(R(a).height),nameYm:Math.abs(R(td(a,0)).top-R(td(a,1)).top)<6&&R(td(a,0)).left>R(td(a,1)).left,
+   sumSpk:R(a.querySelector('td.psum')).bottom>R(a.querySelector('td.spk')).top&&R(a.querySelector('td.spk')).left>=R(a.querySelector('td.psum')).right,
+   btnOne:new Set(bt).size===1&&bt.length===4,btnH:Math.round(R(a.querySelector('td.acts button')).height),
+   lab:getComputedStyle(td(a,1),'::before').display,
+   bSpk:getComputedStyle(b.querySelector('td.spk')).display,cDesc:getComputedStyle(c.querySelector('td.descr')).display,cSum:getComputedStyle(c.querySelector('td.psum')).display,
+   aDesc:getComputedStyle(a.querySelector('td.descr')).display,over:document.documentElement.scrollWidth>innerWidth+1};});
+ ok(card.nameYm&&card.sumSpk&&card.btnOne&&card.btnH>=32&&card.lab==='none','휴대폰: 자료명·기준월 한 줄, 개요·추이 한 줄, 단추 4개(작성자: 삭제 없음) 한 줄(높이 ≥32), 칸 이름 없음',card);
+ ok(card.h<=200&&!card.over,'휴대폰: 자료 한 건 높이 ≤200px(전 269), 가로 넘침 없음',card);
+ ok(card.bSpk==='none'&&card.cDesc==='none'&&card.cSum==='none'&&card.aDesc!=='none','휴대폰: 빈 추이·빈 설명·빈 개요는 숨기고 있는 설명은 보임',card);
+ await p.screenshot({path:path.join(__dirname,'list-phone.png')});
+ await p.setViewportSize({width:1300,height:900});await p.waitForTimeout(300);
+ const dk=await p.evaluate(()=>{const a=[...document.querySelectorAll('#snapRows>tr')].find(t=>t.children[1]&&t.children[1].innerText.includes('납사1안'));return {spk:getComputedStyle(a.querySelector('td.spk')).display,tr:getComputedStyle(a).display};});
+ ok(dk.spk==='table-cell'&&dk.tr==='table-row','넓은 화면은 그대로 표(빈 추이 칸도 자리 유지)',dk);
  ok(!p.errs.length,'페이지 오류 없음(작성자)',p.errs);
  await br.close();server.close();console.log('PASS',pass,'FAIL',fail);process.exit(fail?1:0);})().catch(e=>{console.error(e);process.exit(2);});

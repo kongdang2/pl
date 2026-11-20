@@ -179,9 +179,9 @@
       const meta = (s.source === 'pc' ? 'PC 원본' : '웹 저장') + ' · 작성자 ' + (s.author_name || s.author_email || '') + ' · 마지막 저장 ' + fmtT(s.updated_at || s.created_at) + (s.rev > 1 ? ' (' + s.rev + '회 저장)' : '');
       const dsc = canRename(s) ? ' <button class="ren" data-dsc="' + s.id + '" title="설명 고치기">✏️</button>' : '';
       return '<tr><td>' + esc(s.base_ym) + '</td><td class="memo" title="' + esc(meta) + '"><b>' + esc(s.memo || '(이름 없음)') + '</b>' + ren + '</td>'
-        + '<td class="memo descr" data-l="설명">' + (s.descr ? esc(s.descr) : '<span class="hint">—</span>') + dsc + '</td>'
-        + '<td class="psum" data-l="개요">' + sumHtml(s.summary) + '</td>'
-        + '<td class="spk" data-l="추이">' + sparkHtml(s.summary) + '</td>'
+        + '<td class="memo descr' + (s.descr ? '' : ' empty') + '" data-l="설명">' + (s.descr ? esc(s.descr) : '<span class="hint">—</span>') + dsc + '</td>'
+        + (() => { const sh = sumHtml(s.summary), kh = sparkHtml(s.summary), no = (h) => /^<span class="hint">/.test(h) ? ' none' : ''; // none = 휴대폰에서 칸 숨김
+          return '<td class="psum' + no(sh) + '" data-l="개요">' + sh + '</td><td class="spk' + no(kh) + '" data-l="추이">' + kh + '</td>'; })()
         // 단추(hong 11/20): 같은 크기·작게 3+2 두 줄(가로 스크롤 없게), 「열기」만 테두리 진하게
         + '<td class="acts"><div class="bt"><button class="open" data-open="' + s.id + '"' + (eng ? '' : ' disabled') + '>열기</button>'
         + '<button data-dl="' + s.id + '" title="DB 내보내기 ▸ 전체와 같은 .json (PC에서 DB 불러오기)">JSON</button>'
