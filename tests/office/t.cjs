@@ -1,6 +1,6 @@
 // node tests/office/t.cjs — 사무실(hong 전용 시험 메뉴, hong 11-22) Playwright 조작 시험. 가짜 Supabase(storage-clean/mock.js), 실데이터 없음
 // 보는 것: 관리자에게만 단추 · 창구 숫자 = hong 이 답할 대기 글 · 담당 누르면 다가가 대화창 · 보낸 말이 ⚡ 빠른 질문 글(주제 「사무실 · 손익담당」)로 올라감
-//          · 답이 오면 대화창·말풍선에 뜸 · 이어 묻기는 앞 답에 이어 씀 · 연결 전 담당은 입력 잠김 · 바닥 누르면 hong 이동 · 기존 챗봇 그대로
+//          · 답이 오면 대화창·말풍선에 뜸 · 이어 묻기는 앞 답에 이어 씀 · 담당 9 모두 연결(Codex 는 Codex 앞) · 가만히 있으면 안 그림 · 바닥 누르면 hong 이동 · 기존 챗봇 그대로
 const http = require('http'), fs = require('fs'), path = require('path');
 const { chromium } = require('playwright');
 const REPO = path.resolve(__dirname, '../..'), MOCK = path.resolve(__dirname, '../storage-clean/mock.js'), HONG = 'kongdang2@gmail.com', KIM = 'kim@x.com';
@@ -126,10 +126,28 @@ const still = async (p, name) => { let a = await labXY(p, name); for (let i = 0;
   await p.dblclick('#ofcPh .grow'); const RD = await p.evaluate(() => { const r = document.getElementById('ofcPop').getBoundingClientRect(); return { l: r.left, w: r.width }; });
   ok(Math.abs(RD.w - R0.w) < 2 && Math.abs(RD.l - R0.l) < 2 && !(await p.evaluate(() => localStorage.getItem('sonik.ofc.box'))), '머리줄 두 번 누르면 처음 자리', [R0, RD]);
   await p.click('#ofcPx');
-  // 연결 전 담당
+  // 가만히 있을 때는 다시 그리지 않는다(hong 11-22): 1초 동안 그린 장수가 거의 0, 확대 단추를 누르면 다시 그린다
+  let idle = null;
+  for (let i = 0; i < 12 && !idle; i++) { const a0 = (await p.evaluate(() => window.SonikOffice.stats())).frames; await p.waitForTimeout(1000); const a1 = (await p.evaluate(() => window.SonikOffice.stats())).frames; if (a1 - a0 <= 3) idle = a1 - a0; }
+  ok(idle !== null, '가만히 있으면 1초에 3장 이하로 그린다', idle);
+  const f0 = (await p.evaluate(() => window.SonikOffice.stats())).frames; await p.click('#ofcIn'); await p.waitForTimeout(300);
+  ok((await p.evaluate(() => window.SonikOffice.stats())).frames > f0, '확대하면 다시 그린다');
+  await p.click('#ofcOut');
+  // 다른 담당도 연결(hong 11-22 「다음 담당자로 이어가자」): 구매담당 = Claude 앞, Codex 검증 = Codex 앞, 각자 새 대화
   xy = await labXY(p, '구매담당'); await p.mouse.click(xy[0], xy[1] + 45);
   await p.waitForFunction(() => /구매담당 와 대화/.test(document.getElementById('ofcPh').textContent), null, { timeout: 120000 });
-  ok(await p.evaluate(() => document.getElementById('ofcIn2').disabled) && /아직 실제 답에 연결하지/.test(await p.textContent('#ofcPb')), '연결 전 담당은 입력이 잠긴다');
+  ok(!(await p.evaluate(() => document.getElementById('ofcIn2').disabled)), '구매담당도 말을 걸 수 있다');
+  await p.fill('#ofcIn2', '1월 납사 구매가는?'); await p.press('#ofcIn2', 'Enter');
+  await p.waitForFunction(() => document.querySelectorAll('#ofcChat .ofc-msg.me').length === 1, null, { timeout: 10000 });
+  const s3 = DB.sk_channel[DB.sk_channel.length - 1];
+  ok(s3.topic === '사무실 · 구매담당' && s3.recipient === 'Claude' && s3.reply_to === null && s3.quick === true, '구매담당 글 = 주제 「사무실 · 구매담당」 새 대화', s3);
+  xy = await labXY(p, 'Codex 검증'); await p.mouse.click(xy[0], xy[1] + 45);
+  await p.waitForFunction(() => /Codex 검증 와 대화/.test(document.getElementById('ofcPh').textContent), null, { timeout: 120000 });
+  await p.fill('#ofcIn2', 'v409 재현 확인해 줘'); await p.press('#ofcIn2', 'Enter');
+  await p.waitForFunction(() => document.querySelectorAll('#ofcChat .ofc-msg.me').length === 1, null, { timeout: 10000 });
+  const s4 = DB.sk_channel[DB.sk_channel.length - 1];
+  ok(s4.topic === '사무실 · Codex 검증' && s4.recipient === 'Codex' && s4.reply_to === null, 'Codex 검증 글은 Codex 앞으로', s4);
+  ok(await p.evaluate(() => document.querySelectorAll('.ofc-lab.off').length) === 0, '연결 안 된(흐린) 담당이 없다');
   // 오간 일
   await p.click('#ofcLog'); ok(/hong → 손익담당/.test(await p.textContent('#ofcPb')) && /Codex 검증 → hong/.test(await p.textContent('#ofcPb')), '오간 일에 담당 이름으로 나온다', await p.textContent('#ofcPb'));
   // 실행 중인 글 → 그 담당이 일하는 표시

@@ -3,7 +3,7 @@
 //  - 주황 상자 = hong 이 답해야 하는 「대기」 글. 누르면 기존 💬 챗봇이 열린다.
 //  - 담당은 평소 자리에 있고, 실제로 일할 때(중계 실행 중)만 손을 움직이고, 답이 오면 말풍선이 뜬다.
 //  - hong 캐릭터: 바닥을 누르면 걸어가고, 담당을 누르면 다가가 대화창이 열린다.
-//  - 대화창에 적은 말은 주제 「사무실 · <담당>」 인 ⚡ 빠른 질문 글로 올라가고, PC 중계가 답한다(지금은 LIVE 인 담당만).
+//  - 대화창에 적은 말은 주제 「사무실 · <담당>」 인 ⚡ 빠른 질문 글로 올라가고, PC 중계가 답한다(LIVE 인 담당만, 11-22 부터 9 모두).
 // 3D 는 열 때만 vendor/three-r128.min.js 를 받는다(담당자에게는 내려가지 않는다).
 (function () {
   const AG = [
@@ -17,7 +17,8 @@
     { id: 'codex', name: 'Codex 검증', role: '교차검증, 숫자 재현, 코드 검토. 필요하면 다른 담당 일을 나눠 맡음', menu: '챗봇 · 검증자료', col: 0x3f74c9, cls: 'cx', by: 'Codex' },
     { id: 'head', name: '총괄', role: '전체 담당 관리, 보고서 초안, hong 소통', menu: '챗봇 · 자료 목록' },
   ];
-  const LIVE = { pnl: true }; // 실제 답에 연결한 담당(나머지는 자리만 있다)
+  // 실제 답에 연결한 담당. 11-22 손익담당 → hong 「다음 담당자로 이어가자」로 Claude 담당 8 모두와 Codex 연결
+  const LIVE = { pnl: true, head: true, dev: true, sales: true, buy: true, sup: true, mkt: true, cost: true, codex: true };
   const TOPIC = '사무실 · ';
   const byId = Object.fromEntries(AG.map((a) => [a.id, a])); byId.hong = { id: 'hong', name: 'hong', col: 0xe8590c, cls: 'hg' };
   const byName = Object.fromEntries(AG.map((a) => [a.name, a]));
@@ -96,7 +97,7 @@ body.ofc-moving{user-select:none;-webkit-user-select:none}
 .ofc-nogl{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:13px;padding:20px;text-align:center}
 @media (prefers-reduced-motion:reduce){.ofc *{animation:none!important}}`;
 
-  const st = { sb: null, me: null, rows: [], seen: null, open: false, world: null, cur: null, pop: null, said: {}, loading: null };
+  const st = { sb: null, me: null, rows: [], seen: null, open: false, world: null, cur: null, pop: null, said: {}, loading: null, dirty: 3, frames: 0 };
   let el = null;
 
   // ── 챗봇 글 → 사무실 상태 ──
@@ -232,7 +233,7 @@ body.ofc-moving{user-select:none;-webkit-user-select:none}
     function placeCam() {
       const w = el.clientWidth || 1, h = el.clientHeight || 1, asp = w / h, z = Math.max(16.6 / asp, 8.6) * zf;
       cam.left = -z * asp; cam.right = z * asp; cam.top = z; cam.bottom = -z; cam.updateProjectionMatrix();
-      cam.position.set(target.x + 90 * Math.sin(az) * Math.cos(elv), target.y + 90 * Math.sin(elv), target.z + 90 * Math.cos(az) * Math.cos(elv)); cam.lookAt(target); renderer.setSize(w, h, false);
+      cam.position.set(target.x + 90 * Math.sin(az) * Math.cos(elv), target.y + 90 * Math.sin(elv), target.z + 90 * Math.cos(az) * Math.cos(elv)); cam.lookAt(target); renderer.setSize(w, h, false); st.dirty = 3;
     }
     let down = null, moved = 0; const ray = new T.Raycaster(), v2 = new T.Vector2(), ground = new T.Plane(new T.Vector3(0, 1, 0), 0);
     el.addEventListener('pointerdown', (e) => { if (e.target.closest('.ofc-top,.ofc-bot,.ofc-pop')) return; down = { x: e.clientX, az }; moved = 0; el.classList.add('drag'); });
@@ -345,7 +346,7 @@ body.ofc-moving{user-select:none;-webkit-user-select:none}
       X.moveHong = (x, z) => { hongGo(x, z, null); };
       X.approach = async (b) => { const n = nearP(b); if (!await hongGo(n.p[0], n.p[1], n.face)) return; if (POS[b] && POS[b][1] > 0) { R[b].rotation.y = Math.PI / 2; hFace = b; } ui.open('chat', b); };
       X.say = say;
-      X.select = (id) => { const old = X.sel; X.sel = id; if (old && R[old]) labCls(old); if (id && R[id]) labCls(id); };
+      X.select = (id) => { st.dirty = 3; const old = X.sel; X.sel = id; if (old && R[old]) labCls(old); if (id && R[id]) labCls(id); };
       // 창구 상자: hong 이 답해야 하는 글(최근 3건). 새로 생기면 총괄이 들고 온다
       const slotX = (k) => COUNTER[0] - 1.2 + k * 1.2;
       function mkBox(m) { const b = crate(0.78, ACC); scene.remove(b); pickBox(1, 1, 1, 0, 0, 0, 'hongdesk', b); const e = document.createElement('div'); e.className = 'ofc-sign p'; e.textContent = clip(m.topic || m.body, 14) || '확인할 일'; e.hidden = true; el.appendChild(e); return { id: m.id, box: b, el: e, placed: false }; }
@@ -362,6 +363,7 @@ body.ofc-moving{user-select:none;-webkit-user-select:none}
         }).catch(() => {});
       }
       X.sync = (th, fresh) => {
+        st.dirty = 3;
         // 일하는 담당
         const b = busyAgents(th); X.busy = b; AG.forEach((a) => { R[a.id].userData.tap = !!b[a.id]; labCls(a.id); });
         // 창구 상자
@@ -376,9 +378,10 @@ body.ofc-moving{user-select:none;-webkit-user-select:none}
       function place(e, x, y, z) { pv.set(x, y, z).project(cam); const w = el.clientWidth, h = el.clientHeight; e.style.left = ((pv.x + 1) / 2 * w) + 'px'; e.style.top = ((1 - pv.y) / 2 * h) + 'px'; }
       let t = 0;
       X.tick = (dt) => {
-        t += dt;
+        t += dt; let act = false;
         ALL.forEach((a) => {
           const r = R[a.id], u = r.userData, mv = u.path.length > 0;
+          if (mv || u.talk || u.tap || u.hop > 0) act = true;
           if (mv) {
             const p = u.path[0]; let dx = p.x - r.position.x, dz = p.z - r.position.z; const d = Math.hypot(dx, dz), stp = u.speed * dt;
             if (d <= stp) { r.position.x = p.x; r.position.z = p.z; u.path.shift(); if (!u.path.length) { r.position.y = 0; if (u.face != null) r.rotation.y = u.face; const fn = u.res; u.res = null; if (fn) fn(); } }
@@ -393,17 +396,21 @@ body.ofc-moving{user-select:none;-webkit-user-select:none}
           u.blinkT -= dt; if (u.blinkT < 0) { u.blink = 0.13; u.blinkT = 2 + Math.random() * 4; } u.blink -= dt; u.eyes.forEach((e) => { e.scale.y = u.blink > 0 ? 0.12 : 1; });
           u.H.rotation.x = u.tap && !mv ? 0.16 + 0.04 * Math.sin(t * 6) : 0;
           if (u.hop > 0) { u.hop -= dt; u.H.position.y = 2.02 + Math.abs(Math.sin(u.hop * 10)) * 0.28; } else u.H.position.y = 2.02;
-          place(u.lab, r.position.x, r.position.y + 3.05, r.position.z);
         });
+        // 가만히 있을 때는 다시 그리지 않는다(hong 11-22). 움직임이 끝난 뒤 몇 장만 더 그려 마지막 자세를 맞춘다
+        if (act) st.dirty = Math.max(st.dirty, 3);
+        if (!act && st.dirty <= 0) return false;
+        ALL.forEach((a) => { const r = R[a.id]; place(r.userData.lab, r.position.x, r.position.y + 3.05, r.position.z); });
         signs.forEach((s) => place(s.el, s.x, s.y, s.z));
         X.boxes.forEach((o) => { if (!o.placed) return; o.box.getWorldPosition(wp); place(o.el, wp.x, wp.y + 0.85, wp.z); });
         X.speak.forEach((s) => { if (s.el.hidden) return; const r = R[s.id]; place(s.el, r.position.x, r.position.y + 3.75, r.position.z); });
-        ring.visible = (X.nWait || 0) > 0; ring.scale.setScalar(1 + 0.05 * Math.sin(t * 3));
+        ring.visible = (X.nWait || 0) > 0; ring.scale.setScalar(act ? 1 + 0.05 * Math.sin(t * 3) : 1);
+        return true;
       };
       st.cur = X;
     }
     const clk = new T.Clock();
-    (function frame() { const dt = Math.min(clk.getDelta(), 0.05); if (st.cur && st.open) { st.cur.tick(dt); renderer.render(st.cur.scene, cam); } requestAnimationFrame(frame); })();
+    (function frame() { const dt = Math.min(clk.getDelta(), 0.05); if (st.cur && st.open && st.cur.tick(dt)) { renderer.render(st.cur.scene, cam); st.frames = (st.frames || 0) + 1; if (st.dirty > 0) st.dirty--; } requestAnimationFrame(frame); })();
     return { build, resize: placeCam };
   }
 
@@ -424,7 +431,7 @@ body.ofc-moving{user-select:none;-webkit-user-select:none}
         if (pb.dataset.key !== key) {
           pb.dataset.key = key;
           pb.innerHTML = '<div class="ofc-chat" id="ofcChat">' + (list.length ? list.map((m) => '<div class="ofc-msg' + (m.sender === 'hong' ? ' me' : '') + '">' + esc(String(m.body || '').replace(/<<<[\s\S]*?>>>/g, '').trim()).replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>') + '</div>').join('')
-            : '<p class="ofc-note">' + (live ? esc(a.name) + ' 옆에 왔습니다. 아래 칸에 적어 말을 걸어 보세요. 챗봇의 ⚡ 빠른 질문으로 올라가고, PC 중계가 켜져 있으면 답이 옵니다.' : '이 담당은 아직 실제 답에 연결하지 않았습니다. 지금은 손익담당만 답합니다.') + '</p>')
+            : '<p class="ofc-note">' + (live ? esc(a.name) + ' 옆에 왔습니다. 아래 칸에 적어 말을 걸어 보세요. 챗봇의 ⚡ 빠른 질문으로 올라가고, PC 중계가 켜져 있으면 답이 옵니다.' : '이 담당은 아직 실제 답에 연결하지 않았습니다.') + '</p>')
             + (pend ? '<div class="ofc-msg wait">' + (last.run_state === '실행중' ? '답을 쓰는 중…' : '답을 기다리는 중…') + '</div>' : '') + '</div>';
           pb.scrollTop = pb.scrollHeight;
         }
@@ -491,5 +498,6 @@ body.ofc-moving{user-select:none;-webkit-user-select:none}
       if (window.SonikChannel && window.SonikChannel.watch) window.SonikChannel.watch(onRows);
     },
     close() { if (st.open) setOpen(false); },
+    stats() { return { frames: st.frames, dirty: st.dirty }; },
   };
 })();
