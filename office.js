@@ -3,7 +3,7 @@
 //  - 주황 상자 = hong 이 답해야 하는 「대기」 글. 누르면 기존 💬 챗봇이 열린다.
 //  - 담당은 평소 자리에 있고, 실제로 일할 때(중계 실행 중)만 손을 움직이고, 답이 오면 말풍선이 뜬다.
 //  - hong 캐릭터: 바닥을 누르면 걸어가고, 담당을 누르면 다가가 대화창이 열린다.
-//  - 대화창에 적은 말은 주제 「사무실 · <담당>」 인 ⚡ 빠른 질문 글로 올라가고, PC 중계가 답한다(지금은 LIVE 인 담당만).
+//  - 대화창에 적은 말은 주제 「사무실 · <담당>」 인 ⚡ 빠른 질문 글로 올라가고, PC 중계가 답한다(LIVE 인 담당만, 11-22 부터 9 모두).
 // 3D 는 열 때만 vendor/three-r128.min.js 를 받는다(담당자에게는 내려가지 않는다).
 (function () {
   const AG = [
@@ -17,7 +17,8 @@
     { id: 'codex', name: 'Codex 검증', role: '교차검증, 숫자 재현, 코드 검토. 필요하면 다른 담당 일을 나눠 맡음', menu: '챗봇 · 검증자료', col: 0x3f74c9, cls: 'cx', by: 'Codex' },
     { id: 'head', name: '총괄', role: '전체 담당 관리, 보고서 초안, hong 소통', menu: '챗봇 · 자료 목록' },
   ];
-  const LIVE = { pnl: true }; // 실제 답에 연결한 담당(나머지는 자리만 있다)
+  // 실제 답에 연결한 담당. 11-22 손익담당 → hong 「다음 담당자로 이어가자」로 Claude 담당 8 모두와 Codex 연결
+  const LIVE = { pnl: true, head: true, dev: true, sales: true, buy: true, sup: true, mkt: true, cost: true, codex: true };
   const TOPIC = '사무실 · ';
   const byId = Object.fromEntries(AG.map((a) => [a.id, a])); byId.hong = { id: 'hong', name: 'hong', col: 0xe8590c, cls: 'hg' };
   const byName = Object.fromEntries(AG.map((a) => [a.name, a]));
@@ -66,7 +67,14 @@
 .ofc-say::after{content:"";position:absolute;left:50%;bottom:-6px;width:12px;height:12px;background:#22262d;transform:translateX(-50%) rotate(45deg)}
 .ofc-pop{position:absolute;right:16px;top:74px;width:360px;max-width:calc(100% - 32px);max-height:calc(100% - 170px);display:flex;flex-direction:column;background:#fff;color:#22262d;border-radius:16px;box-shadow:0 10px 34px #00000038;z-index:6;cursor:default;user-select:text;-webkit-user-select:text}
 .ofc-pop[hidden]{display:none}
-@media (max-width:640px){.ofc-pop{top:auto;bottom:64px;left:16px;right:16px;width:auto;max-height:60%}.ofc-hint{display:none}}
+@media (max-width:640px){.ofc-pop{top:auto;bottom:64px;left:16px;right:16px;width:auto;max-height:60%}.ofc-hint{display:none}.ofc-rz{display:none}}
+.ofc-rz{position:absolute;z-index:2;touch-action:none}
+.ofc-rz-n,.ofc-rz-s{left:12px;right:12px;height:6px;cursor:ns-resize}.ofc-rz-n{top:-3px}.ofc-rz-s{bottom:-3px}
+.ofc-rz-e,.ofc-rz-w{top:12px;bottom:12px;width:6px;cursor:ew-resize}.ofc-rz-e{right:-3px}.ofc-rz-w{left:-3px}
+.ofc-rz-ne,.ofc-rz-nw,.ofc-rz-se,.ofc-rz-sw{width:14px;height:14px}.ofc-rz-ne{top:-3px;right:-3px;cursor:nesw-resize}.ofc-rz-sw{bottom:-3px;left:-3px;cursor:nesw-resize}.ofc-rz-nw{top:-3px;left:-3px;cursor:nwse-resize}.ofc-rz-se{bottom:-3px;right:-3px;cursor:nwse-resize}
+@media (min-width:641px){.ofc-ph{cursor:move;user-select:none;touch-action:none}}
+.ofc-pop.sized{max-height:none;max-width:none}.ofc-pop.sized .ofc-pb{flex:1}
+body.ofc-moving{user-select:none;-webkit-user-select:none}
 .ofc-ph{display:flex;gap:10px;align-items:center;padding:14px 14px 12px;border-bottom:1px solid #e3e6ea}
 .ofc-ph b{font-size:15px}.ofc-ph .sub{font-size:12px;color:#666e7a}.ofc-ph .grow{flex:1;min-width:0}
 .ofc-ph button{border:0;background:#f1f3f6;color:#22262d;width:36px;height:36px;border-radius:50%;font-size:16px;line-height:1;flex:none}
@@ -89,7 +97,7 @@
 .ofc-nogl{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:13px;padding:20px;text-align:center}
 @media (prefers-reduced-motion:reduce){.ofc *{animation:none!important}}`;
 
-  const st = { sb: null, me: null, rows: [], seen: null, open: false, world: null, cur: null, pop: null, said: {}, loading: null };
+  const st = { sb: null, me: null, rows: [], seen: null, open: false, world: null, cur: null, pop: null, said: {}, loading: null, dirty: 3, frames: 0 };
   let el = null;
 
   // ── 챗봇 글 → 사무실 상태 ──
@@ -138,9 +146,62 @@
       + '<span class="ofc-hint">바닥을 누르면 hong 이 걸어갑니다 · 담당을 누르면 다가가 말을 겁니다</span></div>'
       + '<div class="ofc-pop" id="ofcPop" hidden><div class="ofc-ph" id="ofcPh"></div><div class="ofc-pb" id="ofcPb"></div><div id="ofcPf"></div></div>';
     document.body.appendChild(el);
+    popDrag();
     $('ofcClose').onclick = () => setOpen(false);
     $('ofcCount').onclick = openChat;
     $('ofcLog').onclick = () => ui.open('log');
+  }
+  // 대화창 크기·위치(hong 11-22 「기존 챗봇창처럼 드래그로 자유롭게」): 가장자리·모서리를 끌어 크기, 머리줄을 끌어 위치. 내 브라우저에 기억(sonik.ofc.box), 머리줄 두 번 누르면 처음 자리로. 좁은 화면은 그대로
+  const pbox = {
+    get() { try { return JSON.parse(localStorage.getItem('sonik.ofc.box') || 'null'); } catch (_) { return null; } },
+    set(v) { try { if (v) localStorage.setItem('sonik.ofc.box', JSON.stringify(v)); else localStorage.removeItem('sonik.ofc.box'); } catch (_) { /* 무시 */ } },
+  };
+  const P_MIN_W = 300, P_MIN_H = 260, pwide = () => window.innerWidth > 640;
+  function placePop(b) {
+    const pop = $('ofcPop'); if (!pop) return; const ps = pop.style;
+    if (!b || !pwide()) { ps.left = ps.top = ps.width = ps.height = ps.right = ''; pop.classList.remove('sized'); return; }
+    const R = el.getBoundingClientRect(), vw = R.width, vh = R.height;
+    const w = Math.min(Math.max(b.w, P_MIN_W), vw - 16), h = Math.min(Math.max(b.h, P_MIN_H), vh - 16);
+    const l = Math.min(Math.max(b.l, 8), vw - w - 8), t = Math.min(Math.max(b.t, 8), vh - h - 8);
+    Object.assign(ps, { left: l + 'px', top: t + 'px', width: w + 'px', height: h + 'px', right: 'auto' }); pop.classList.add('sized');
+  }
+  function popRect() { const pop = $('ofcPop'), R = el.getBoundingClientRect(), r = pop.getBoundingClientRect(); return { l: r.left - R.left, t: r.top - R.top, w: r.width, h: r.height, R }; }
+  function dragWith(g, e, cursor, move) {
+    e.preventDefault(); try { g.setPointerCapture(e.pointerId); } catch (_) { /* 무시 */ }
+    const r = popRect(), x0 = e.clientX, y0 = e.clientY;
+    document.body.classList.add('ofc-moving'); document.body.style.cursor = cursor;
+    const mv = (ev) => placePop(move(r, ev.clientX - x0, ev.clientY - y0));
+    const up = () => {
+      g.removeEventListener('pointermove', mv); g.removeEventListener('pointerup', up); g.removeEventListener('pointercancel', up);
+      document.body.classList.remove('ofc-moving'); document.body.style.cursor = '';
+      const q = popRect(); pbox.set({ l: Math.round(q.l), t: Math.round(q.t), w: Math.round(q.w), h: Math.round(q.h) });
+    };
+    g.addEventListener('pointermove', mv); g.addEventListener('pointerup', up); g.addEventListener('pointercancel', up);
+  }
+  function popDrag() {
+    const pop = $('ofcPop'), ph = $('ofcPh');
+    for (const d of ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']) {
+      const g = document.createElement('div'); g.className = 'ofc-rz ofc-rz-' + d;
+      g.ondblclick = () => { pbox.set(null); placePop(null); };
+      g.onpointerdown = (e) => {
+        if (e.button !== 0 || !pwide()) return;
+        dragWith(g, e, getComputedStyle(g).cursor, (r, dx, dy) => {
+          const b = { l: r.l, t: r.t, w: r.w, h: r.h }, W = r.R.width, H = r.R.height;
+          if (d.includes('e')) b.w = Math.min(r.w + dx, W - 8 - r.l);
+          if (d.includes('s')) b.h = Math.min(r.h + dy, H - 8 - r.t);
+          if (d.includes('w')) { b.w = Math.min(Math.max(r.w - dx, P_MIN_W), r.l + r.w - 8); b.l = r.l + r.w - b.w; }
+          if (d.includes('n')) { b.h = Math.min(Math.max(r.h - dy, P_MIN_H), r.t + r.h - 8); b.t = r.t + r.h - b.h; }
+          return b;
+        });
+      };
+      pop.appendChild(g);
+    }
+    ph.ondblclick = (e) => { if (!e.target.closest('button,input,a')) { pbox.set(null); placePop(null); } };
+    ph.onpointerdown = (e) => {
+      if (e.button !== 0 || !pwide() || e.target.closest('button,input,a')) return;
+      dragWith(ph, e, 'move', (r, dx, dy) => ({ l: r.l + dx, t: r.t + dy, w: r.w, h: r.h }));
+    };
+    window.addEventListener('resize', () => { if (st.pop) placePop(pbox.get()); });
   }
   function openChat() { if (window.SonikChannel && window.SonikChannel.open) window.SonikChannel.open(); }
   function loadThree() {
@@ -172,7 +233,7 @@
     function placeCam() {
       const w = el.clientWidth || 1, h = el.clientHeight || 1, asp = w / h, z = Math.max(16.6 / asp, 8.6) * zf;
       cam.left = -z * asp; cam.right = z * asp; cam.top = z; cam.bottom = -z; cam.updateProjectionMatrix();
-      cam.position.set(target.x + 90 * Math.sin(az) * Math.cos(elv), target.y + 90 * Math.sin(elv), target.z + 90 * Math.cos(az) * Math.cos(elv)); cam.lookAt(target); renderer.setSize(w, h, false);
+      cam.position.set(target.x + 90 * Math.sin(az) * Math.cos(elv), target.y + 90 * Math.sin(elv), target.z + 90 * Math.cos(az) * Math.cos(elv)); cam.lookAt(target); renderer.setSize(w, h, false); st.dirty = 3;
     }
     let down = null, moved = 0; const ray = new T.Raycaster(), v2 = new T.Vector2(), ground = new T.Plane(new T.Vector3(0, 1, 0), 0);
     el.addEventListener('pointerdown', (e) => { if (e.target.closest('.ofc-top,.ofc-bot,.ofc-pop')) return; down = { x: e.clientX, az }; moved = 0; el.classList.add('drag'); });
@@ -285,7 +346,7 @@
       X.moveHong = (x, z) => { hongGo(x, z, null); };
       X.approach = async (b) => { const n = nearP(b); if (!await hongGo(n.p[0], n.p[1], n.face)) return; if (POS[b] && POS[b][1] > 0) { R[b].rotation.y = Math.PI / 2; hFace = b; } ui.open('chat', b); };
       X.say = say;
-      X.select = (id) => { const old = X.sel; X.sel = id; if (old && R[old]) labCls(old); if (id && R[id]) labCls(id); };
+      X.select = (id) => { st.dirty = 3; const old = X.sel; X.sel = id; if (old && R[old]) labCls(old); if (id && R[id]) labCls(id); };
       // 창구 상자: hong 이 답해야 하는 글(최근 3건). 새로 생기면 총괄이 들고 온다
       const slotX = (k) => COUNTER[0] - 1.2 + k * 1.2;
       function mkBox(m) { const b = crate(0.78, ACC); scene.remove(b); pickBox(1, 1, 1, 0, 0, 0, 'hongdesk', b); const e = document.createElement('div'); e.className = 'ofc-sign p'; e.textContent = clip(m.topic || m.body, 14) || '확인할 일'; e.hidden = true; el.appendChild(e); return { id: m.id, box: b, el: e, placed: false }; }
@@ -302,6 +363,7 @@
         }).catch(() => {});
       }
       X.sync = (th, fresh) => {
+        st.dirty = 3;
         // 일하는 담당
         const b = busyAgents(th); X.busy = b; AG.forEach((a) => { R[a.id].userData.tap = !!b[a.id]; labCls(a.id); });
         // 창구 상자
@@ -316,9 +378,10 @@
       function place(e, x, y, z) { pv.set(x, y, z).project(cam); const w = el.clientWidth, h = el.clientHeight; e.style.left = ((pv.x + 1) / 2 * w) + 'px'; e.style.top = ((1 - pv.y) / 2 * h) + 'px'; }
       let t = 0;
       X.tick = (dt) => {
-        t += dt;
+        t += dt; let act = false;
         ALL.forEach((a) => {
           const r = R[a.id], u = r.userData, mv = u.path.length > 0;
+          if (mv || u.talk || u.tap || u.hop > 0) act = true;
           if (mv) {
             const p = u.path[0]; let dx = p.x - r.position.x, dz = p.z - r.position.z; const d = Math.hypot(dx, dz), stp = u.speed * dt;
             if (d <= stp) { r.position.x = p.x; r.position.z = p.z; u.path.shift(); if (!u.path.length) { r.position.y = 0; if (u.face != null) r.rotation.y = u.face; const fn = u.res; u.res = null; if (fn) fn(); } }
@@ -333,17 +396,21 @@
           u.blinkT -= dt; if (u.blinkT < 0) { u.blink = 0.13; u.blinkT = 2 + Math.random() * 4; } u.blink -= dt; u.eyes.forEach((e) => { e.scale.y = u.blink > 0 ? 0.12 : 1; });
           u.H.rotation.x = u.tap && !mv ? 0.16 + 0.04 * Math.sin(t * 6) : 0;
           if (u.hop > 0) { u.hop -= dt; u.H.position.y = 2.02 + Math.abs(Math.sin(u.hop * 10)) * 0.28; } else u.H.position.y = 2.02;
-          place(u.lab, r.position.x, r.position.y + 3.05, r.position.z);
         });
+        // 가만히 있을 때는 다시 그리지 않는다(hong 11-22). 움직임이 끝난 뒤 몇 장만 더 그려 마지막 자세를 맞춘다
+        if (act) st.dirty = Math.max(st.dirty, 3);
+        if (!act && st.dirty <= 0) return false;
+        ALL.forEach((a) => { const r = R[a.id]; place(r.userData.lab, r.position.x, r.position.y + 3.05, r.position.z); });
         signs.forEach((s) => place(s.el, s.x, s.y, s.z));
         X.boxes.forEach((o) => { if (!o.placed) return; o.box.getWorldPosition(wp); place(o.el, wp.x, wp.y + 0.85, wp.z); });
         X.speak.forEach((s) => { if (s.el.hidden) return; const r = R[s.id]; place(s.el, r.position.x, r.position.y + 3.75, r.position.z); });
-        ring.visible = (X.nWait || 0) > 0; ring.scale.setScalar(1 + 0.05 * Math.sin(t * 3));
+        ring.visible = (X.nWait || 0) > 0; ring.scale.setScalar(act ? 1 + 0.05 * Math.sin(t * 3) : 1);
+        return true;
       };
       st.cur = X;
     }
     const clk = new T.Clock();
-    (function frame() { const dt = Math.min(clk.getDelta(), 0.05); if (st.cur && st.open) { st.cur.tick(dt); renderer.render(st.cur.scene, cam); } requestAnimationFrame(frame); })();
+    (function frame() { const dt = Math.min(clk.getDelta(), 0.05); if (st.cur && st.open && st.cur.tick(dt)) { renderer.render(st.cur.scene, cam); st.frames = (st.frames || 0) + 1; if (st.dirty > 0) st.dirty--; } requestAnimationFrame(frame); })();
     return { build, resize: placeCam };
   }
 
@@ -355,7 +422,7 @@
     pick(id) { if (id === 'hongdesk' || id === 'hong') { openChat(); return; } ui.close(); st.cur.approach(id); },
     open(kind, id) { st.pop = { kind, id }; $('ofcPb').innerHTML = ''; $('ofcPf').innerHTML = ''; $('ofcPb').dataset.key = ''; if (st.cur) st.cur.select(kind === 'log' ? null : id); ui.render(threads()); },
     render(th) {
-      const s = st.pop, pop = $('ofcPop'); if (!s) { if (pop) pop.hidden = true; return; } pop.hidden = false;
+      const s = st.pop, pop = $('ofcPop'); if (!s) { if (pop) pop.hidden = true; return; } if (pop.hidden) { pop.hidden = false; placePop(pbox.get()); }
       const ph = $('ofcPh'), pb = $('ofcPb'), pf = $('ofcPf');
       if (s.kind === 'chat') {
         const a = byId[s.id], list = th.out[s.id] || [], live = !!LIVE[s.id], last = list[list.length - 1];
@@ -363,8 +430,8 @@
         const key = 'chat:' + s.id + ':' + list.map((m) => m.id + (m.run_state || '') + m.status).join(',');
         if (pb.dataset.key !== key) {
           pb.dataset.key = key;
-          pb.innerHTML = '<div class="ofc-chat" id="ofcChat">' + (list.length ? list.map((m) => '<div class="ofc-msg' + (m.sender === 'hong' ? ' me' : '') + '">' + esc(String(m.body || '').replace(/<<<[\s\S]*?>>>/g, '').trim()) + '</div>').join('')
-            : '<p class="ofc-note">' + (live ? esc(a.name) + ' 옆에 왔습니다. 아래 칸에 적어 말을 걸어 보세요. 챗봇의 ⚡ 빠른 질문으로 올라가고, PC 중계가 켜져 있으면 답이 옵니다.' : '이 담당은 아직 실제 답에 연결하지 않았습니다. 지금은 손익담당만 답합니다.') + '</p>')
+          pb.innerHTML = '<div class="ofc-chat" id="ofcChat">' + (list.length ? list.map((m) => '<div class="ofc-msg' + (m.sender === 'hong' ? ' me' : '') + '">' + esc(String(m.body || '').replace(/<<<[\s\S]*?>>>/g, '').trim()).replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>') + '</div>').join('')
+            : '<p class="ofc-note">' + (live ? esc(a.name) + ' 옆에 왔습니다. 아래 칸에 적어 말을 걸어 보세요. 챗봇의 ⚡ 빠른 질문으로 올라가고, PC 중계가 켜져 있으면 답이 옵니다.' : '이 담당은 아직 실제 답에 연결하지 않았습니다.') + '</p>')
             + (pend ? '<div class="ofc-msg wait">' + (last.run_state === '실행중' ? '답을 쓰는 중…' : '답을 기다리는 중…') + '</div>' : '') + '</div>';
           pb.scrollTop = pb.scrollHeight;
         }
@@ -431,5 +498,6 @@
       if (window.SonikChannel && window.SonikChannel.watch) window.SonikChannel.watch(onRows);
     },
     close() { if (st.open) setOpen(false); },
+    stats() { return { frames: st.frames, dirty: st.dirty }; },
   };
 })();
