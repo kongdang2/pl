@@ -2,7 +2,8 @@
 // 웹이 저장 직후 적어 두는 판매 요약(sk_digest, kind='sales', 수 KB)만 읽어, 담당 카드(챗봇\지식\담당_판매.md §4)의 점검 목록으로 본다.
 // 문제가 있을 때만 사무실 판매담당 대화(주제 「사무실 · 판매담당」)로 hong 에게 한 번 알린다. 자료 파일은 내려받지 않고, 숫자·자료는 바꾸지 않는다.
 // PC 위치: 손익추정시스템\소통\판매점검.cjs  (중계.cjs 가 require 해서 start() 를 부른다. 상태 = 소통\판매점검상태.json)
-// 설정(중계설정.json): salesCheck:false 끄기 · salesCheckPollMin 5 · salesPricePct 15 · salesQtyPct 40
+// 설정(중계설정.json): salesCheck:false 끄기 · salesCheckPollMin 5 · salesPricePct 15 · salesQtyPct 40 · salesMinTon 100
+// 11-22 첫 실가동에서 사업계획 2차안 45건(격월 카고·15톤 C4 LPG 등) → 첫 저장 = 금액 0·판가 급변만, 빠진 품목·물량은 직전 저장 대비 바뀐 줄·100톤 이상만
 'use strict';
 const fs = require('fs'), path = require('path');
 
@@ -48,19 +49,19 @@ function check(d, dp, opt) {
         const changed = !dp || !o !== !c || (o && c && (o.q !== c.q || o.a !== c.a || o.fm !== c.fm || o.dr !== c.dr));
         const push = (kind, text) => out.push({ site, ym, key, kind, text: mon(ym) + ' ' + name + ': ' + text, changed });
         const bq = b ? b.q : 0, cq = c ? c.q : 0;
-        // 1 빠진 품목 (S/D 달 제외)
-        if (bq >= 1 && cq <= 0 && !sd.has(ym)) push('missing', '판매가 없음 (' + (b.c ? '직전 확정월' : mon(pym)) + ' ' + num(bq) + '톤)');
+        // 1 빠진 품목 (S/D 달 제외, 100톤 미만 제외) — 같은 자료 직전 저장이 있을 때 바뀐 줄만(사업계획 격월 카고 등 소음 방지, hong 11-22)
+        if (dp && changed && bq >= (opt.minTon == null ? 100 : +opt.minTon) && cq <= 0 && !sd.has(ym)) push('missing', '판매가 없음 (' + (b.c ? '직전 확정월' : mon(pym)) + ' ' + num(bq) + '톤)');
         if (!c) continue;
         // 5 수량 있는데 금액 0
-        if (cq > 0 && Math.abs(c.a) < 0.05) push('noamt', '수량 ' + num(cq) + '톤인데 금액 0');
+        if (cq > 0 && Math.abs(c.a) < 0.05 && (!dp || changed)) push('noamt', '수량 ' + num(cq) + '톤인데 금액 0');
         // 2 판가 급변
         const uc = unit(c.a, cq), ub = b ? unit(b.a, bq) : null;
-        if (uc != null && ub != null && ub > 0) {
+        if (uc != null && ub != null && ub > 0 && (!dp || changed)) {
           const dlt = uc / ub - 1;
           if (Math.abs(dlt) > PP) push('price', '원화 단가 ' + num(ub) + ' → ' + num(uc) + '천원/톤 (' + pct(dlt) + (napD != null ? ', 같은 달 납사 ' + pct(napD) : '') + ')');
         }
         // 3 물량 급변 (S/D 달 제외)
-        if (bq > 0 && cq > 0 && !sd.has(ym) && Math.abs(cq / bq - 1) > QP) push('qty', '수량 ' + num(bq) + ' → ' + num(cq) + '톤 (' + pct(cq / bq - 1) + ')');
+        if (dp && changed && bq >= (opt.minTon == null ? 100 : +opt.minTon) && cq > 0 && !sd.has(ym) && Math.abs(cq / bq - 1) > QP) push('qty', '수량 ' + num(bq) + ' → ' + num(cq) + '톤 (' + pct(cq / bq - 1) + ')');
         // 4 포뮬러 행이 직접 단가로 바뀜 (같은 자료 직전 저장과 비교)
         if (o && o.fm > 0 && c.fm === 0 && c.dr > 0) push('formula', '포뮬러 단가였는데 직접 단가로 바뀜');
       }
@@ -73,9 +74,9 @@ function check(d, dp, opt) {
 function message(memo, by, issues, first) {
   const list = first ? issues : issues.filter((x) => x.changed);
   if (!list.length) return null;
-  const order = { missing: 0, noamt: 1, price: 2, formula: 3, qty: 4 };
+  const order = { noamt: 0, missing: 1, price: 2, formula: 3, qty: 4 };
   list.sort((p, q) => order[p.kind] - order[q.kind] || (p.ym < q.ym ? -1 : p.ym > q.ym ? 1 : 0));
-  const head = '「' + memo + '」 판매 자료에서 확인할 곳 ' + list.length + '건을 찾았습니다' + (by ? ' (' + by + ' 저장)' : '') + '.';
+  const head = '「' + memo + '」 판매 자료에서 확인할 곳 ' + list.length + '건을 찾았습니다' + (by ? ' (' + by + ' 저장)' : '') + '.' + (first ? ' 이 자료의 첫 점검이라 기준점을 잡고, 금액 0·판가 급변만 봤습니다.' : '');
   const lines = list.slice(0, 12).map((x) => '- ' + x.text);
   if (list.length > 12) lines.push('- 외 ' + (list.length - 12) + '건');
   return head + '\n\n' + lines.join('\n') + '\n\n판매담당 자동 1차 점검입니다(담당 카드 §4 기준). 자료는 바꾸지 않았습니다. 궁금한 줄은 이 대화에서 판매담당에게 물어보세요.';
@@ -105,7 +106,7 @@ function start(env) {
         const [snap] = await api('GET', 'sk_snapshots', '?select=memo,last_saved_name&id=eq.' + n.snapshot_id);
         if (!row || !snap) continue;
         const d = row.digest, p = st.prev[n.snapshot_id];
-        const body = message(snap.memo, snap.last_saved_name || '', check(d, p ? p.d : null, { pricePct: conf.salesPricePct, qtyPct: conf.salesQtyPct }), !p);
+        const body = message(snap.memo, snap.last_saved_name || '', check(d, p ? p.d : null, { pricePct: conf.salesPricePct, qtyPct: conf.salesQtyPct, minTon: conf.salesMinTon }), !p);
         if (body) { await post({ sender: 'Claude', recipient: 'hong', topic: '사무실 · 판매담당', status: '안내', body }); log('판매점검 알림', snap.memo); }
         st.prev[n.snapshot_id] = { at: n.at, d };
       }
