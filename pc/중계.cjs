@@ -569,6 +569,29 @@ function memberPrompt(agent, m, ch, group) {
     '채널>>>',
   ].join('\n');
 }
+// ★OFC1122 사무실 화면(hong 전용 메뉴)에서 담당에게 직접 건 말: 주제가 「사무실 · <담당>」. 그 담당의 맡은 일 안에서 짧게 답하고 주제를 바꾸지 않는다
+const OFFICE_ROLES = {
+  '총괄': '전체 담당 관리, 보고서 초안, hong 과의 소통',
+  '손익담당': '재무손익·관리손익 전체 메뉴, 차이분석 등 분석, 재고평가, 공제부 등가계수(입력 누락·기준 변경) 관리',
+  '개발담당': '엔진·웹 수정 총괄',
+  '판매담당': '판매정보, 판매 포뮬러와 판가',
+  '구매담당': '구매정보, 구매 포뮬러와 구매가',
+  '수급담당': '생산월보·수급밸런스, 재고 수량',
+  '시황담당': '국제가격 기준치와 스프레드',
+  '원가담당': '본사 판관비, 온산·울산 원가, 제조원가명세서, 예산',
+};
+function officeLines(m) {
+  const t = String(m.topic || '');
+  if (t.indexOf('사무실 · ') !== 0) return [];
+  const name = t.slice('사무실 · '.length).trim();
+  const job = OFFICE_ROLES[name];
+  if (!job) return [];
+  return [
+    '이 글은 hong 이 사무실 화면에서 「' + name + '」에게 직접 건 말이다. 너는 지금 「' + name + '」 자리에서 답한다(맡은 일: ' + job + '. 추정과 사업계획 모두).',
+    '작은 대화창에 뜨므로 결론부터 3~5줄로 짧게 답한다. 숫자는 근거(자료 이름·월)를 한마디 붙인다. 맡은 일 밖의 질문이면 어느 담당 일인지 한 줄로 알려 주고 아는 만큼만 답한다.',
+    '답의 받는이는 hong, 상태는 안내, 주제는 「' + t + '」 그대로 둔다(바꾸면 대화창에서 이어지지 않는다).',
+  ];
+}
 function prompt(agent, m, ch, group) {
   if (isMember(m)) return memberPrompt(agent, m, ch, group);
   const other = agent === 'Codex' ? 'Claude' : 'Codex';
@@ -578,6 +601,7 @@ function prompt(agent, m, ch, group) {
   return [
     ...guideLines(!m.quick),
     role,
+    ...officeLines(m),
     '작업 폴더: ' + ROOT + ' . 시작 전에 AGENTS.md 를 읽는다.',
     '아래는 웹 「챗봇」 채널의 글 흐름이다(마지막 글이 너에게 온 요청).',
     '',
