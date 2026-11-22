@@ -25,23 +25,28 @@ const rows = [
 const fake = `
 window.__db = { sk_channel: ${JSON.stringify(rows)}, sk_relay: [{ id: 1, heartbeat: new Date().toISOString(), paused: false }], sk_requests: [{ id: 7, title: 'a', stage: 1, status: '진행' }, { id: 8, title: 'b', stage: 0, status: '접수' }] };
 window.__calls = [];
+// PostgREST or=(a.gt.1,b.gt."x",id.in.(1,2)) 흉내
+function orParts(s) { const out = []; let d = 0, qt = false, cur = ''; for (const ch of s) { if (ch === '"') qt = !qt; if (!qt && ch === '(') d++; if (!qt && ch === ')') d--; if (!qt && !d && ch === ',') { out.push(cur); cur = ''; } else cur += ch; } if (cur) out.push(cur); return out; }
+function orOk(r, s) { return orParts(s).some((p) => { const m = /^(\\w+)\\.(gt|eq|in)\\.(.*)$/.exec(p); if (!m) return false; let v = m[3].replace(/^"|"$/g, ''); const x = r[m[1]];
+  if (m[2] === 'in') return v.replace(/[()]/g, '').split(',').map(Number).includes(x); if (m[1] === 'id') v = +v; return m[2] === 'gt' ? x > v : x === v; }); }
+window.__rt = { status: 'SUBSCRIBED', cb: null };
 function q(table) {
   const st = { table, f: [], op: 'select', lim: 1e9, v: null };
   const run = () => {
     let rs = window.__db[table] || [];
     window.__calls.push({ table, op: st.op, f: st.f.map((x) => x[0] + ':' + x[1]) });
     if (st.op === 'insert') { const r = Object.assign({ id: Math.max(0, ...rs.map((x) => x.id)) + 1, at: new Date().toISOString(), updated_at: new Date().toISOString(), live: [], run_state: null }, st.v); rs.push(r); return { data: [r], error: null }; }
-    for (const [k, c, v] of st.f) rs = rs.filter((r) => k === 'eq' ? r[c] === v : k === 'gt' ? r[c] > v : k === 'in' ? v.includes(r[c]) : true);
+    for (const [k, c, v] of st.f) rs = rs.filter((r) => k === 'eq' ? r[c] === v : k === 'gt' ? r[c] > v : k === 'in' ? v.includes(r[c]) : k === 'or' ? orOk(r, c) : true);
     if (st.op === 'update') { rs.forEach((r) => Object.assign(r, st.v)); return { data: rs, error: null }; }
     rs = rs.slice().sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, st.lim);
     return { data: st.one ? rs[0] || null : rs, error: null };
   };
-  const p = { select() { return p; }, order() { return p; }, limit(n) { st.lim = n; return p; }, eq(c, v) { st.f.push(['eq', c, v]); return p; }, gt(c, v) { st.f.push(['gt', c, v]); return p; }, in(c, v) { st.f.push(['in', c, v]); return p; },
+  const p = { select() { return p; }, order() { return p; }, limit(n) { st.lim = n; return p; }, eq(c, v) { st.f.push(['eq', c, v]); return p; }, or(v) { st.f.push(['or', v, null]); return p; }, gt(c, v) { st.f.push(['gt', c, v]); return p; }, in(c, v) { st.f.push(['in', c, v]); return p; },
     insert(v) { st.op = 'insert'; st.v = v; return p; }, update(v) { st.op = 'update'; st.v = v; return p; }, maybeSingle() { st.one = true; return p; }, then(a, b) { return Promise.resolve(run()).then(a, b); } };
   return p;
 }
 window.__sb = { from: q, auth: { getSession: async () => ({ data: { session: { user: { email: 'h@x' } } } }) }, storage: { from: () => ({ createSignedUrls: async () => ({ data: [] }) }) },
-  channel() { const c = { on() { return c; }, subscribe(cb) { setTimeout(() => cb('SUBSCRIBED'), 5); return c; } }; return c; } };
+  channel() { const c = { on() { return c; }, subscribe(cb) { window.__rt.cb = cb; setTimeout(() => cb(window.__rt.status), 5); return c; } }; return c; } };
 `;
 const html = '<!doctype html><meta charset="utf-8"><style>' + css + '</style><div id="modal" hidden></div>' + chat + '<script>' + fake + '</script><script>' + js + '</script>';
 
@@ -100,7 +105,23 @@ const html = '<!doctype html><meta charset="utf-8"><style>' + css + '</style><di
   await pg.evaluate(() => { window.__calls.length = 0; });
   await pg.click('#chClose'); await pg.click('#chFab'); await pg.waitForTimeout(200);
   const calls = (await pg.evaluate(() => window.__calls)).filter((c) => c.table === 'sk_channel' && c.op === 'select');
-  ok('다시 열 때는 바뀐 글만 읽음(updated_at 조건)', calls.length >= 1 && calls.every((c) => c.f.some((f) => /^gt:updated_at/.test(f))), calls);
+  ok('다시 열 때는 바뀐 글만 읽음(updated_at 조건)', calls.length >= 1 && calls.every((c) => c.f.some((f) => /^or:.*updated_at\.gt\./.test(f))), calls);
+
+  // hong 11-22 전송량: Realtime 이 끊겨 있어도 통째로 읽지 않고 바뀐 것만 읽는다
+  const sel = async () => (await pg.evaluate(() => window.__calls)).filter((c) => c.table === 'sk_channel' && c.op === 'select');
+  await pg.evaluate(() => { window.__calls.length = 0; window.__rt.cb('CHANNEL_ERROR'); });
+  await pg.evaluate(() => { const r = window.__db.sk_channel.find((x) => x.id === 4); r.status = '답변'; r.run_state = '완료'; r.live = []; // 중계는 updated_at 을 안 고친다
+    window.__db.sk_channel.push(Object.assign({}, window.__db.sk_channel[0], { id: 99, at: new Date().toISOString(), updated_at: new Date().toISOString(), sender: 'Claude', recipient: 'hong', status: '안내', body: '새 글 99', reply_to: null, request_id: null, topic: '시험' })); });
+  await pg.evaluate(() => window.SonikChannel.reload()); await pg.waitForTimeout(150);
+  let cs = await sel();
+  ok('끊겨 있을 때도 바뀐 것만 읽음(새 글·대기·작업 중 글)', cs.length >= 1 && cs.every((c) => c.f.some((f) => /^or:id\.gt\.\d+.*id\.in\.\(/.test(f))), cs);
+  const r4 = await pg.evaluate(() => window.SonikChannel.rows().find((x) => x.id === 4));
+  ok('중계가 updated_at 없이 바꾼 작업 중 글도 반영', r4 && r4.status === '답변' && r4.run_state === '완료', r4);
+  ok('새 글도 반영', (await pg.$$('#ch99')).length === 1);
+  await pg.evaluate(() => { window.__calls.length = 0; window.__rt.cb('SUBSCRIBED'); }); await pg.waitForTimeout(150);
+  cs = await sel();
+  ok('다시 이어질 때도 통째로 읽지 않음', cs.length >= 1 && cs.every((c) => c.f.some((f) => /^or:/.test(f))), cs);
+  ok('Realtime 상태를 알려 줌(isLive)', await pg.evaluate(() => window.SonikChannel.isLive()) === true);
 
   // hong 11-13: 말풍선을 눌러 열어도 숫자가 안 없어짐 — 바뀐 글이 없으면 바뀐 글만 읽기가 일찍 끝나 「본 위치」를 안 바꿨다
   await pg.evaluate(() => localStorage.setItem('sonik.ch.seen', '0'));

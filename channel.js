@@ -26,10 +26,22 @@
   // full = 최근 150글 통째로. 아니면 마지막으로 읽은 뒤 바뀐 글만 받아 합친다(hong 11-11 전송량: 팝업을 열거나 예비로 다시 읽을 때마다 0.5MB 를 받지 않게).
   // 바뀐 글만 읽기는 Realtime 이 이어져 있을 때만 쓴다(끊겨 있으면 놓친 변경이 있을 수 있어 통째로). 지워진 글은 1시간마다 통째로 읽을 때 빠진다.
   const stampOf = (rows) => rows.reduce((a, m) => (m.updated_at && Date.parse(m.updated_at) > (Date.parse(a) || 0) ? m.updated_at : a), '');
+  // hong 11-22 전송량: Realtime 이 끊겨 있거나 다시 이어질 때마다 150글(0.5~0.8MB)을 통째로 읽어 평일 하루 0.4~1.2GB 가 나갔다.
+  // 이제 통째 읽기는 처음 한 번과 1시간에 한 번(지워진 글 정리)만 하고, 그 사이에는 Realtime 이 끊겨 있어도 「바뀐 것만」 읽는다:
+  //   새 글(id > 마지막 번호) + updated_at 이 바뀐 글 + 아직 끝나지 않은 글(대기·작업 중 — 중계가 updated_at 없이 상태·작업 과정을 고친다)
+  const FULL_MS = 3600000;
+  const ACTIVE = (m) => m.status === '대기' || m.run_state === '실행중';
   async function load(full) {
-    const part = !full && ch.live && ch.rows.length && ch.maxUpd && Date.now() - (ch.fullAt || 0) < 3600000;
+    const part = !full && ch.rows.length && ch.maxId && Date.now() - (ch.fullAt || 0) < FULL_MS;
     let q = ch.sb.from('sk_channel').select(COLS);
-    q = part ? q.gt('updated_at', ch.maxUpd).order('at', { ascending: false }).limit(150) : q.order('at', { ascending: false }).limit(150);
+    if (part) {
+      const act = ch.rows.filter(ACTIVE).slice(-40).map((m) => m.id);
+      const cond = ['id.gt.' + ch.maxId];
+      if (ch.maxUpd) cond.push('updated_at.gt."' + ch.maxUpd + '"');
+      if (act.length) cond.push('id.in.(' + act.join(',') + ')');
+      q = q.or(cond.join(','));
+    }
+    q = q.order('at', { ascending: false }).limit(150);
     const { data, error } = await q;
     if (error) { if (!part) $('chRows').innerHTML = '<p class="hint">채널을 읽지 못했습니다: ' + esc(error.message) + '</p>'; return; }
     let rows = (data || []).reverse();
@@ -37,7 +49,7 @@
       ch.partAt = Date.now();
       if (!rows.length) return;
       const by = new Map(ch.rows.map((m) => [m.id, m]));
-      rows.forEach((m) => by.set(m.id, m));
+      rows.forEach((m) => by.set(m.id, Object.assign({}, by.get(m.id), m)));
       rows = [...by.values()].sort((a, b) => (Date.parse(a.at) - Date.parse(b.at)) || (a.id - b.id)).slice(-150);
     } else { ch.fullAt = ch.partAt = Date.now(); }
     await after(rows);
@@ -64,6 +76,7 @@
     const changed = sig(ch.rows) !== sig(rows);
     ch.rows = rows;
     ch.maxUpd = stampOf(rows) || ch.maxUpd;
+    ch.maxId = rows.reduce((a, m) => Math.max(a, +m.id || 0), ch.maxId || 0);
     loadReqs();
     if (await loadFiled()) render(false);
     if (changed) render(before !== (ch.rows.length && ch.rows[ch.rows.length - 1].id));
@@ -627,6 +640,8 @@
     rows() { return ch.rows; },
     open() { if (!ch.open) setOpen(true); },
     reload() { return load(); },
+    // app.js 전송량 기록: Realtime 이 이어져 있는지(rt=1/0)
+    isLive() { return !!ch.live; },
     // app.js 가 자료를 열고 닫을 때 부른다. fn(full) → ctx 객체 또는 null
     setContext(fn) { ch.ctxFn = fn || null; if (ch.open) refreshCtx(); },
     // app.js 가 「수정요청 초안 → 올리기」 창을 넘겨준다. fn(draft) → 올린 요청 번호 또는 null
@@ -675,13 +690,14 @@
       $('chBody').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); send(); } };
       if (ch.rows.length) render(false); // 역할이 바뀌면(관리자 ↔ 담당자) 접기·상황·내 차례를 그 역할에 맞게 다시 그린다
       load(true);
-      // 열려 있으면 10초마다, 닫혀 있으면 30초마다(배지용) 새로 읽는다
-      // Realtime 연결 중: 열려 있으면 5분, 닫혀 있으면 15분마다 예비로 다시 읽는다. 끊겨 있으면 예전처럼 10초·30초
+      // 열려 있으면 10초마다, 닫혀 있으면 30초마다(배지용) 바뀐 것만 읽는다(Realtime 이 끊겨 있을 때). 이어져 있으면 열림 5분·닫힘 15분마다 예비로.
+      // 통째로 다시 읽기는 1시간에 한 번(hong 11-22 전송량)
       ch.timer = setInterval(() => {
         ch.tick++;
         if (document.hidden) return;
+        if (Date.now() - (ch.fullAt || 0) >= FULL_MS) { load(true); return; }
         const age = Date.now() - (ch.partAt || ch.fullAt || 0);
-        if (ch.live ? age > (ch.open ? 300000 : 900000) : (ch.open || ch.tick % 3 === 0)) load(!ch.live);
+        if (ch.live ? age > (ch.open ? 300000 : 900000) : (ch.open || ch.tick % 3 === 0)) load();
       }, 10000);
       // 새 글·답·작업 과정이 생기면 Realtime 알림에 실린 행을 바로 합친다(migration 012). 다시 읽지 않는다
       if (!ch.rt) {
@@ -689,7 +705,7 @@
           try { apply(p); } catch (_) { load(); }
         }).subscribe((status) => {
           const was = ch.live; ch.live = status === 'SUBSCRIBED';
-          if (ch.live && was === false) load(true); // 다시 연결되면 끊긴 사이 놓친 글을 한 번 통째로 읽는다
+          if (ch.live && was === false) load(); // 다시 이어지면 끊긴 사이 바뀐 것만 읽는다(통째로 읽지 않음, hong 11-22 전송량)
         });
       }
     },
