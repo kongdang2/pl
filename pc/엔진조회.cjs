@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 엔진 조회 — 웹 추정자료(DB 내보내기 JSON)를 웹 엔진에 화면 없이 열어, 엔진이 계산해 보여 주는 표를 메뉴마다 글자로 뽑는다.
+// 엔진 조회 — 웹 추정자료·사업계획 자료(DB 내보내기 JSON)를 웹 엔진에 화면 없이 열어, 엔진이 계산해 보여 주는 표를 메뉴마다 글자로 뽑는다.
 // 챗봇 답변 개선 B(hong 2026-11-04): 화면에 없는 숫자를 챗봇이 제 공식으로 다시 셈해 틀리던 것을, 엔진 계산값을 직접 찾아 쓰게 한다.
 // 읽기 전용: 네트워크는 막고, 저장·다운로드는 하지 않는다. 자료 파일은 바꾸지 않는다.
 // PC 위치: 손익추정시스템\소통\엔진조회.cjs   (중계.cjs 가 숫자 질문 때 먼저 돌려 둔다. 직접 실행도 된다)
@@ -130,12 +130,23 @@ const safe = (s) => String(s || '').replace(/[\\/:*?"<>|\s▸]+/g, '_').replace(
 (async () => {
   const t0 = Date.now();
   const { pw, opt } = browserType();
-  const html = fs.readFileSync(ENGINE, 'utf8');
+  let html = fs.readFileSync(ENGINE, 'utf8');
+  const db = JSON.parse(fs.readFileSync(DB, 'utf8').replace(/^\uFEFF/, ''));
+  // 사업계획 자료(★BIZEQ1122): 웹(bizplan-link.js shell)과 같게 빈 엔진 표시를 빼고 사업계획 표시(계획연도·동봉 전년자료)와 빈 확정자료를 넣어 연다
+  let bizFlag = '';
+  if (db.mode === 'bizplan') {
+    const safeJ = (o) => JSON.stringify(o).replace(/</g, '\\u003c');
+    const py = +db.bizplanYear || +String(db.baseYm || '').slice(0, 4);
+    if (!py) throw new Error('사업계획 자료에 계획연도가 없습니다');
+    html = html.replace(/<script id=["']__EMPTY_ENGINE_FLAG__["']>[\s\S]*?<\/script>/, '');
+    bizFlag = '<script id="__BIZPLAN_FLAG__">window.__BIZPLAN__=' + safeJ({ planYear: py, seed: null, prevYear: db.bizPrev || null }) + ';<\/script>'
+      + '<script id="__SAVED_CONFIRMED__">window.__CONFIRMED_DATA__={"onsan":{},"ulsan":{},"head":{}};<\/script>';
+  }
   const i = html.search(/<head[^>]*>/i), j = html.indexOf('>', i) + 1;
   const os = require('os');
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sonik-eq-'));
   const tmp = path.join(tmpDir, 'engine.html');
-  fs.writeFileSync(tmp, html.slice(0, j) + FLAG + html.slice(j));
+  fs.writeFileSync(tmp, html.slice(0, j) + FLAG + bizFlag + html.slice(j));
   const browser = await pw.chromium.launch(opt);
   try {
     const ctx = await browser.newContext({ viewport: { width: 1600, height: 1000 }, acceptDownloads: false });
@@ -145,8 +156,6 @@ const safe = (s) => String(s || '').replace(/[\\/:*?"<>|\s▸]+/g, '_').replace(
     await p.goto(require('url').pathToFileURL(tmp).href, { timeout: 240000 });
     await p.waitForFunction(() => window.__sonikWebBridge && window.__sonikWebBridge.info(), null, { timeout: 240000 });
     await wait(p, 800);
-    const db = JSON.parse(fs.readFileSync(DB, 'utf8').replace(/^﻿/, ''));
-    if (db.mode === 'bizplan') throw new Error('사업계획 자료는 아직 지원하지 않습니다(손익추정 자료만)');
     const ver = await p.evaluate((d) => { const r = window.__sonikWebBridge.applyDb(d); return { info: window.__sonikWebBridge.info(), verify: r && r.verify ? (r.verify.ok !== undefined ? r.verify.ok : null) : null }; }, db);
     await wait(p, 600);
     // 재현검증 결과 창 등 떠 있는 창은 닫는다
