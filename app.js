@@ -6,9 +6,16 @@
   if (/(^#|&)error(_code)?=/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
   // 전송량 세기(hong 11-07): Supabase 는 파일뿐 아니라 DB 조회 응답·실시간 알림까지 모두 「Egress」로 센다.
   // 이 브라우저가 받은 응답 크기(+머리글 어림 400B)를 모아 5분마다 sk_egress 에 한 줄로 적는다. 파일 내려받기는 fetchStored 등이 따로 적으므로 뺀다
-  const NET = { bytes: 0, n: 0 };
+  // hong 11-22: 어디서 많이 받는지 알 수 있게 표·통로별로도 모은다(by: channel·requests·rpc:sk_usage·ws 등) → sk_egress.what 끝에 큰 순서로 적음
+  const NET = { bytes: 0, n: 0, by: {} };
   const HDR = 400;
-  const netAdd = (b) => { NET.bytes += (b || 0) + HDR; NET.n++; };
+  const netKey = (url) => {
+    const m = /\/(rest\/v1\/(?:rpc\/)?|auth\/v1\/|storage\/v1\/object\/(?:list|sign|info)\/|functions\/v1\/)([^/?]+)/.exec(url || '');
+    if (!m) return 'etc';
+    const name = m[2].replace(/^sk_/, '');
+    return m[1] === 'rest/v1/' ? name : m[1] === 'rest/v1/rpc/' ? 'rpc:' + name : m[1].split('/')[0] + ':' + name;
+  };
+  const netAdd = (b, k) => { const v = (b || 0) + HDR; NET.bytes += v; NET.n++; NET.by[k] = (NET.by[k] || 0) + v; };
   const countFetch = async (input, init) => {
     const r = await fetch(input, init);
     try {
@@ -16,8 +23,9 @@
       const method = String((init && init.method) || (input && input.method) || 'GET').toUpperCase();
       if (method === 'GET' && /\/storage\/v1\/object\/(?!list\/|sign\/|info\/)/.test(url)) return r; // 파일 본문: 따로 적음
       const len = +r.headers.get('content-length');
-      if (len >= 0 && r.headers.has('content-length')) netAdd(len);
-      else r.clone().blob().then((b) => netAdd(b.size), () => netAdd(0));
+      const k = netKey(url);
+      if (len >= 0 && r.headers.has('content-length')) netAdd(len, k);
+      else r.clone().blob().then((b) => netAdd(b.size, k), () => netAdd(0, k));
     } catch (_) { /* 세기 실패는 무시 */ }
     return r;
   };
@@ -25,7 +33,7 @@
   class CountWS extends WS {
     constructor(...a) {
       super(...a);
-      this.addEventListener('message', (e) => { const d = e.data; NET.bytes += typeof d === 'string' ? new Blob([d]).size : (d && (d.size || d.byteLength)) || 0; });
+      this.addEventListener('message', (e) => { const d = e.data, v = typeof d === 'string' ? new Blob([d]).size : (d && (d.size || d.byteLength)) || 0; NET.bytes += v; NET.by.ws = (NET.by.ws || 0) + v; });
     }
   }
   window.WebSocket = CountWS; // realtime 의 transport 옵션은 연결 준비(setupConnection)를 건너뛰어(2.45.4) 전역을 바꿔 끼운다
@@ -236,9 +244,12 @@
   // 모아 둔 응답 크기를 5분마다(또는 화면을 떠날 때) 한 줄로 적는다. 적는 요청도 다음 묶음에 들어간다
   async function netFlush() {
     if (!st.me || NET.bytes < 1024) return;
-    const b = Math.round(NET.bytes), n = NET.n; NET.bytes = 0; NET.n = 0;
-    const { error } = await sb.from('sk_egress').insert({ email: st.me.email, bytes: b, what: 'api ' + n });
-    if (error) NET.bytes += b; // 못 적었으면 다음에 다시
+    const b = Math.round(NET.bytes), n = NET.n, by = NET.by; NET.bytes = 0; NET.n = 0; NET.by = {};
+    // 예: 'api 42 channel=812k ws=35k requests=25k rt=0' (앞 'api N' 모양은 sk_usage 집계가 쓰므로 그대로 둔다)
+    const top = Object.keys(by).sort((x, y) => by[y] - by[x]).slice(0, 6).map((k) => k + '=' + Math.round(by[k] / 1000) + 'k').join(' ');
+    const rt = window.SonikChannel && window.SonikChannel.isLive ? ' rt=' + (window.SonikChannel.isLive() ? 1 : 0) : '';
+    const { error } = await sb.from('sk_egress').insert({ email: st.me.email, bytes: b, what: ('api ' + n + ' ' + top + rt + (document.hidden ? ' bg' : '')).trim() });
+    if (error) { NET.bytes += b; Object.keys(by).forEach((k) => { NET.by[k] = (NET.by[k] || 0) + by[k]; }); } // 못 적었으면 다음에 다시
   }
   setInterval(netFlush, 300000);
   document.addEventListener('visibilitychange', () => { if (document.hidden) netFlush(); });
@@ -1702,6 +1713,7 @@
       + (withText && (live || last) ? '<div class="say">' + live + (last ? esc(last.text).slice(0, 80) : '') + '</div>' : '') + '</div>';
   }
   async function loadRequests() {
+    rqAt = Date.now();
     const { data, error } = await sb.from('sk_requests').select('id,title,kind,status,stage,progress,working,author_name,author_email,created_at').order('created_at', { ascending: false }).limit(100);
     if (error) { $('rqRows').innerHTML = '<tr><td colspan="7" class="hint">요청 목록을 읽지 못했습니다: ' + esc(error.message) + '</td></tr>'; return; }
     $('rqRows').innerHTML = (data || []).length ? data.map((r) => '<tr><td>#' + r.id + '</td><td class="memo">' + esc(r.title) + '</td><td>' + esc(r.kind) + '</td><td>' + stageBar(r, true) + '</td><td>'
@@ -1758,13 +1770,18 @@
   }
   // 실시간: 요청이 바뀌면(PC 중계가 단계·설명·작업 중 표시를 적으면) 목록과 열린 「보기」를 바로 다시 그린다.
   // Realtime 이 끊겨도 목록 화면에서는 20초마다 한 번 다시 읽는다
-  let rqRt = null, rqTimer = null, rqPoll = null, rqOpenId = null;
+  // hong 11-22 전송량: Realtime 이 이어져 있으면 20초마다 다시 읽지 않고 5분마다 예비로만 읽는다. 끊겨 있으면 40초마다
+  let rqRt = null, rqTimer = null, rqPoll = null, rqOpenId = null, rqLive = false, rqEver = false, rqAt = 0, rqTick = 0;
   function liveRequests() {
     const again = () => { clearTimeout(rqTimer); rqTimer = setTimeout(() => { if (!$('vList').hidden) loadRequests(); if (rqOpenId && !$('rqView').hidden) viewRequest(rqOpenId, true); }, 400); };
     if (!rqRt) {
-      try { rqRt = sb.channel('sk_requests_web').on('postgres_changes', { event: '*', schema: 'public', table: 'sk_requests' }, again).subscribe(); } catch (_) { rqRt = null; }
+      try { rqRt = sb.channel('sk_requests_web').on('postgres_changes', { event: '*', schema: 'public', table: 'sk_requests' }, again).subscribe((s) => { const was = rqLive, re = rqEver; rqLive = s === 'SUBSCRIBED'; rqEver = rqEver || rqLive; if (rqLive && !was && re) again(); /* 끊겼다 다시 이어지면 한 번 */ }); } catch (_) { rqRt = null; }
     }
-    if (!rqPoll) rqPoll = setInterval(() => { if (!document.hidden && !$('vList').hidden) loadRequests(); }, 20000);
+    if (!rqPoll) rqPoll = setInterval(() => {
+      rqTick++;
+      if (document.hidden || $('vList').hidden) return;
+      if (rqLive ? Date.now() - rqAt >= 300000 : rqTick % 2 === 0) loadRequests();
+    }, 20000);
   }
   function excerptHtml(ex) {
     if (!ex || !ex.rows || !ex.rows.length) return '';
@@ -1773,10 +1790,14 @@
   }
   async function viewRequest(id, quiet) {
     if (!quiet) busy('요청 읽는 중…');
-    const { data: r, error } = await sb.from('sk_requests').select('*').eq('id', id).single();
+    // 열어 둔 「보기」를 진행 알림 때마다 새로 그릴 때는 큰 열(요청 내용 items·본문 body, 최대 0.3MB)은 다시 받지 않는다(hong 11-22 전송량)
+    const keep = quiet && viewRequest.r && viewRequest.r.id === id ? viewRequest.r : null;
+    const { data: got, error } = await sb.from('sk_requests').select(keep ? 'id,title,kind,status,status_note,stage,progress,working,author_name,author_email,created_at,base_ym,engine_ver,snapshot_id,chat_id,updated_at' : '*').eq('id', id).single();
     if (!quiet) busy(null);
     rqOpenId = id;
     if (error) { toast(error.message); return; }
+    const r = keep ? Object.assign({}, keep, got) : got;
+    viewRequest.r = r;
     $('rvBody').innerHTML = '<h3>수정요청 #' + r.id + ' · ' + esc(r.title) + '</h3>'
       + '<p class="hint">' + esc(r.kind) + ' · ' + esc(r.author_name || r.author_email) + ' · ' + esc(fmtT(r.created_at)) + ' · 추정자료 ' + esc(r.base_ym || '') + ' / 엔진 ' + esc(r.engine_ver || '') + '</p>'
       + (r.body ? '<p style="white-space:pre-wrap">' + esc(r.body) + '</p>' : '')
