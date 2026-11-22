@@ -346,7 +346,7 @@ async function fetchCtx(m, ch, sink) {
     out.all = all;
     const open = c && c.snap_id ? all.find((x) => x.id === c.snap_id) : null;
     if (open) { out.open = open; out.db = await snapFile(open); out.rev = open.rev; }
-    if (out.db && conf.screens !== false && open.mode !== 'bizplan') {
+    if (out.db && conf.screens !== false) { // ★BIZEQ1122: 사업계획 자료도 엔진 화면을 뽑는다
       if (sink) sink.add([{ k: 'tool', s: '엔진 계산 화면 준비(자료마다 처음 한 번, 1분 안팎)' }]);
       out.scr = await screensFor(open, out.db, c.ym, c.engine_ver);
     }
@@ -361,7 +361,7 @@ async function fetchCtx(m, ch, sink) {
       const e = { s: x };
       try { e.file = await snapFile(x); if (out.db) e.diff = diffFile(out.db, open, e.file, x); } catch (er) { e.err = er.message; }
       // 비교 대상도 엔진 화면을 뽑는다(처음 conf.screenMore 개, 기본 1)
-      if (e.file && conf.screens !== false && x.mode !== 'bizplan' && out.more.length < (conf.screenMore == null ? 1 : conf.screenMore)) {
+      if (e.file && conf.screens !== false && out.more.length < (conf.screenMore == null ? 1 : conf.screenMore)) {
         if (sink) sink.add([{ k: 'tool', s: '비교 자료 「' + x.memo + '」 엔진 계산 화면 준비' }]);
         e.scr = await screensFor(x, e.file, c && c.ym, x.engine_ver);
       }
@@ -392,10 +392,12 @@ function ctxLines(m) {
   } else if (x.scr && x.scr.err) L.push('[엔진 계산 화면] 뽑지 못했다(' + x.scr.err + '). 화면 표와 자료 JSON 으로 답한다.');
   for (const e of x.more) if (e.scr && e.scr.dir) L.push('- 비교 자료 「' + e.s.memo + '」의 엔진 계산 화면 목차: ' + e.scr.idx);
   if (scrs.length) {
-    const q = m.quick || isMember(m) || !(x.scr && x.scr.dir);
+    const q = !(x.scr && x.scr.dir); // ★MEMBERSAME1122 (hong 11-22 09:06): 답변 수준은 담당자도 hong 과 같게
+    const ro = m.quick || isMember(m); // 빠른 질문·담당자 질문(읽기 전용): 엔진조회 --eval 한 가지만 허용
     L.push('[숫자 답 규칙] 손익·금액·단가·물량 같은 숫자는 아래 순서로 구한다. 직접 만든 공식으로 다시 셈한 값은 틀리기 쉽다(예: 외화단가 = 금액÷수량÷기준환율처럼 엔진 정의가 따로 있다).',
       '  1) 엔진 계산 화면 파일에서 찾는다: 목차로 화면을 고르고 그 파일을 읽거나 grep 한다. 화면 파일 값이 자료 JSON·직접 셈보다 우선이다.',
       q ? '  2) 화면에 없으면 화면에 있는 값들로만 셈하고 「계산」이라고 밝힌다. 그래도 못 구하면 그 값을 볼 메뉴를 안내한다.'
+        : ro ? '  2) 화면에 없으면 엔진 함수로 구한다. 이 실행에서 허용된 명령은 아래 한 가지뿐이다(경로는 / 로, 다른 옵션·다른 명령은 거절된다): node 소통/엔진조회.cjs --db "' + String(x.db).replace(/\\/g, '/') + '" --engine "' + String(x.scr.eng.file).replace(/\\/g, '/') + '" --eval "식"  그래도 없을 때만 화면 값으로 셈하고 「계산」이라고 밝힌다.'
         : '  2) 화면에 없으면 엔진 함수로 구한다: node 소통\\엔진조회.cjs --db "' + x.db + '" --engine "' + x.scr.eng.file + '" --eval "식"  (다른 달 화면: --out 소통\\자료\\화면\\<새 폴더> --ym YYYY-MM [--conf-ym YYYY-MM] [--only 온산]). 그래도 없을 때만 직접 셈하고 「계산」이라고 밝힌다.',
       '  3) 단위·부호는 화면 그대로 쓴다(Δ = 음수, 백만원·억원 구분). 억원으로 바꿔 쓰면 「계산」 줄로 적는다.',
       '  4) 채널 블록(<<<채널) 바로 앞에, 답에 쓴 숫자마다 근거를 아래 형식(탭 구분)으로 적는다. 중계가 화면 파일과 대조해 검산하고, 맞지 않으면 다시 고치게 한다. 이 블록은 채널에 올라가지 않는다.',
@@ -536,7 +538,8 @@ function memberPrompt(agent, m, ch, group) {
   return [
     ...guideLines(false),
     '[담당자 질의응답 · 읽기 전용] 질문한 사람은 hong 이 아닌 팀 담당자(' + m.owner + ')다. 이 실행은 읽기 전용이다.',
-    '파일을 고치거나 만들거나 지우지 않는다. 명령을 실행하지 않는다. 버전을 만들거나 Codex·hong 에게 작업을 넘기지 않는다.',
+    '파일을 고치거나 만들거나 지우지 않는다. [숫자 답 규칙]에 적힌 엔진 조회 명령 한 가지 말고는 명령을 실행하지 않는다. 버전을 만들거나 Codex·hong 에게 작업을 넘기지 않는다.',
+    '업무 질문은 안내서 §0 대로 챗봇\\지식 카드를 쓴다. 2027 계획 숫자(hong전용\\2027계획현황.md)도 답해도 된다(hong 2026-11-22). hong전용\\대기목록.md 만 열지 않는다(hong 이 판단 중인 일이라 중계가 막아 두었다).',
     '손익추정 시스템의 사용법·메뉴·계산 방식·자료의 뜻을 작업 폴더(' + ROOT + ')의 문서(AGENTS.md, 코드지도, _brain 등)와 운영본을 읽고 쉽게 설명한다.',
     '시스템을 고쳐 달라는 요청(계산 오류·표시·기능 추가)이면 고치지 말고, 답 본문 끝(채널 블록 안)에 아래 수정요청 초안 블록을 하나 넣는다. 웹이 이 초안을 카드로 보여 주고, 담당자가 확인·고쳐서 「올리기」를 눌러야 접수된다(관리자 승인 뒤 처리). 단순 질문·사용법 설명에는 넣지 않는다.',
     '<<<요청초안',
@@ -723,18 +726,22 @@ const FILE_HINT = ['질문한 사람이 표·목록을 파일로 받기 원하�
   '네가 직접 웹에 올리려 하지 않는다(채널 도구·Edge·브라우저 제어 금지, 제어 권한을 달라고도 하지 않는다). 파일 전달은 위 첨부 줄이면 된다.',
   '웹 추정자료에 엑셀을 넣어 달라는 요청은 직접 하지 못한다: 필요한 파일을 첨부하고, 웹에서 그 자료를 열어 어느 메뉴의 어떤 업로드 버튼에 넣으면 되는지 순서를 안내한다.',
   '파일을 붙이면 채널 본문에는 요약과 「첨부 파일 이름」만 적는다.'];
+// 읽기 전용 실행(빠른 질문·담당자)의 도구(★KB1121): 읽기 도구 + 엔진조회 한 명령(화면에 없는 숫자를 엔진 함수로 구함). 다른 명령은 기본 권한에서 거절된다
+const RO_TOOLS = 'Read Glob Grep Bash(node 소통/엔진조회.cjs:*) Bash(node 소통\\엔진조회.cjs:*)';
 // resumeId 가 있으면 그 세션에 이어서 실행한다
 // opt: { quick: 읽기 전용, stopId: 이 글 번호로 중지 요청이 오면 끊는다 }
 function run(agent, input, resumeId, images, opt) {
   opt = opt || {};
   const c = conf[agent.toLowerCase()];
   // Windows 는 shell 로 실행하므로 공백 든 인자는 따옴표로 감싼다
-  const q = (x) => (process.platform === 'win32' && /\s/.test(x) && !/^".*"$/.test(x) ? '"' + x + '"' : x);
+  const q = (x) => (process.platform === 'win32' && /[\s()*]/.test(x) && !/^".*"$/.test(x) ? '"' + x + '"' : x);
   let a = c.args.map((x) => x.replace('{ROOT}', ROOT));
   // 빠른 질문은 읽기 전용: claude 는 읽기 도구만 + 기본 권한(수정·명령은 거절됨), codex 는 read-only 샌드박스
-  if (opt.quick) a = agent === 'Claude'
-    ? a.map((x, i) => (a[i - 1] === '--allowedTools' ? 'Read Glob Grep' : a[i - 1] === '--permission-mode' ? 'default' : x))
+  if (opt.quick || (opt.member && agent === 'Claude')) a = agent === 'Claude'
+    ? a.map((x, i) => (a[i - 1] === '--allowedTools' ? RO_TOOLS : a[i - 1] === '--permission-mode' ? 'default' : x))
     : a.map((x) => (x === 'workspace-write' ? 'read-only' : x));
+  // 담당자 실행은 hong 판단 대기 목록만 읽지 못하게 막는다(★MEMBERSAME1122). 프롬프트는 표준입력으로 주므로 목록형 옵션 뒤에 와도 된다
+  if (agent === 'Claude' && opt.member) a = a.concat(['--disallowedTools', 'Read(챗봇/지식/hong전용/대기목록.md)']);
   // 숫자 질문(엔진 화면이 붙은 질문)은 Codex 추론을 높인다(챗봇 답변 개선 C). 웹 ⚙ 에서 정한 값이 있으면 그것이 우선
   const cm = CTL.claude_model || conf.claudeModel, xm = CTL.codex_model || conf.codexModel, xe = CTL.codex_effort || (opt.numeric ? (conf.numericEffort || 'high') : conf.codexEffort);
   if (agent === 'Claude' && cm) a = a.concat(['--model', cm]);
@@ -997,7 +1004,7 @@ async function numCheck(agent, m, r, rep, sid, opt, sink) {
 async function runAgent(agent, m, ch, ctx, group, root) {
   await patchMsg(m.id, { run_state: '실행중', run_note: agent });
   const sink = liveSink(m, agent);
-  const quick = !!m.quick, opt = { quick, stopId: quick ? null : m.id, onEvent: (xs) => sink.add(xs) };
+  const quick = !!m.quick, opt = { quick, member: isMember(m), stopId: quick ? null : m.id, onEvent: (xs) => sink.add(xs) };
   const all = loadSess(), key = agent + ':' + root;
   let s = conf.resume && !quick ? all[key] : null; // 빠른 질문은 세션을 잇지도 남기지도 않는다
   if (s && (s.turns >= conf.sessionTurns || Date.now() - new Date(s.at).getTime() > conf.sessionDays * 864e5)) { log('새 세션(길이·기간 한도)', key); s = null; }
@@ -1109,5 +1116,9 @@ function realtime() {
   if (!once) setInterval(beat, 30000);
   realUsage().catch(() => {}); if (!once) setInterval(() => realUsage().catch(() => {}), 3600000);
   if (!once) realtime();
+  // 살피기(★WATCH1122): 저장 후 개요 변동을 hong 에게 알린다. 실패해도 중계는 계속
+  if (!once) { try { require('./살피기.cjs').start({ api, post, log, conf, dir: __dirname }); } catch (e) { log('살피기 시작 실패', e.message); } }
+  // 아침 브리핑(★BRIEF1122): 하루 한 번 저장 자료·수정요청·대기 글을 모아 hong 에게 알린다. 실패해도 중계는 계속
+  if (!once && conf.brief === true) { try { require('./브리핑.cjs').start({ api, post, log, conf, dir: __dirname, root: ROOT }); } catch (e) { log('브리핑 시작 실패', e.message); } }
   await Promise.all([loop(false, conf.pollSec, once), loop(true, 8, once), engineLoop(once)]);
 })().catch((e) => { log('중단', e.message); process.exit(1); });
