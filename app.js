@@ -201,6 +201,7 @@
     loadUsage();
     loadRequests();
     if (window.SonikChannel) window.SonikChannel.mount(sb, st.me);
+    if (window.SonikOffice) window.SonikOffice.mount(sb, st.me); // 사무실: 관리자(hong)에게만 단추가 생긴다
   }
 
   // ── 메뉴 접기(hong 11/03) ── 저장소 한도·자료 목록·수정요청·관리자 카드 제목을 누르면 접고 편다. 접힘 상태는 이 브라우저에 기억

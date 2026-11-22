@@ -500,6 +500,7 @@
     render(false);
   }
   function render(scroll) {
+    if (ch.onRows) { try { ch.onRows(ch.rows); } catch (e) { console.warn('사무실 갱신 실패', e); } } // 사무실(office.js, hong 전용)이 같은 글로 그린다: 따로 읽지 않는다
     const byId = new Map(ch.rows.map((m) => [m.id, m]));
     const waiting = ch.rows.filter((m) => MINE(m) && m.status === '대기').length;
     $('chMine').textContent = '내 대기 ' + waiting;
@@ -621,6 +622,11 @@
   }
 
   window.SonikChannel = {
+    // 사무실(office.js): 이미 읽어 둔 글을 같이 쓴다. watch(fn) → 글이 바뀔 때마다 fn(rows)
+    watch(fn) { ch.onRows = fn || null; if (fn && ch.rows.length) { try { fn(ch.rows); } catch (_) { /* 무시 */ } } },
+    rows() { return ch.rows; },
+    open() { if (!ch.open) setOpen(true); },
+    reload() { return load(); },
     // app.js 가 자료를 열고 닫을 때 부른다. fn(full) → ctx 객체 또는 null
     setContext(fn) { ch.ctxFn = fn || null; if (ch.open) refreshCtx(); },
     // app.js 가 「수정요청 초안 → 올리기」 창을 넘겨준다. fn(draft) → 올린 요청 번호 또는 null
