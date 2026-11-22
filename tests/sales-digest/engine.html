@@ -1,0 +1,21 @@
+<!doctype html><html><head><meta charset="utf-8"><title>fake</title></head><body><div id="v">engine</div><script>
+// 판매 요약 시험용 가짜 손익추정 엔진: 추정월 2개월, 온산·울산 판매행, 확정 판매(직전 달). __FAIL 이면 calcRowP 가 예외
+window.SYS_CHANGELOG=[{date:'2026-11-22',title:'v409-1 시험'}];
+var S=null, CONFIRMED_DB={c:1}, __FAIL=0;
+function draw(){document.getElementById('v').textContent='site='+(S&&S.site);}
+function refresh(){draw();}
+function switchMenu(m){S.menu=m;draw();}
+const SD=()=>S[S.site];
+function withSite(site,fn){const o=S.site;S.site=site;try{return fn();}finally{S.site=o;}}
+function CD(){return (CONFIRMED_DB[S.site]||{});}
+function estimateYms(){return (S.session.months||[]).filter(m=>m.active!==false&&m.type!=='confirmed').map(m=>m.ym).sort();}
+function isAmtOnlySale(p){return /기타매출|사용료|역송전력매출/.test(String(p||''));}
+function __sd313(ym){return !!(S.onsan.sd||{})[ym];}
+function calcRowP(row,ym,side){if(__FAIL)throw new Error('계산 예외(시험)');row.usdMode=row.usdMode||'direct';const fx=1400,usd=row.usdMode==='formula'?(S.onsan.prices[ym].nap*1+(+row.fmAdj||0)):(+row.usdDirect||0),krw=Math.round(usd*fx);return {usd,fx,krw,amt:row.amtMode==='direct'?(+row.amtDirect||0)*1e6:krw*(+row.qty||0)};}
+function reportMonthMetric(ym){return {nap:600,opTotal:10,mgOpTotal:5};}
+window.__sonikWebBridge={info:function(){return {sysVer:'v409-1',baseYm:S?S.session.baseYm:''};},
+ buildDb:function(){var p={};Object.keys(S).forEach(function(k){if(['ym'].indexOf(k)<0)p[k]=JSON.parse(JSON.stringify(S[k]));});
+  return {format:'pnl-db/1',scope:'all',sysVer:'v409-1',mode:'sonik',baseYm:S.session.baseYm,months:JSON.parse(JSON.stringify(S.session.months)),payload:p,confirmed:JSON.parse(JSON.stringify(CONFIRMED_DB)),plan:null,savedAt:new Date().toISOString()};},
+ applyDb:function(db){S=JSON.parse(JSON.stringify(db.payload));if(!S.site)S.site='onsan';if(!S.menu)S.menu='overview';CONFIRMED_DB=JSON.parse(JSON.stringify(db.confirmed));draw();return {verify:null};}};
+window.T={qty:function(i,q){S.onsan.sales['2026-12'][i].qty=q;},fail:function(n){__FAIL=n;},site:function(){return S.site;}};
+</script></body></html>

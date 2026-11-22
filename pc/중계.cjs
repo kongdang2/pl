@@ -581,13 +581,18 @@ const OFFICE_ROLES = {
   '원가담당': '본사 판관비, 온산·울산 원가, 제조원가명세서, 예산',
   'Codex 검증': '교차검증, 숫자 재현, 코드 검토. 필요하면 다른 담당 일을 나눠 맡음',
 };
+const OFFICE_CARDS = { '판매담당': '담당_판매.md' };
 function officeLines(m) {
   const t = String(m.topic || '');
   if (t.indexOf('사무실 · ') !== 0) return [];
   const name = t.slice('사무실 · '.length).trim();
   const job = OFFICE_ROLES[name];
   if (!job) return [];
+  // ★AGT1122 담당 카드(챗봇\지식\담당_<이름>.md)가 있으면 그 카드부터 읽는다(hong 11-22 「질문은 총괄, 업무는 담당별로」)
+  const card = OFFICE_CARDS[name], cardPath = card ? path.join(ROOT, '챗봇', '지식', card) : '';
+  const hasCard = !!cardPath && fs.existsSync(cardPath);
   return [
+    ...(hasCard ? ['먼저 담당 카드 `챗봇\\지식\\' + card + '` 를 읽고, 그 카드의 규칙·점검 목록 안에서 답한다.'] : []),
     '이 글은 hong 이 사무실 화면에서 「' + name + '」에게 직접 건 말이다. 너는 지금 「' + name + '」 자리에서 답한다(맡은 일: ' + job + '. 추정과 사업계획 모두).',
     '작은 대화창에 뜨므로 결론부터 3~5줄로 짧게 답한다. 숫자는 근거(자료 이름·월)를 한마디 붙인다. 맡은 일 밖의 질문이면 어느 담당 일인지 한 줄로 알려 주고 아는 만큼만 답한다.',
     '답의 받는이는 hong, 상태는 안내, 주제는 「' + t + '」 그대로 둔다(바꾸면 대화창에서 이어지지 않는다).',
@@ -1143,6 +1148,8 @@ function realtime() {
   if (!once) realtime();
   // 살피기(★WATCH1122): 저장 후 개요 변동을 hong 에게 알린다. 실패해도 중계는 계속
   if (!once) { try { require('./살피기.cjs').start({ api, post, log, conf, dir: __dirname }); } catch (e) { log('살피기 시작 실패', e.message); } }
+  // 판매담당 1차 점검(★AGT1122): 저장 직후 판매 요약(sk_digest)만 읽어 문제 있을 때 사무실 판매담당 대화로 알린다. 실패해도 중계는 계속
+  if (!once) { try { require('./판매점검.cjs').start({ api, post, log, conf, dir: __dirname }); } catch (e) { log('판매점검 시작 실패', e.message); } }
   // 아침 브리핑(★BRIEF1122): 하루 한 번 저장 자료·수정요청·대기 글을 모아 hong 에게 알린다. 실패해도 중계는 계속
   if (!once && conf.brief === true) { try { require('./브리핑.cjs').start({ api, post, log, conf, dir: __dirname, root: ROOT }); } catch (e) { log('브리핑 시작 실패', e.message); } }
   await Promise.all([loop(false, conf.pollSec, once), loop(true, 8, once), engineLoop(once)]);
