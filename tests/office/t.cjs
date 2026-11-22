@@ -156,6 +156,19 @@ const still = async (p, name) => { let a = await labXY(p, name); for (let i = 0;
   // 새 대기 글 → 창구 숫자
   DB.sk_channel.push(row({ id: 120, at: new Date().toISOString(), sender: 'Claude', recipient: 'hong', topic: '확인 요청', status: '대기', body: '확인 부탁드립니다.' })); await p.evaluate(() => window.SonikChannel.reload());
   await p.waitForFunction(() => document.getElementById('ofcCnt').textContent === '3', null, { timeout: 10000 }); ok(true, '새 대기 글이 오면 창구 숫자가 는다');
+  // 담당이 먼저 건 말(판매담당 자동 점검, hong 11-22): Claude → hong, 주제 「사무실 · 판매담당」 → 판매담당 대화·말풍선
+  DB.sk_channel.push(row({ id: 121, at: new Date().toISOString(), sender: 'Claude', recipient: 'hong', topic: '사무실 · 판매담당', status: '안내', body: '「11월 추정」 판매 자료에서 확인할 곳 1건을 찾았습니다.\n\n- 26.11월 온산 C9+ 내수: 판매가 없음' }));
+  await p.evaluate(() => window.SonikChannel.reload());
+  await p.waitForFunction(() => [...document.querySelectorAll('.ofc-say')].some((e) => !e.hidden && /판매담당/.test(e.textContent) && /C9\+|확인할 곳/.test(e.textContent)), null, { timeout: 10000 });
+  ok(true, '판매담당 자동 점검 글 → 판매담당 말풍선');
+  xy = await labXY(p, '판매담당'); await p.mouse.click(xy[0], xy[1] + 45);
+  await p.waitForFunction(() => /판매담당 와 대화/.test(document.getElementById('ofcPh').textContent), null, { timeout: 120000 });
+  ok(/C9\+ 내수: 판매가 없음/.test(await p.textContent('#ofcChat')), '판매담당 대화창에 점검 글이 뜬다', await p.textContent('#ofcChat'));
+  await p.fill('#ofcIn2', 'C9+ 왜 빠졌어?'); await p.press('#ofcIn2', 'Enter');
+  await p.waitForFunction(() => document.querySelectorAll('#ofcChat .ofc-msg.me').length === 1, null, { timeout: 10000 });
+  const s5 = DB.sk_channel[DB.sk_channel.length - 1];
+  ok(s5.reply_to === 121 && s5.topic === '사무실 · 판매담당' && s5.recipient === 'Claude', '점검 글에 이어 물으면 그 글에 이어 쓴다', s5);
+  await p.click('#ofcPx');
   if (process.env.SHOT) await p.screenshot({ path: process.env.SHOT });
   // 기존 챗봇은 그대로: 창구 단추 → 챗봇 팝업
   await p.click('#ofcCount'); await p.waitForFunction(() => !document.getElementById('chCard').hidden, null, { timeout: 5000 });

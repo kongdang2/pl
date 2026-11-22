@@ -108,7 +108,7 @@ body.ofc-moving{user-select:none;-webkit-user-select:none}
     for (const m of st.rows) {
       let a = null;
       if (m.reply_to != null && of.has(m.reply_to)) a = of.get(m.reply_to);
-      else if (m.sender === 'hong') { const g = agentOfTopic(m.topic); if (g) a = g.id; }
+      else if (m.sender === 'hong' || ((m.sender === 'Claude' || m.sender === 'Codex') && m.recipient === 'hong')) { const g = agentOfTopic(m.topic); if (g) a = g.id; } // 담당이 먼저 건 말(예: 판매담당 자동 점검)도 그 담당 대화로
       if (a) { of.set(m.id, a); (out[a] = out[a] || []).push(m); }
     }
     return { of, out };

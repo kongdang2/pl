@@ -971,6 +971,44 @@
     if (st.open && st.open.id === id) st.open.summary = m;
     return true;
   }
+  // 판매 요약(hong 11-22 「판매담당 시험」): 저장 직후 엔진에서 추정월(사업계획 = 계획 12개월)의 온산·울산 판매를 품목·내수/수출별로 묶어
+  // 수량·금액(백만원)·포뮬러/직접 행 수와 직전 확정월 판매, 달별 납사·환율을 sk_digest 에 둔다(수 KB). PC 판매담당이 이것만 읽어 1차 점검한다.
+  // 목록(sk_snapshots select *)에 붙지 않게 따로 둔 표라 전송량이 늘지 않는다. 계산·기록이 실패해도 저장에는 영향 없음(표가 없으면 조용히 건너뜀)
+  function salesDigest(win) {
+    if (!win) return null;
+    const biz = B.isBiz(win);
+    try {
+      return E.inMain(win, () => JSON.parse(win.eval(`(()=>{ if(typeof calcRowP!=='function'||typeof SD!=='function'||typeof withSite!=='function') return 'null';
+        const yms=(${biz ? "typeof _bvPlanYms==='function'?_bvPlanYms():[]" : "typeof estimateYms==='function'?estimateYms():[]"}).slice().sort(); if(!yms.length) return 'null';
+        const add=(ym,k)=>{let y=+ym.slice(0,4),m=+ym.slice(5,7)-1+k; y+=Math.floor(m/12); m=((m%12)+12)%12; return y+'-'+String(m+1).padStart(2,'0');};
+        const prev=add(yms[0],-1), r1=v=>Math.round((+v||0)*10)/10, P=(S.onsan&&S.onsan.prices)||{};
+        const amtOnly=p=>typeof isAmtOnlySale==='function'&&isAmtOnlySale(p);
+        let bad=0; const out={v:1,biz:${biz ? 1 : 0},yms,prev,px:{},sd:[],s:{}};
+        for(const ym of [prev].concat(yms)){const p=P[ym]||{}; out.px[ym]=[r1(p.nap),r1(p.fx)];}
+        try{ if(typeof __sd313==='function') out.sd=yms.filter(ym=>!!__sd313(ym)); }catch(e){}
+        for(const site of ['onsan','ulsan']) withSite(site,()=>{
+          const o=out.s[site]={};
+          for(const ym of yms){ const rows=((SD().sales)||{})[ym]||[], g={};
+            for(const r of rows){ if(!r||!r.prod) continue; const k=r.prod+'|'+(r.salesType==='수출'?'x':'d');
+              let c={}; try{ c=calcRowP(Object.assign({},r),ym,'sales')||{}; }catch(e){ bad++; }
+              const x=g[k]||(g[k]=[r.prod,r.salesType==='수출'?'x':'d',0,0,0,0,0]);
+              x[2]+=amtOnly(r.prod)?0:(+r.qty||0); x[3]+=(+c.amt||0)/1e6;
+              const um=r.usdMode==='expr'?'formula':r.usdMode; x[4]+=um==='formula'?1:0; x[5]+=(um==='direct'||r.krwMode==='direct'||r.amtMode==='direct')?1:0; x[6]++; }
+            o[ym]=Object.values(g).map(x=>[x[0],x[1],r1(x[2]),r1(x[3]),x[4],x[5],x[6]]); }
+          const cs=((typeof CD==='function'&&CD())||{}).confirmedSales||{}, cm=cs[prev]||{}, pv=[];
+          for(const prod of Object.keys(cm)) for(const sd of ['dom','exp']){ const z=cm[prod]&&cm[prod][sd]; if(z&&(+z.qty||+z.amt)) pv.push([prod,sd==='exp'?'x':'d',r1(z.qty),r1(z.amt)]); }
+          o['c:'+prev]=pv;
+        });
+        return bad?'null':JSON.stringify(out);})()`)));  // 한 행이라도 계산이 안 되면 기록하지 않는다(금액 0 으로 잘못 알리지 않게)
+    } catch (e) { console.warn('판매 요약 계산 실패', e); return null; }
+  }
+  async function saveDigest(id) {
+    if (!id || saveDigest.off) return;
+    const d = salesDigest(st.mounted && st.mounted.win); if (!d) return;
+    d.ver = st.engine ? st.engine.ver : null; d.at = new Date().toISOString();
+    const { error } = await sb.rpc('sk_set_digest', { p_id: id, p_kind: 'sales', p_digest: d });
+    if (error) { if (/sk_set_digest|function|schema cache/i.test(error.message)) saveDigest.off = true; else console.warn('판매 요약 기록 실패', error.message); }
+  }
   // 저장본의 개요가 비었거나 마지막 저장보다 오래됐는가(개요 기록 시각 < 저장 시각). 1초 여유
   const summaryStale = (s) => { const at = s && s.summary && Date.parse(s.summary.at), up = s && Date.parse(s.updated_at || s.created_at || ''); return !at || (up > 0 && at < up - 1000); };
   window.__sonikPlanSummary = () => planSummary(st.mounted && st.mounted.win); // 콘솔 점검용(저장 안 함)
@@ -1168,6 +1206,7 @@
       }
       renderBar();
       if (st.open && st.open.id) saveSummary(st.open.id, 'save'); // 목록 「개요」 (기다리지 않음)
+      if (st.open && st.open.id) { const did = st.open.id; setTimeout(() => { if (st.open && st.open.id === did) saveDigest(did); }, 300); } // 판매 요약(판매담당 점검용, 기다리지 않음)
     } catch (e) { toast(e.message, 8000); }
     finally { saveFromEngine.busy = false; busy(null); }
   }
