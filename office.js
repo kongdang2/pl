@@ -66,7 +66,14 @@
 .ofc-say::after{content:"";position:absolute;left:50%;bottom:-6px;width:12px;height:12px;background:#22262d;transform:translateX(-50%) rotate(45deg)}
 .ofc-pop{position:absolute;right:16px;top:74px;width:360px;max-width:calc(100% - 32px);max-height:calc(100% - 170px);display:flex;flex-direction:column;background:#fff;color:#22262d;border-radius:16px;box-shadow:0 10px 34px #00000038;z-index:6;cursor:default;user-select:text;-webkit-user-select:text}
 .ofc-pop[hidden]{display:none}
-@media (max-width:640px){.ofc-pop{top:auto;bottom:64px;left:16px;right:16px;width:auto;max-height:60%}.ofc-hint{display:none}}
+@media (max-width:640px){.ofc-pop{top:auto;bottom:64px;left:16px;right:16px;width:auto;max-height:60%}.ofc-hint{display:none}.ofc-rz{display:none}}
+.ofc-rz{position:absolute;z-index:2;touch-action:none}
+.ofc-rz-n,.ofc-rz-s{left:12px;right:12px;height:6px;cursor:ns-resize}.ofc-rz-n{top:-3px}.ofc-rz-s{bottom:-3px}
+.ofc-rz-e,.ofc-rz-w{top:12px;bottom:12px;width:6px;cursor:ew-resize}.ofc-rz-e{right:-3px}.ofc-rz-w{left:-3px}
+.ofc-rz-ne,.ofc-rz-nw,.ofc-rz-se,.ofc-rz-sw{width:14px;height:14px}.ofc-rz-ne{top:-3px;right:-3px;cursor:nesw-resize}.ofc-rz-sw{bottom:-3px;left:-3px;cursor:nesw-resize}.ofc-rz-nw{top:-3px;left:-3px;cursor:nwse-resize}.ofc-rz-se{bottom:-3px;right:-3px;cursor:nwse-resize}
+@media (min-width:641px){.ofc-ph{cursor:move;user-select:none;touch-action:none}}
+.ofc-pop.sized{max-height:none;max-width:none}.ofc-pop.sized .ofc-pb{flex:1}
+body.ofc-moving{user-select:none;-webkit-user-select:none}
 .ofc-ph{display:flex;gap:10px;align-items:center;padding:14px 14px 12px;border-bottom:1px solid #e3e6ea}
 .ofc-ph b{font-size:15px}.ofc-ph .sub{font-size:12px;color:#666e7a}.ofc-ph .grow{flex:1;min-width:0}
 .ofc-ph button{border:0;background:#f1f3f6;color:#22262d;width:36px;height:36px;border-radius:50%;font-size:16px;line-height:1;flex:none}
@@ -138,9 +145,62 @@
       + '<span class="ofc-hint">바닥을 누르면 hong 이 걸어갑니다 · 담당을 누르면 다가가 말을 겁니다</span></div>'
       + '<div class="ofc-pop" id="ofcPop" hidden><div class="ofc-ph" id="ofcPh"></div><div class="ofc-pb" id="ofcPb"></div><div id="ofcPf"></div></div>';
     document.body.appendChild(el);
+    popDrag();
     $('ofcClose').onclick = () => setOpen(false);
     $('ofcCount').onclick = openChat;
     $('ofcLog').onclick = () => ui.open('log');
+  }
+  // 대화창 크기·위치(hong 11-22 「기존 챗봇창처럼 드래그로 자유롭게」): 가장자리·모서리를 끌어 크기, 머리줄을 끌어 위치. 내 브라우저에 기억(sonik.ofc.box), 머리줄 두 번 누르면 처음 자리로. 좁은 화면은 그대로
+  const pbox = {
+    get() { try { return JSON.parse(localStorage.getItem('sonik.ofc.box') || 'null'); } catch (_) { return null; } },
+    set(v) { try { if (v) localStorage.setItem('sonik.ofc.box', JSON.stringify(v)); else localStorage.removeItem('sonik.ofc.box'); } catch (_) { /* 무시 */ } },
+  };
+  const P_MIN_W = 300, P_MIN_H = 260, pwide = () => window.innerWidth > 640;
+  function placePop(b) {
+    const pop = $('ofcPop'); if (!pop) return; const ps = pop.style;
+    if (!b || !pwide()) { ps.left = ps.top = ps.width = ps.height = ps.right = ''; pop.classList.remove('sized'); return; }
+    const R = el.getBoundingClientRect(), vw = R.width, vh = R.height;
+    const w = Math.min(Math.max(b.w, P_MIN_W), vw - 16), h = Math.min(Math.max(b.h, P_MIN_H), vh - 16);
+    const l = Math.min(Math.max(b.l, 8), vw - w - 8), t = Math.min(Math.max(b.t, 8), vh - h - 8);
+    Object.assign(ps, { left: l + 'px', top: t + 'px', width: w + 'px', height: h + 'px', right: 'auto' }); pop.classList.add('sized');
+  }
+  function popRect() { const pop = $('ofcPop'), R = el.getBoundingClientRect(), r = pop.getBoundingClientRect(); return { l: r.left - R.left, t: r.top - R.top, w: r.width, h: r.height, R }; }
+  function dragWith(g, e, cursor, move) {
+    e.preventDefault(); try { g.setPointerCapture(e.pointerId); } catch (_) { /* 무시 */ }
+    const r = popRect(), x0 = e.clientX, y0 = e.clientY;
+    document.body.classList.add('ofc-moving'); document.body.style.cursor = cursor;
+    const mv = (ev) => placePop(move(r, ev.clientX - x0, ev.clientY - y0));
+    const up = () => {
+      g.removeEventListener('pointermove', mv); g.removeEventListener('pointerup', up); g.removeEventListener('pointercancel', up);
+      document.body.classList.remove('ofc-moving'); document.body.style.cursor = '';
+      const q = popRect(); pbox.set({ l: Math.round(q.l), t: Math.round(q.t), w: Math.round(q.w), h: Math.round(q.h) });
+    };
+    g.addEventListener('pointermove', mv); g.addEventListener('pointerup', up); g.addEventListener('pointercancel', up);
+  }
+  function popDrag() {
+    const pop = $('ofcPop'), ph = $('ofcPh');
+    for (const d of ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']) {
+      const g = document.createElement('div'); g.className = 'ofc-rz ofc-rz-' + d;
+      g.ondblclick = () => { pbox.set(null); placePop(null); };
+      g.onpointerdown = (e) => {
+        if (e.button !== 0 || !pwide()) return;
+        dragWith(g, e, getComputedStyle(g).cursor, (r, dx, dy) => {
+          const b = { l: r.l, t: r.t, w: r.w, h: r.h }, W = r.R.width, H = r.R.height;
+          if (d.includes('e')) b.w = Math.min(r.w + dx, W - 8 - r.l);
+          if (d.includes('s')) b.h = Math.min(r.h + dy, H - 8 - r.t);
+          if (d.includes('w')) { b.w = Math.min(Math.max(r.w - dx, P_MIN_W), r.l + r.w - 8); b.l = r.l + r.w - b.w; }
+          if (d.includes('n')) { b.h = Math.min(Math.max(r.h - dy, P_MIN_H), r.t + r.h - 8); b.t = r.t + r.h - b.h; }
+          return b;
+        });
+      };
+      pop.appendChild(g);
+    }
+    ph.ondblclick = (e) => { if (!e.target.closest('button,input,a')) { pbox.set(null); placePop(null); } };
+    ph.onpointerdown = (e) => {
+      if (e.button !== 0 || !pwide() || e.target.closest('button,input,a')) return;
+      dragWith(ph, e, 'move', (r, dx, dy) => ({ l: r.l + dx, t: r.t + dy, w: r.w, h: r.h }));
+    };
+    window.addEventListener('resize', () => { if (st.pop) placePop(pbox.get()); });
   }
   function openChat() { if (window.SonikChannel && window.SonikChannel.open) window.SonikChannel.open(); }
   function loadThree() {
@@ -355,7 +415,7 @@
     pick(id) { if (id === 'hongdesk' || id === 'hong') { openChat(); return; } ui.close(); st.cur.approach(id); },
     open(kind, id) { st.pop = { kind, id }; $('ofcPb').innerHTML = ''; $('ofcPf').innerHTML = ''; $('ofcPb').dataset.key = ''; if (st.cur) st.cur.select(kind === 'log' ? null : id); ui.render(threads()); },
     render(th) {
-      const s = st.pop, pop = $('ofcPop'); if (!s) { if (pop) pop.hidden = true; return; } pop.hidden = false;
+      const s = st.pop, pop = $('ofcPop'); if (!s) { if (pop) pop.hidden = true; return; } if (pop.hidden) { pop.hidden = false; placePop(pbox.get()); }
       const ph = $('ofcPh'), pb = $('ofcPb'), pf = $('ofcPf');
       if (s.kind === 'chat') {
         const a = byId[s.id], list = th.out[s.id] || [], live = !!LIVE[s.id], last = list[list.length - 1];
@@ -363,7 +423,7 @@
         const key = 'chat:' + s.id + ':' + list.map((m) => m.id + (m.run_state || '') + m.status).join(',');
         if (pb.dataset.key !== key) {
           pb.dataset.key = key;
-          pb.innerHTML = '<div class="ofc-chat" id="ofcChat">' + (list.length ? list.map((m) => '<div class="ofc-msg' + (m.sender === 'hong' ? ' me' : '') + '">' + esc(String(m.body || '').replace(/<<<[\s\S]*?>>>/g, '').trim()) + '</div>').join('')
+          pb.innerHTML = '<div class="ofc-chat" id="ofcChat">' + (list.length ? list.map((m) => '<div class="ofc-msg' + (m.sender === 'hong' ? ' me' : '') + '">' + esc(String(m.body || '').replace(/<<<[\s\S]*?>>>/g, '').trim()).replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>') + '</div>').join('')
             : '<p class="ofc-note">' + (live ? esc(a.name) + ' 옆에 왔습니다. 아래 칸에 적어 말을 걸어 보세요. 챗봇의 ⚡ 빠른 질문으로 올라가고, PC 중계가 켜져 있으면 답이 옵니다.' : '이 담당은 아직 실제 답에 연결하지 않았습니다. 지금은 손익담당만 답합니다.') + '</p>')
             + (pend ? '<div class="ofc-msg wait">' + (last.run_state === '실행중' ? '답을 쓰는 중…' : '답을 기다리는 중…') + '</div>' : '') + '</div>';
           pb.scrollTop = pb.scrollHeight;

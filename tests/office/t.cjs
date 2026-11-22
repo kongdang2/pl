@@ -84,11 +84,12 @@ const still = async (p, name) => { let a = await labXY(p, name); for (let i = 0;
   ok((await p.textContent('#ofcCnt')) === '2', '내가 보낸 말은 창구 숫자에 안 들어간다');
   // 중계가 답한 것처럼 글을 넣는다
   sent.status = '답변'; sent.updated_at = new Date().toISOString();
-  DB.sk_channel.push(row({ id: sent.id + 1, at: new Date().toISOString(), sender: 'Claude', recipient: 'hong', topic: '11월 재무손익', status: '안내', reply_to: sent.id, quick: true, body: '11월 재무손익은 Δ222.8억입니다.\n\n<<<자세히\n근거\n자세히>>>' }));
+  DB.sk_channel.push(row({ id: sent.id + 1, at: new Date().toISOString(), sender: 'Claude', recipient: 'hong', topic: '11월 재무손익', status: '안내', reply_to: sent.id, quick: true, body: '11월 재무손익은 Δ222.8억입니다.\n- **근거**: 2차안\n\n<<<자세히\n근거\n자세히>>>' }));
   await p.evaluate(() => window.SonikChannel.reload());
   await p.waitForFunction(() => document.querySelectorAll('#ofcChat .ofc-msg:not(.me):not(.wait)').length === 1, null, { timeout: 10000 });
   const ans = await p.textContent('#ofcChat .ofc-msg:not(.me)');
   ok(/Δ222\.8억/.test(ans) && !/자세히/.test(ans), '답이 대화창에 뜬다(자세히 묶음은 뺌)', ans);
+  ok(await p.evaluate(() => { const b = document.querySelector('#ofcChat .ofc-msg:not(.me) b'); return !!b && b.textContent === '근거' && !/\*\*/.test(document.getElementById('ofcChat').textContent); }), '답의 **굵게** 는 굵은 글씨로');
   ok(await p.evaluate(() => [...document.querySelectorAll('.ofc-say')].some((e) => !e.hidden && /손익담당/.test(e.textContent) && /222\.8/.test(e.textContent))), '답이 오면 손익담당 말풍선');
   // 입력 중에 답이 와도 적던 글이 남는다 + 이어 묻기는 앞 답에 이어 쓴다
   await p.locator('#ofcIn2').click(); await p.keyboard.type('관리손익은?');
@@ -96,11 +97,35 @@ const still = async (p, name) => { let a = await labXY(p, name); for (let i = 0;
   ok((await p.inputValue('#ofcIn2')) === '관리손익은?', '다른 글이 와도 적던 글이 남는다');
   await p.keyboard.press('Enter'); await p.waitForFunction(() => document.querySelectorAll('.ofc-msg.me').length === 2, null, { timeout: 10000 });
   const s2 = DB.sk_channel[DB.sk_channel.length - 1];
+  const nAfter2 = DB.sk_channel.length;
   ok(s2.topic === '사무실 · 손익담당' && s2.reply_to === sent.id + 1, '이어 묻기는 앞 답에 이어 쓴다', s2);
   ok(await p.evaluate(() => document.querySelectorAll('#ofcChat .ofc-msg').length) === 4, '대화 4줄(질문·답·질문·기다림)', await p.evaluate(() => document.querySelectorAll('#ofcChat .ofc-msg').length));
   // 명함은 필요할 때만
   await p.click('#ofcCard'); ok(/명함/.test(await p.textContent('#ofcPh')) && /재무손익/.test(await p.textContent('#ofcPb')), '명함 보기'); await p.click('#ofcBack'); await p.waitForSelector('#ofcTalk');
   ok(await p.evaluate(() => document.querySelectorAll('.ofc-msg.me').length) === 2, '대화로 돌아오면 대화가 그대로');
+  // 대화창 끌기(hong 11-22 「기존 챗봇창처럼 드래그로 자유롭게」): 머리줄 = 위치, 모서리·가장자리 = 크기, 기억, 두 번 누르면 처음 자리
+  const R0 = await p.evaluate(() => { const r = document.getElementById('ofcPop').getBoundingClientRect(); return { l: r.left, t: r.top, w: r.width, h: r.height }; });
+  const ph = await p.locator('#ofcPh .grow').boundingBox();
+  await p.mouse.move(ph.x + 20, ph.y + 10); await p.mouse.down(); await p.mouse.move(ph.x - 200, ph.y + 60, { steps: 6 }); await p.mouse.up();
+  const R1 = await p.evaluate(() => { const r = document.getElementById('ofcPop').getBoundingClientRect(); return { l: r.left, t: r.top, w: r.width, h: r.height }; });
+  ok(Math.abs(R1.l - (R0.l - 220)) < 3 && Math.abs(R1.t - (R0.t + 50)) < 3, '머리줄을 끌면 대화창이 옮겨진다', [R0, R1]);
+  const se = await p.locator('#ofcPop .ofc-rz-se').boundingBox();
+  await p.mouse.move(se.x + 7, se.y + 7); await p.mouse.down(); await p.mouse.move(se.x + 127, se.y + 87, { steps: 6 }); await p.mouse.up();
+  const R2 = await p.evaluate(() => { const r = document.getElementById('ofcPop').getBoundingClientRect(); return { l: r.left, t: r.top, w: r.width, h: r.height }; });
+  ok(Math.abs(R2.w - (R1.w + 120)) < 3 && Math.abs(R2.h - (R1.h + 80)) < 3 && Math.abs(R2.l - R1.l) < 2, '모서리를 끌면 크기가 바뀐다', [R1, R2]);
+  const w0 = await p.locator('#ofcPop .ofc-rz-w').boundingBox();
+  await p.mouse.move(w0.x + 3, w0.y + 30); await p.mouse.down(); await p.mouse.move(w0.x - 57, w0.y + 30, { steps: 4 }); await p.mouse.up();
+  const R3 = await p.evaluate(() => { const r = document.getElementById('ofcPop').getBoundingClientRect(); return { l: r.left, w: r.width, r: r.right }; });
+  ok(Math.abs(R3.w - (R2.w + 60)) < 3 && Math.abs(R3.r - (R2.l + R2.w)) < 2, '왼쪽 가장자리를 끌면 오른쪽은 그대로 두고 넓어진다', [R2, R3]);
+  const saved = await p.evaluate(() => JSON.parse(localStorage.getItem('sonik.ofc.box') || 'null'));
+  ok(saved && Math.abs(saved.w - R3.w) < 2, '크기·위치를 기억한다', saved);
+  ok(DB.sk_channel.length === nAfter2, '끄는 동안 글이 새로 생기지 않는다');
+  await p.click('#ofcPx');
+  await p.click('#ofcLog'); const RL = await p.evaluate(() => { const r = document.getElementById('ofcPop').getBoundingClientRect(); return { l: r.left, w: r.width }; });
+  ok(Math.abs(RL.l - R3.l) < 2 && Math.abs(RL.w - R3.w) < 2, '다시 열어도 옮긴 자리·크기 그대로', [R3, RL]);
+  await p.dblclick('#ofcPh .grow'); const RD = await p.evaluate(() => { const r = document.getElementById('ofcPop').getBoundingClientRect(); return { l: r.left, w: r.width }; });
+  ok(Math.abs(RD.w - R0.w) < 2 && Math.abs(RD.l - R0.l) < 2 && !(await p.evaluate(() => localStorage.getItem('sonik.ofc.box'))), '머리줄 두 번 누르면 처음 자리', [R0, RD]);
+  await p.click('#ofcPx');
   // 연결 전 담당
   xy = await labXY(p, '구매담당'); await p.mouse.click(xy[0], xy[1] + 45);
   await p.waitForFunction(() => /구매담당 와 대화/.test(document.getElementById('ofcPh').textContent), null, { timeout: 120000 });
