@@ -3,7 +3,8 @@
 //  ① 목록을 띄운 뒤 ’26년 손익추정이 다시 저장돼도, 그 목록에서 사업계획을 열면 최신 저장본의 값이 들어간다(예전: 목록이 기억한 이전 저장본)
 //  ② 받은 즉시 지금 화면(차이분석이 아닌 메뉴)을 다시 그린다(예전: 메뉴를 옮겨야 보임) · 스크롤 그대로
 //  ③ 열어 둔 사업계획: 다른 창에서 ’26년을 저장하면 바로 알림 + 「⟳ ’26년 다시 받기」 강조, 누르면 새 값 · 함께 여는 사람 명단에는 안 들어감
-//  ④ 「🔗 연동 손익추정」 목록도 서버에서 다시 읽음(목록 뒤에 생긴 손익추정이 보임)
+//  ④ 「🔗 ’26년 연동자료 변경」 목록도 서버에서 다시 읽음(목록 뒤에 생긴 손익추정이 보임)
+//  ⑤ (hong 11-23) 「⟳ ’26년 다시 받기」 = 연동해 둔 손익추정 최신 저장본의 12월 값(1월 기초·12월 가격)까지 다시 이어받음 · 「🔗 연동 손익추정」 → 「🔗 ’26년 연동자료 변경」
 const http=require('http'),fs=require('fs'),path=require('path'),zlib=require('zlib'),crypto=require('crypto');
 const { chromium } = require('playwright');
 const REPO=path.resolve(__dirname,'../..'), HERE=__dirname, HONG='kongdang2@gmail.com';
@@ -72,6 +73,13 @@ let pass=0,fail=0;const ok=(c,m,extra)=>{if(c){pass++;console.log('ok  ',m);}els
  ok(tx==='menu=overview prev='+pv+' val=7','② 차이분석이 아닌 지금 화면(overview)도 받은 값으로 바로 다시 그림(메뉴 이동 없이)',[tx,pv]);
  ok(/「26년 추정」.*「당해」 비교자료로 넣었습니다/.test(await toastTxt(P)),'열 때 알림 = 최신 저장본 이름·시각',await toastTxt(P));
  let b=await btn(P);ok(!b.hidden&&b.text==='⟳ ’26년 다시 받기'&&!b.warn,'「⟳ ’26년 다시 받기」 단추 보임(강조 없음)',b);
+ const lk=await P.evaluate(()=>{const b=document.getElementById('btnLink');return {hidden:b.hidden,text:b.textContent};});
+ ok(!lk.hidden&&lk.text==='🔗 ’26년 연동자료 변경','⑤ 「🔗 연동 손익추정」 → 「🔗 ’26년 연동자료 변경」',lk);
+ // 가짜 엔진에는 사업계획 생성 함수가 없어 12월 값 묶음(seedPack)·넣기(applySeedPack)만 가짜로 바꾼다: 묶음 = 그 손익추정 저장본의 val, 넣으면 S.seedVal
+ const SEEDS=[];
+ await P.evaluate(()=>{const B=window.SonikBizplan;
+  B.seedPack=async(w,py)=>({seedVal:w.eval('S').val,annual:w.p88PackYear(py-1)});
+  B.applySeedPack=(w,pk,label)=>{w.eval('S').seedVal=pk.seedVal;window.__seedCalls=(window.__seedCalls||[]).concat([label]);const a=B.applyAnnual(w,pk.annual,true);w.refresh();return {inv:1,dec:0,annual:a};};});
  // ③ 다른 창(Q)에서 ’26년 손익추정을 열어 값 300 으로 저장 → P 에 바로 알림·단추 강조
  const Q=await page('sonik');await Q.waitForSelector('[data-open="s26"]',{timeout:20000});await Q.click('[data-open="s26"]');await idle(Q);await Q.waitForTimeout(1800);
  const qctx=await Q.evaluate(()=>document.getElementById('ctx').textContent);
@@ -86,10 +94,13 @@ let pass=0,fail=0;const ok=(c,m,extra)=>{if(c){pass++;console.log('ok  ',m);}els
  const y0=await T(P,()=>T.scroll());const n0=await T(P,()=>T.n());
  await P.click('#btnPrevRe');await idle(P);await P.waitForTimeout(200);
  tx=await T(P,()=>T.text());ok(/prev=300/.test(tx),'③ 「다시 받기」 = 최신(300)',tx);
+ ok(await T(P,()=>T.S().seedVal)===300,'⑤ 「다시 받기」가 12월 값(1월 기초·12월 가격)도 최신 저장본(300)에서 다시 이어받음',await T(P,()=>T.S().seedVal));
+ const calls=await P.evaluate(()=>window.__seedCalls||[]);ok(calls.length===1&&/26년 추정/.test(calls[0]),'⑤ 이어받은 자료 = 연동해 둔 「26년 추정」',calls);
+ ok(/12월 값으로 다시 이어받았습니다/.test(await toastTxt(P)),'⑤ 알림 = 12월 값 이어받음',await toastTxt(P));
  ok(await T(P,()=>T.n())>n0,'다시 그림');ok(await T(P,()=>T.y())===y0,'② 스크롤 그대로',[y0,await T(P,()=>T.y())]);
  b=await btn(P);ok(!b.warn,'받은 뒤 강조 풀림',b);
- // 같은 값이면 다시 그리지 않음
- const n1=await T(P,()=>T.n());await P.click('#btnPrevRe');await idle(P);ok(await T(P,()=>T.n())===n1,'같은 자료면 다시 그리지 않음');
+ // 한 번 더 눌러도 같은 저장본(300)을 다시 이어받을 뿐 값은 그대로
+ await P.click('#btnPrevRe');await idle(P);tx=await T(P,()=>T.text());ok(/prev=300/.test(tx)&&await T(P,()=>T.S().seedVal)===300,'다시 눌러도 같은 값',tx);
  // P 저장 → 사업계획 저장본에 새 「당해」(300)·연동 기억 그대로
  await P.click('#btnSave');await idle(P);await P.waitForTimeout(300);
  const b27=DB.sk_snapshots.find(r=>r.id==='b27');const saved=JSON.parse(zlib.gunzipSync(FILES[b27.storage_path]));

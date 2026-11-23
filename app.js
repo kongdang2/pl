@@ -91,10 +91,13 @@
     $('btnLink').hidden = !(inEngine && st.open && modeOf(st.open) === 'bizplan' && canWrite());
     const bizOpen = !!(inEngine && st.open && modeOf(st.open) === 'bizplan' && !st.open.preview), pyB = bizOpen && st.mounted && st.mounted.win && st.mounted.win.__BIZPLAN__ ? +st.mounted.win.__BIZPLAN__.planYear : 0;
     const pre = $('btnPrevRe'); pre.hidden = !bizOpen;
-    pre.textContent = '⟳ ' + (pyB ? '’' + String(pyB - 1).slice(2) + '년' : '전년') + ' 다시 받기';
+    const yN = pyB ? '’' + String(pyB - 1).slice(2) + '년' : '전년';
+    pre.textContent = '⟳ ' + yN + ' 다시 받기';
+    $('btnLink').textContent = '🔗 ' + yN + ' 연동자료 변경';
     pre.classList.toggle('warn', !!st.prevNewer); pre.classList.toggle('more', !st.prevNewer); // 다시 저장됐으면 눈에 띄게(좁은 화면에서도 ⋯ 밖)
-    pre.title = st.prevNewer ? '연동 손익추정이 ' + (st.prevNewer.name ? st.prevNewer.name + ' · ' : '') + (st.prevNewer.at ? fmtT(st.prevNewer.at) + ' ' : '') + '다시 저장됐습니다. 누르면 그 값으로 「당해」 비교자료를 바꿉니다(저장해야 남음)'
-      : '연동 손익추정의 최신 저장본에서 「당해」 비교자료(전년 실적·추정)를 다시 받아 지금 화면을 다시 그립니다(저장해야 남음). 1월 기초·12월 기준은 「🔗 연동 손익추정」에서';
+    pre.title = st.prevNewer ? '연동 손익추정이 ' + (st.prevNewer.name ? st.prevNewer.name + ' · ' : '') + (st.prevNewer.at ? fmtT(st.prevNewer.at) + ' ' : '') + '다시 저장됐습니다. 누르면 그 저장본의 12월 값(1월 기초재고·12월 가격·12월 입력)과 「당해」 비교자료를 다시 받습니다(저장해야 남음)'
+      : canWrite() ? '연동해 둔 손익추정의 최신 저장본에서 12월 값(1월 기초재고·12월 가격·12월 입력)과 「당해」 비교자료(전년 실적·추정)를 다시 받습니다(저장해야 남음). 다른 손익추정으로 바꿀 때는 「🔗 연동자료 변경」'
+        : '연동 손익추정의 최신 저장본에서 「당해」 비교자료(전년 실적·추정)를 다시 받아 지금 화면을 다시 그립니다(보기 전용 — 1월 기초·12월 값은 바꾸지 않음)';
     $('btnOffline').hidden = !inEngine;
     $('btnZoom').hidden = !inEngine;
     $('btnMerge').hidden = !(inEngine && st.newer && !(st.open && st.open.preview));
@@ -618,7 +621,7 @@
         st.prevSrc = { id: src.id, memo: src.memo || src.base_ym, rev: +src.rev || 1 }; prevWatchStart(); renderBar(); // 지금 「당해」로 쓴 손익추정(그 판 번호)을 지켜본다
         // 연동 손익추정이 마지막으로 이어받은 뒤 다시 저장됐으면 알린다(1월 기초·12월 기준은 자동으로 바꾸지 않는다)
         if (!again && st.link && st.link.id === src.id && st.link.synced && String(src.updated_at || '') > String(st.link.synced)) {
-          setTimeout(() => toast('연동 손익추정 ' + name + '이 이 사업계획이 12월 값을 이어받은 뒤에 다시 저장됐습니다. 「🔗 연동 손익추정」에서 12월 값을 다시 이어받을 수 있습니다.', 9000), 6200);
+          setTimeout(() => toast('연동 손익추정 ' + name + '이 이 사업계획이 12월 값을 이어받은 뒤에 다시 저장됐습니다. 「' + $('btnPrevRe').textContent + '」를 누르면 12월 값을 다시 이어받습니다.', 9000), 6200);
         }
       } else if (db.planDb) {
         const r = B.applyPlan(win, db.planDb), y = B.planYearOf(db.planDb);
@@ -635,7 +638,7 @@
     busy('손익추정 목록 확인 중…'); const cand = await freshBizSrcs(py); busy(null);
     if (!cand.length) { toast((py - 1) + '년 기준 손익추정 자료가 웹에 없습니다.', 6000); return; }
     const cur = st.link && st.link.id;
-    const ok = await ask('🔗 연동 손익추정', '<p class="hint">이 ' + py + '년 사업계획이 이어받을 ' + (py - 1) + '년 손익추정을 고릅니다. 저장하면 기억해서, 다음에 열 때도 이 손익추정의 연간 실적·추정을 「당해」 비교자료로 넣습니다.</p>'
+    const ok = await ask('🔗 ' + (py - 1) + '년 연동자료 변경', '<p class="hint">이 ' + py + '년 사업계획이 이어받을 ' + (py - 1) + '년 손익추정을 고릅니다. 저장하면 기억해서, 다음에 열 때도 이 손익추정의 연간 실적·추정을 「당해」 비교자료로 넣습니다.</p>'
       + '<label>손익추정<select id="lnkSrc">' + cand.map((x) => '<option value="' + x.id + '"' + (x.id === cur ? ' selected' : '') + '>' + esc(x.base_ym + ' · ' + (x.memo || '(이름 없음)') + ' · ' + fmtT(x.updated_at || x.created_at) + (x.id === cur ? ' (지금 연동)' : '')) + '</option>').join('') + '</select></label>'
       + (st.link && st.link.synced ? '<p class="hint">지금 연동: 「' + esc(st.link.memo || '') + '」 · 12월 값 이어받은 때 그 자료 저장시각 ' + esc(fmtT(st.link.synced)) + '</p>' : '')
       + '<label style="display:flex;gap:6px;align-items:flex-start;margin-top:8px"><input type="checkbox" id="lnkSeed" checked style="width:auto;margin-top:3px"><span>이 손익추정의 <b>' + (py - 1) + '년 12월 값으로 다시 이어받기</b><br><span class="hint">12월 기말재고 → ' + py + '년 1월 기초재고(온산·울산 수불부·생산월보·기초재공·울산 원단위), 12월 추정 입력 → 손익시뮬레이션 기준, 연간 실적·추정 → 「당해」 열을 새 값으로 바꿉니다. 계획 1~12월 입력은 그대로입니다(기준가격은 빈 달만 채움). 저장해야 남고, 저장 전이면 「목록으로」로 되돌릴 수 있습니다.</span></span></label>');
@@ -655,6 +658,11 @@
       } catch (e) { toast('연동 자료를 받지 못했습니다: ' + e.message, 8000); }
       busy(null); renderBar(); return;
     }
+    await reseedFrom(win, py, src, name);
+  }
+  // 고른 ’전년 손익추정의 12월 값(1월 기초재고·12월 가격·12월 입력)과 연간 비교자료를 사업계획에 다시 이어받는다(저장해야 남음).
+  // 「⟳ ’26년 다시 받기」(지금 연동한 자료의 최신 저장본)와 「🔗 ’26년 연동자료 변경」(다른 자료 고르기)이 같이 쓴다(hong 11-23)
+  async function reseedFrom(win, py, src, name) {
     const box = document.createElement('div'); box.className = 'offscreen-engine'; document.body.appendChild(box);
     let m = null, pk = null;
     busy('손익추정 자료를 여는 중… (10~30초)');
@@ -680,11 +688,19 @@
     busy(null); renderBar();
   }
   $('btnLink').onclick = linkDialog;
-  // ⟳ 전년 다시 받기: 사업계획을 닫지 않고 연동 손익추정의 최신 저장본에서 「당해」 비교자료를 다시 받는다(저장해야 남음).
-  // 보기 전용이어도 화면 확인용으로 쓸 수 있다
+  // ⟳ 전년 다시 받기: 사업계획을 닫지 않고 연동해 둔 손익추정의 최신 저장본에서 12월 값(1월 기초재고·12월 가격·12월 입력)과
+  // 「당해」 비교자료를 함께 다시 받는다(저장해야 남음). 예전에는 비교자료만 받아 손익이 안 바뀌었다(hong 11-23 「직관적으로 그게 낫지」).
+  // 보기 전용이면 화면 확인용으로 비교자료만 받는다(이어받은 값을 저장할 수 없으므로)
   $('btnPrevRe').onclick = async () => {
     const win = st.mounted && st.mounted.win; if (!win || !B.isBiz(win) || !st.open) return;
-    await linkAfterOpen(st.open, true);
+    if (!canWrite()) { await linkAfterOpen(st.open, true); return; }
+    const py = +win.__BIZPLAN__.planYear;
+    busy('연동 자료 확인 중…'); const cand = await freshBizSrcs(py); busy(null);
+    const want = (st.link && st.link.id) || (st.prevSrc && st.prevSrc.id);
+    const src = (want && cand.find((x) => x.id === want)) || cand[0];
+    if (!src) { toast((py - 1) + '년 기준 손익추정 자료가 웹에 없습니다.', 6000); return; }
+    const name = '「' + (src.memo || src.base_ym) + '」(' + fmtT(src.updated_at || src.created_at) + ')';
+    await reseedFrom(win, py, src, name);
   };
   // 새 사업계획: 고른 손익추정 자료를 화면 밖에서 열어 「📘 사업계획 시스템 다운로드」와 같은 결과를 받아 바로 연다
   async function newBizplan() {
