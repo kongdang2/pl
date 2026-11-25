@@ -300,3 +300,17 @@ label.cd textarea{display:block;margin-top:3px}
 .repb{display:inline-block;margin-left:6px;padding:0 6px;border-radius:3px;background:var(--pri);color:#fff;font-size:11px;font-weight:600;white-space:nowrap;vertical-align:1px}
 .repd{margin-left:5px;font-size:11px;color:var(--mut);white-space:nowrap}
 @media (max-width:700px){#snapRows>tr.rep{background:var(--rep);box-shadow:inset 3px 0 0 var(--pri);padding-left:8px}#snapRows>tr.rep>td{background:none}#snapRows>tr.rep>td:first-child{box-shadow:none}}
+
+/* 자료명·설명 줄바꿈 정돈(hong 11/25 「조금만 길어져도 칸이동이 되면서 보기가 안좋은데」): PC(마우스) 화면에서
+   ✏️ 는 칸 오른쪽 끝에 겹쳐 두고 줄에 마우스를 올릴 때만 보임 → 이름·설명이 연필 때문에 밀리지 않음.
+   이름 칸은 넓히고, 설명은 세 줄까지(전체는 마우스를 올리면), 보고본 배지는 이름 아래 한 줄. 휴대폰·터치는 그대로 */
+.repw{display:block;margin-top:2px;white-space:nowrap}.repw .repb{margin-left:0}
+@media (hover:hover) and (min-width:701px){
+  #snapRows td.memo{position:relative;padding-right:20px}
+  #snapRows>tr>td:nth-child(2){min-width:200px;max-width:300px}
+  #snapRows>tr>td.descr{min-width:120px}
+  #snapRows td.memo .ren{position:absolute;right:2px;top:50%;transform:translateY(-50%);margin:0;opacity:0}
+  #snapRows>tr:hover td.memo .ren,#snapRows td.memo .ren:focus-visible{opacity:.55}
+  #snapRows td.memo .ren:hover{opacity:1}
+  #snapRows td.descr .dt{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
+}
