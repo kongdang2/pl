@@ -165,7 +165,8 @@
     ]);
     if (error) { toast('목록을 읽지 못했습니다: ' + error.message); return; }
     st.engine = eng; st.snaps = snaps || [];
-    const biz = st.tab === 'bizplan', rows = st.snaps.filter((s) => modeOf(s) === st.tab);
+    // 보고본(hong 11/25 「1안 하되 보고본이 항상 젤 위로 고정」): 탭마다 하나, 관리자만 ☆ 로 지정·해제, 늘 첫 줄
+    const biz = st.tab === 'bizplan', rows = st.snaps.filter((s) => modeOf(s) === st.tab).sort((a, b) => (b.report_at ? 1 : 0) - (a.report_at ? 1 : 0));
     document.querySelectorAll('#listTabs button').forEach((b) => b.classList.toggle('on', b.getAttribute('data-t') === st.tab));
     $('lblUpSnap').hidden = !canWrite();
     $('btnNewBiz').hidden = !biz || !canWrite();
@@ -181,7 +182,10 @@
       // hong 11/20: 출처·작성자·마지막 저장 열은 숨기고 자료명에 마우스를 올리면 보이게, 자료명 옆에 설명 칸
       const meta = (s.source === 'pc' ? 'PC 원본' : '웹 저장') + ' · 작성자 ' + (s.author_name || s.author_email || '') + ' · 마지막 저장 ' + fmtT(s.updated_at || s.created_at) + (s.rev > 1 ? ' (' + s.rev + '회 저장)' : '');
       const dsc = canRename(s) ? ' <button class="ren" data-dsc="' + s.id + '" title="설명 고치기">✏️</button>' : '';
-      return '<tr><td>' + esc(s.base_ym) + '</td><td class="memo" title="' + esc(meta) + '"><b>' + esc(s.memo || '(이름 없음)') + '</b>' + ren + '</td>'
+      const isRep = !!s.report_at;
+      const star = st.me.role === 'admin' ? '<button class="star' + (isRep ? ' on' : '') + '" data-rep="' + s.id + '" title="' + (isRep ? '보고본 지정 풀기' : '보고본으로 지정 (탭마다 하나, 목록 맨 위에 고정)') + '">' + (isRep ? '★' : '☆') + '</button>' : '';
+      const badge = isRep ? '<span class="repb">★ 보고본</span><span class="repd">' + (() => { const d = new Date(s.report_at); return (d.getMonth() + 1) + '/' + d.getDate(); })() + ' 지정</span>' : '';
+      return '<tr' + (isRep ? ' class="rep"' : '') + '><td>' + esc(s.base_ym) + '</td><td class="memo" title="' + esc(meta) + '">' + star + '<b>' + esc(s.memo || '(이름 없음)') + '</b>' + badge + ren + '</td>'
         + '<td class="memo descr' + (s.descr ? '' : ' empty') + '" data-l="설명">' + (s.descr ? esc(s.descr) : '<span class="hint">—</span>') + dsc + '</td>'
         + (() => { const sh = sumHtml(s.summary), kh = sparkHtml(s.summary), no = (h) => /^<span class="hint">/.test(h) ? ' none' : ''; // none = 휴대폰에서 칸 숨김
           return '<td class="psum' + no(sh) + '" data-l="개요">' + sh + '</td><td class="spk' + no(kh) + '" data-l="추이">' + kh + '</td>'; })()
@@ -200,6 +204,7 @@
     $('snapRows').querySelectorAll('[data-ren]').forEach((b) => { b.onclick = () => renameSnap(b.getAttribute('data-ren')); });
     $('snapRows').querySelectorAll('[data-dsc]').forEach((b) => { b.onclick = () => editDescr(b.getAttribute('data-dsc')); });
     $('snapRows').querySelectorAll('[data-del]').forEach((b) => { b.onclick = () => deleteSnap(b.getAttribute('data-del')); });
+    $('snapRows').querySelectorAll('[data-rep]').forEach((b) => { b.onclick = () => setReport(b.getAttribute('data-rep')); });
     if (st.me.role === 'admin') loadMembers();
     loadUsage();
     loadRequests();
@@ -1041,6 +1046,15 @@
     log('descr', id, v);
     s.descr = data || null;
     toast(v ? '설명을 저장했습니다.' : '설명을 지웠습니다.');
+    loadList();
+  }
+  async function setReport(id) {
+    const s = st.snaps.find((x) => x.id === id); if (!s) return;
+    const on = !s.report_at;
+    const { error } = await sb.rpc('sk_set_report', { p_id: id, p_on: on });
+    if (error) { toast('보고본 지정 실패: ' + (/function|schema cache/i.test(error.message) ? 'DB 준비(SQL 029)가 아직 안 됐습니다.' : error.message), 7000); return; }
+    log('report', id, on ? 'on' : 'off');
+    toast(on ? '「' + (s.memo || '') + '」을 보고본으로 지정했습니다. 목록 맨 위에 고정됩니다.' : '보고본 지정을 풀었습니다.');
     loadList();
   }
   async function deleteSnap(id) {
