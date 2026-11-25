@@ -184,9 +184,9 @@
       const dsc = canRename(s) ? ' <button class="ren" data-dsc="' + s.id + '" title="설명 고치기">✏️</button>' : '';
       const isRep = !!s.report_at;
       const star = st.me.role === 'admin' ? '<button class="star' + (isRep ? ' on' : '') + '" data-rep="' + s.id + '" title="' + (isRep ? '보고본 지정 풀기' : '보고본으로 지정 (탭마다 하나, 목록 맨 위에 고정)') + '">' + (isRep ? '★' : '☆') + '</button>' : '';
-      const badge = isRep ? '<span class="repb">★ 보고본</span><span class="repd">' + (() => { const d = new Date(s.report_at); return (d.getMonth() + 1) + '/' + d.getDate(); })() + ' 지정</span>' : '';
+      const badge = isRep ? '<span class="repw"><span class="repb">★ 보고본</span><span class="repd">' + (() => { const d = new Date(s.report_at); return (d.getMonth() + 1) + '/' + d.getDate(); })() + ' 지정</span></span>' : '';
       return '<tr' + (isRep ? ' class="rep"' : '') + '><td>' + esc(s.base_ym) + '</td><td class="memo" title="' + esc(meta) + '">' + star + '<b>' + esc(s.memo || '(이름 없음)') + '</b>' + badge + ren + '</td>'
-        + '<td class="memo descr' + (s.descr ? '' : ' empty') + '" data-l="설명">' + (s.descr ? esc(s.descr) : '<span class="hint">—</span>') + dsc + '</td>'
+        + '<td class="memo descr' + (s.descr ? '' : ' empty') + '" data-l="설명">' + (s.descr ? '<span class="dt" title="' + esc(s.descr) + '">' + esc(s.descr) + '</span>' : '<span class="hint">—</span>') + dsc + '</td>'
         + (() => { const sh = sumHtml(s.summary), kh = sparkHtml(s.summary), no = (h) => /^<span class="hint">/.test(h) ? ' none' : ''; // none = 휴대폰에서 칸 숨김
           return '<td class="psum' + no(sh) + '" data-l="개요">' + sh + '</td><td class="spk' + no(kh) + '" data-l="추이">' + kh + '</td>'; })()
         // 단추(hong 11/20): 같은 크기·작게 3+2 두 줄(가로 스크롤 없게), 「열기」만 테두리 진하게
