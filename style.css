@@ -287,3 +287,16 @@ label.cd textarea{display:block;margin-top:3px}
 #snapRows>tr>td.acts button{flex:1 1 0;min-width:0;min-height:34px;padding:0 2px;font-size:12.5px;white-space:nowrap}
 }
 @media (max-width:700px) and (prefers-color-scheme: dark){:root:not([data-theme="light"]) #snapRows>tr>td.spk::before{color:#8FB4D9}}
+
+/* 보고본(hong 11/25, 1안 + 맨 위 고정, 추이 그래프 추정 구간 노랑과 겹치지 않게 연남색): 연남색 바탕 + 남색 왼쪽 띠 + 「★ 보고본」 배지 */
+:root{--rep:#E6EEF7}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--rep:#1E2E40}}
+:root[data-theme="dark"]{--rep:#1E2E40}
+#snapRows tr.rep>td{background:var(--rep)}
+#snapRows tr.rep>td:first-child{box-shadow:inset 3px 0 0 var(--pri)}
+.grid td.memo .star{border:0;background:none;padding:0 5px 0 0;font-size:15px;line-height:1;color:var(--mut);cursor:pointer;vertical-align:-1px}
+.grid td.memo .star.on{color:var(--pri)}
+.grid td.memo .star:hover{color:var(--pri)}
+.repb{display:inline-block;margin-left:6px;padding:0 6px;border-radius:3px;background:var(--pri);color:#fff;font-size:11px;font-weight:600;white-space:nowrap;vertical-align:1px}
+.repd{margin-left:5px;font-size:11px;color:var(--mut);white-space:nowrap}
+@media (max-width:700px){#snapRows>tr.rep{background:var(--rep);box-shadow:inset 3px 0 0 var(--pri);padding-left:8px}#snapRows>tr.rep>td{background:none}#snapRows>tr.rep>td:first-child{box-shadow:none}}
