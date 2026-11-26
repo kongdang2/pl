@@ -689,6 +689,7 @@
         + (r.dec ? ' · 12월 추정 입력 ' + r.dec + '건(손익시뮬레이션 기준)' : ' · 12월 판매·구매가 비어 있어 손익시뮬레이션 기준은 그대로')
         + (r.annual ? ' · 「당해」 비교자료' : '') + '. 저장하면 남습니다.', 10000);
       log('link_reseed', st.open.id, src.id + ' inv=' + r.inv + ' dec=' + r.dec);
+      if (st.conf0 != null) confRebase(); // 이어받으며 바뀐 직전 12월 확정 값은 저장 때 다시 묻지 않는다
     } catch (e) { toast('이어받지 못했습니다: ' + e.message, 9000); }
     busy(null); renderBar();
   }
@@ -882,7 +883,7 @@
     if (full) { c.screen = sc.text; c.cut = sc.cut; c.dirty = !!st.dirty; }
     return c;
   }
-  function unmount() { presStop(); prevWatchStop(); st.prevSrc = null; st.prevNewer = null; st.base = null; st.newer = null; st.peers = []; if (window.SonikChannel && window.SonikChannel.setContext) window.SonikChannel.setContext(null); navStop(); try { rqClose(true); } catch (e) { console.warn('수정요청 패널 정리 실패', e); } if (st.mounted) { st.mounted.dispose(); st.mounted = null; } $('engineBox').innerHTML = ''; st.open = null; }
+  function unmount() { presStop(); prevWatchStop(); st.prevSrc = null; st.prevNewer = null; st.base = null; st.conf0 = null; st.newer = null; st.peers = []; if (window.SonikChannel && window.SonikChannel.setContext) window.SonikChannel.setContext(null); navStop(); try { rqClose(true); } catch (e) { console.warn('수정요청 패널 정리 실패', e); } if (st.mounted) { st.mounted.dispose(); st.mounted = null; } $('engineBox').innerHTML = ''; st.open = null; }
   // 추정자료 삭제(관리자만): 저장 파일·이전 저장(백업)까지 지운다. 되돌릴 수 없다
   // 추정자료명 바꾸기(hong 11/03): 관리자는 모든 자료, 작성자는 내가 웹에 만든 자료만(DB 함수 sk_rename_snapshot 이 다시 확인)
   const canRename = (s) => !!st.me && (st.me.role === 'admin' || (st.me.role === 'writer' && s.source === 'web' && s.author_email === st.me.email));
@@ -1084,7 +1085,7 @@
   }
   async function openSnap(id, backup, pv) {
     const s0 = st.snaps.find((x) => x.id === id); if (!s0 || !st.engine) return;
-    st.cleanSig = null;
+    st.cleanSig = null; st.conf0 = null;
     let s = backup ? Object.assign({}, s0, { storage_path: backup.storage_path, backupOf: s0.id, memo: s0.memo + ' (' + backup.rev + '번째 저장)', updated_at: backup.saved_at }) : s0;
     if (pv) s = Object.assign({}, s0, { preview: true, memo: (s0.memo || '') + ' · ' + pv.label });
     if (!pv && s.engine_ver && sameBase(s.engine_ver) !== sameBase(st.engine.ver)) {
@@ -1190,6 +1191,14 @@
         log('save_block', st.open.id, 'baseYm ' + db.baseYm + ' ≠ ' + st.open.base_ym);
         return;
       }
+      // 확정 자료가 바뀌었으면 저장 전에 바뀐 칸을 보여 주고 묻는다(hong 11-27). 취소하면 저장하지 않고 화면은 그대로 둔다
+      const cc = confChanges(db);
+      let confNote = '';
+      if (cc) {
+        busy(null);
+        if (!(await askConfChange(cc))) { toast('저장하지 않았습니다. 화면은 그대로입니다.', 6000); log('conf_cancel', st.open.id || null, cc.note); return; }
+        confNote = ' ' + cc.note; busy('저장하는 중…');
+      }
       if (memo === null) {
         // 그사이 다른 창·다른 사람이 저장했으면(CONFLICT) 최신 판에 내가 바꾼 칸만 얹어 다시 저장한다(hong 11/04, 최대 3번)
         let merged = null;
@@ -1217,7 +1226,7 @@
           if (r.data && r.data.prune && r.data.prune.length) await sb.storage.from(C.bucket).remove(r.data.prune);
           st.open = Object.assign({}, s, { rev: r.data.rev, storage_path: path, size_bytes: gz.size, updated_at: new Date().toISOString(), engine_ver: db.sysVer || s.engine_ver, last_saved_by: st.me.email, last_saved_name: st.me.name || '' });
           st.base = baseOf(db, r.data.rev); st.newer = null;
-          log('save_web', s.id, 'rev=' + r.data.rev + (merged ? ' ' + merged.note : ''));
+          log('save_web', s.id, 'rev=' + r.data.rev + (merged ? ' ' + merged.note : '') + confNote);
           presSaved();
           break;
         }
@@ -1227,7 +1236,7 @@
       } else {
         const parent = st.open.backupOf || st.open.id || st.open.srcId || null;
         const id = await putSnapshot(db, { source: 'web', memo, parent_id: parent });
-        log('save_web_new', id, 'parent=' + parent);
+        log('save_web_new', id, 'parent=' + parent + confNote);
         markClean(0);
         const now = new Date().toISOString();
         st.open = Object.assign({}, st.open, { id, memo, rev: 1, created_at: now, updated_at: now, source: 'web', author_email: st.me.email, author_name: st.me.name || '', engine_ver: db.sysVer, backupOf: null });
@@ -1259,6 +1268,36 @@
     });
     if (pick) openSnap(id, pick);
   }
+  // ── 확정 자료 변경 확인(hong 11-27 「확정이 바뀌는 경우 저장 전에 확인 요청을 띄우도록 하자」) ──────────────────
+  // 확정 자료(저장본의 confirmed)는 한 번 넣으면 잘 바꾸지 않는다. 연 직후·저장 직후의 확정 자료를 글자로 남겨 두고(st.conf0, markClean),
+  // 저장할 때 지금 것과 칸마다 비교해(confirmed-check.js) 다르면 바뀐 칸을 한 창에 보여 주고 묻는다. 「⤵ 반영」으로 받은 남의 수정과
+  // 사업계획 「⟳ 전년 다시 받기」로 바뀐 12월 확정 값은 묻지 않는다(그때 기준을 새로 잡는다). 새 사업계획·미리보기처럼 기준이 없으면 묻지 않는다
+  const CC = window.SonikConfCheck;
+  const confStr = (c) => { try { return JSON.stringify(c == null ? null : c); } catch (_) { return null; } };
+  function confRebase() { try { st.conf0 = st.mounted ? confStr(st.mounted.bridge.buildDb().confirmed) : null; } catch (_) { st.conf0 = null; } }
+  function confChanges(db) {
+    if (!CC || st.conf0 == null) return null;
+    try { return CC.check(JSON.parse(st.conf0), db.confirmed == null ? null : db.confirmed); } catch (_) { return null; }
+  }
+  async function askConfChange(cc) {
+    const MAXR = 40, lines = [];
+    cc.rows.slice(0, MAXR).forEach((r) => lines.push('<tr><td class="memo">' + esc(CC.label(r.path)) + '</td><td>' + esc(CC.fieldsText(r.fields, 'before')) + '</td><td><b>' + esc(CC.fieldsText(r.fields, 'after')) + '</b></td></tr>'));
+    cc.removed.slice(0, Math.max(0, MAXR - lines.length)).forEach((r) => lines.push('<tr><td class="memo">' + esc(CC.label(r.path)) + '</td><td>' + r.n + '칸</td><td><b>(없어짐)</b></td></tr>'));
+    const more = cc.rows.length + cc.removed.length - lines.length;
+    const added = cc.added.map((a) => '<li><b>' + esc(a.ym) + '</b> — ' + esc(a.where.join(', ')) + ' <span class="hint">(' + a.n + '칸)</span></li>').join('');
+    const card = document.querySelector('#modal .modal-card'); card.classList.add('wide');
+    $('mOk').textContent = '이대로 저장';
+    const p = ask('확정 자료가 바뀌었습니다 — 저장 전 확인',
+      '<p>연 뒤(또는 마지막으로 저장한 뒤) <b>확정 자료 ' + cc.total + '칸</b>이 바뀌었습니다. 확정 자료는 한 번 넣으면 잘 바꾸지 않으므로, 의도한 수정인지 확인하세요.</p>'
+      + (lines.length ? '<p><b>값이 바뀐 곳 ' + (cc.rows.length + cc.removed.length) + '</b></p><div class="mgwrap"><table class="grid mg cc"><thead><tr><th>위치</th><th>이전</th><th>지금</th></tr></thead><tbody>' + lines.join('') + '</tbody></table></div>'
+        + (more > 0 ? '<p class="hint">외 ' + more + '곳</p>' : '') : '')
+      + (added ? '<p><b>새로 들어온 달 ' + cc.added.length + '</b> <span class="hint">(전에는 없던 달의 확정 자료)</span></p><ul class="ccadd">' + added + '</ul>' : '')
+      + '<p class="hint">「이대로 저장」을 누르면 저장합니다. 잘못 바뀐 칸이 있으면 「취소」하고 그 칸을 고친 뒤 다시 저장하세요(취소해도 화면은 그대로입니다).</p>');
+    const tb = $('mBody').querySelector('table.cc tbody'); if (tb) labelGrid(tb);
+    const go = await p;
+    $('mOk').textContent = '확인'; card.classList.remove('wide');
+    return go;
+  }
   // 저장 뒤 바뀐 게 있는지(hong 11/03): 엔진 자료(DB 내보내기와 같은 내용)에서 화면 위치 같은 보기 상태를 빼고 비교한다
   const VIEW_KEYS = ['_zone', '_zoneMode', '_siteMenu', '_zoneMenu', '_sub', '_sysLogReset', '_sysLogHideV2'];
   function dataSig(db) {
@@ -1276,6 +1315,7 @@
       if (st.mounted !== m) return;
       let d = null; try { d = m.bridge.buildDb(); } catch (_) { d = null; }
       st.cleanSig = d ? dataSig(d) : null;
+      st.conf0 = d ? confStr(d.confirmed) : null; // 확정 자료 비교 기준(연 직후·저장 직후)
       if (d && baseRev != null && st.open && st.open.rev === baseRev) st.base = baseOf(d, baseRev);
     }, ms);
   }
@@ -1346,6 +1386,7 @@
       const full = Object.assign(st.mounted.bridge.buildDb(), await B.extras(win));
       if (B.isBiz(win)) full.linkSonik = st.link || null;
       st.base = baseOf(th, row.rev); st.newer = null;
+      st.conf0 = confStr(th.confirmed); // 확정 자료 비교 기준 = 받은 최신 저장본(남이 고친 확정 칸은 내 저장 때 다시 묻지 않는다)
       st.open = Object.assign({}, st.open, { rev: row.rev, storage_path: row.storage_path, size_bytes: row.size_bytes, updated_at: row.updated_at, engine_ver: row.engine_ver });
       const picked = Object.values(choice).filter((v) => v === 't').length;
       const note = (who ? who + (who === '내 다른 창' ? ' ' : '님 ') : '') + fmtT(row.updated_at) + ' 저장본과 합침 · 상대 ' + res.stats.theirs + '칸 · 내 ' + res.stats.mine + '칸'

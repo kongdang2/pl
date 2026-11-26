@@ -79,7 +79,7 @@ let pass=0,fail=0;const ok=(c,m,extra)=>{if(c){pass++;console.log('ok  ',m);}els
  const SEEDS=[];
  await P.evaluate(()=>{const B=window.SonikBizplan;
   B.seedPack=async(w,py)=>({seedVal:w.eval('S').val,annual:w.p88PackYear(py-1)});
-  B.applySeedPack=(w,pk,label)=>{w.eval('S').seedVal=pk.seedVal;window.__seedCalls=(window.__seedCalls||[]).concat([label]);const a=B.applyAnnual(w,pk.annual,true);w.refresh();return {inv:1,dec:0,annual:a};};});
+  B.applySeedPack=(w,pk,label)=>{w.eval('S').seedVal=pk.seedVal;w.eval('CONFIRMED_DB').onsan={confirmedPrice:{'2026-12':{mopj:pk.seedVal}}};window.__seedCalls=(window.__seedCalls||[]).concat([label]);const a=B.applyAnnual(w,pk.annual,true);w.refresh();return {inv:1,dec:0,annual:a};};});
  // ③ 다른 창(Q)에서 ’26년 손익추정을 열어 값 300 으로 저장 → P 에 바로 알림·단추 강조
  const Q=await page('sonik');await Q.waitForSelector('[data-open="s26"]',{timeout:20000});await Q.click('[data-open="s26"]');await idle(Q);await Q.waitForTimeout(1800);
  const qctx=await Q.evaluate(()=>document.getElementById('ctx').textContent);
@@ -102,7 +102,9 @@ let pass=0,fail=0;const ok=(c,m,extra)=>{if(c){pass++;console.log('ok  ',m);}els
  // 한 번 더 눌러도 같은 저장본(300)을 다시 이어받을 뿐 값은 그대로
  await P.click('#btnPrevRe');await idle(P);tx=await T(P,()=>T.text());ok(/prev=300/.test(tx)&&await T(P,()=>T.S().seedVal)===300,'다시 눌러도 같은 값',tx);
  // P 저장 → 사업계획 저장본에 새 「당해」(300)·연동 기억 그대로
- await P.click('#btnSave');await idle(P);await P.waitForTimeout(300);
+ await P.click('#btnSave');await P.waitForTimeout(400);
+ ok(await P.evaluate(()=>document.getElementById('modal').hidden),'다시 받기로 바뀐 12월 확정 값은 저장 때 확인 창을 띄우지 않음(11-27)');
+ await idle(P);await P.waitForTimeout(300);
  const b27=DB.sk_snapshots.find(r=>r.id==='b27');const saved=JSON.parse(zlib.gunzipSync(FILES[b27.storage_path]));
  ok(saved.payload._bvPrev.stores.v===300&&saved.linkSonik&&saved.linkSonik.id==='s26','P 저장본 = 새 「당해」 300 · 연동 s26 그대로',{v:saved.payload._bvPrev.stores.v,link:saved.linkSonik});
  // ④ 연동 손익추정 고르기: 목록 뒤에 서버에 생긴 ’26년 손익추정도 보임
