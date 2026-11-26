@@ -235,8 +235,9 @@
     });
   })();
 
-  // ── 무료 한도 현황(hong 11/03) ── 파일 보관·DB 는 실제 크기, 내려받기(egress)는 사이트·중계가 받은 파일 크기를 적어 둔 추정치(sk_egress)
-  const LIMIT = { egress: 5e9, storage: 1e9, db: 5e8 }; // Supabase Usage 화면은 10진 GB(1GB = 10억 바이트)
+  // ── 사용량·한도 현황(hong 11/03) ── 파일 보관·DB 는 실제 크기, 내려받기(egress)는 사이트·중계가 받은 파일 크기를 적어 둔 추정치(sk_egress)
+  // 2026-11-26 조직 Pro 전환(hong): 전송량 250GB(조직), 파일 100GB(조직), DB 디스크 8GB(프로젝트마다). 실제 값이 있으면 Usage 화면의 한도(pricing_free_units)를 먼저 쓴다
+  const LIMIT = { egress: 250e9, storage: 100e9, db: 8e9 }; // Supabase Usage 화면은 10진 GB(1GB = 10억 바이트)
   function egress(bytes, what) {
     if (!st.me || !bytes) return;
     sb.from('sk_egress').insert({ email: st.me.email, bytes: Math.round(bytes), what: what || '' }).then(() => loadUsage(), () => {});
@@ -250,7 +251,7 @@
   }
   setInterval(netFlush, 300000);
   document.addEventListener('visibilitychange', () => { if (document.hidden) netFlush(); });
-  const fmtB = (b) => b >= 1e9 ? (b / 1e9).toFixed(2) + 'GB' : Math.round(b / 1e6) + 'MB';
+  const fmtB = (b) => b >= 1e11 ? Math.round(b / 1e9) + 'GB' : b >= 1e9 ? (b / 1e9).toFixed(2) + 'GB' : Math.round(b / 1e6) + 'MB';
   async function loadUsage() {
     clearTimeout(loadUsage.t); loadUsage.t = setTimeout(loadUsage, 60000);
     if ($('vList').hidden || document.hidden) return;
@@ -291,10 +292,13 @@
       return '이 사이트 ' + fmtB(me) + ' · 다른 앱 ' + fmtB(al.filter((a) => a.ref !== 'znqaxyqayxkgqnqnwyez').reduce((t, a) => t + (+a.usage || 0), 0)); };
     const rs = metric('STORAGE_SIZE'), rd = metric('DATABASE_SIZE');
     $('usageRows').innerHTML = realRow + (fresh ? '' : bar(realRow ? '추정 (이 사이트·중계)' : egLabel, u.egress_month, LIMIT.egress, egSub))
-      + (rs ? bar('파일 보관', +rs.usage_original, (+rs.pricing_free_units || 1) * 1e9, 'Usage 화면 값 · 조직 전체 · 기간 평균 (' + split(rs) + ')')
+      + (rs ? bar('파일 보관', +rs.usage_original, (+rs.pricing_free_units ? +rs.pricing_free_units * 1e9 : LIMIT.storage), 'Usage 화면 값 · 조직 전체 · 기간 평균 (' + split(rs) + ')')
         : bar('파일 보관', u.storage, LIMIT.storage, '추정자료·엔진·챗봇 첨부'))
-      + (rd ? bar('데이터베이스', +rd.usage_original, (+rd.pricing_free_units || 0.5) * 1e9, 'Usage 화면 값 · 가장 큰 프로젝트 기준(한도는 프로젝트마다) (' + split(rd) + ')')
-        : bar('데이터베이스', u.db, LIMIT.db, '목록·요청·챗봇 글'));
+      + (rd ? bar('데이터베이스', +rd.usage_original, (+rd.pricing_free_units ? +rd.pricing_free_units * 1e9 : LIMIT.db), 'Usage 화면 값 · 가장 큰 프로젝트 기준(한도는 프로젝트마다) (' + split(rd) + ')')
+        : bar('데이터베이스', u.db, LIMIT.db, '목록·요청·챗봇 글 · 한도는 프로젝트마다(Pro 디스크 8GB)'));
+    // 한도를 넘으면: 지출 한도(Spend Cap) 켜짐 = 제한(추가 요금 없음), 꺼짐 = 넘은 만큼 요금. Usage 화면의 구독 정보로 판단
+    const sub = real && real.raw && real.raw.sub, plan = sub && sub.plan && sub.plan.name;
+    $('usagePlan').textContent = plan ? plan + ' 플랜' + (sub.usage_billing_enabled === false ? ' · 지출 한도 켜짐: 한도를 넘으면 추가 요금 없이 사용이 제한됩니다' : sub.usage_billing_enabled === true ? ' · 지출 한도 꺼짐: 한도를 넘은 만큼 추가 요금(전송량 GB당 $0.09)' : '') : '';
     $('usageAt').textContent = fmtT(u.at) + ' 기준';
     $('btnClean').hidden = !(st.me && st.me.role === 'admin');
     $('usageCard').hidden = false;
