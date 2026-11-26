@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta charset="utf-8"><title>fake</title>
+<style>body{margin:30px;font:14px sans-serif}input.c{width:130px;font-size:15px;padding:4px;text-align:right}td{padding:0 60px 0 0}#drop{margin-top:30px;width:300px;height:50px;border:2px dashed #999}</style>
+</head><body>
+<!-- 가짜 엔진: 「판매 ▸ 확정」 표처럼 칸 값이 바뀌면(onchange) parseFloat 로 읽어 자료에 넣는다. 실데이터 없음(숫자는 사고 때 모양만 본뜸)
+     window.SEL=1 이면 엔진 표처럼 칸을 누르는 순간 그 칸 글자를 모두 선택한다(선택 모드: 포커스+전체선택) -->
+<div id="txt">77777.5</div>
+<table><tr>
+  <td><input class="c" id="jan" value="13374.825" onchange="upd('jan',this.value)"></td>
+  <td><input class="c" id="oct" value="9463.525" onchange="upd('oct',this.value)"></td>
+</tr></table>
+<div id="drop" ondragover="event.preventDefault()" ondrop="event.preventDefault();window.__FILES=(window.__FILES||0)+event.dataTransfer.files.length">파일 놓는 곳</div>
+<script>
+window.SYS_CHANGELOG=[{date:'2026-11-27',title:'v415-1 시험'}];
+var Q={jan:13374.825,oct:9463.525};
+function upd(k,v){Q[k]=parseFloat(v)||0;}
+window.__sonikWebBridge={info:function(){return {sysVer:'v415-1'};},buildDb:function(){return {payload:{q:Q}};},applyDb:function(){return {};}};
+document.addEventListener('mousedown',function(e){var t=e.target;if(!window.SEL||!t.classList||!t.classList.contains('c'))return;
+ setTimeout(function(){if(document.activeElement===t)t.select();},0);},true);
+window.T={q:function(){return JSON.parse(JSON.stringify(Q));},v:function(){return {jan:document.getElementById('jan').value,oct:document.getElementById('oct').value};}};
+</script></body></html>
