@@ -1,0 +1,24 @@
+<!doctype html><html><head><meta charset="utf-8"><title>fake</title></head><body><div id="v">engine</div><script>
+// 가짜 엔진(실데이터 없음): 확정 자료(CONFIRMED_DB)가 실제 엔진처럼 사이트 / 자료 종류 / 연-월 / 품목 / 내수·수출 / 칸 으로 들어 있다
+window.SYS_CHANGELOG=[{date:'2026-11-27',title:'v415-1 시험'}];
+var S=null, CONFIRMED_DB={}, PLAN_DB=null;
+function tot(){var n=0;(S.onsan.sales['2026-11']||[]).forEach(function(r){n+=+r.qty||0;});return n*(S.onsan.prices.fx||0);}
+window.__sonikWebBridge={info:function(){return {sysVer:'v415-1'};},
+ buildDb:function(){var p={};Object.keys(S).forEach(function(k){if(['site','menu','ym'].indexOf(k)<0)p[k]=JSON.parse(JSON.stringify(S[k]));});
+  return {format:'pnl-db/1',scope:'all',sysVer:'v415-1',mode:'sonik',baseYm:S.session.baseYm,months:JSON.parse(JSON.stringify(S.session.months)),payload:p,confirmed:JSON.parse(JSON.stringify(CONFIRMED_DB)),plan:null,verify:{t:tot()},savedAt:new Date().toISOString()};},
+ applyDb:function(db){S=JSON.parse(JSON.stringify(db.payload));if(!S.site)S.site='onsan';if(!S.menu)S.menu='price';if(!S.ym)S.ym=db.baseYm;CONFIRMED_DB=JSON.parse(JSON.stringify(db.confirmed||{}));
+  document.getElementById('v').textContent='t='+tot();return {verify:db.verify?{diffs:db.verify.t===tot()?[]:[1],skipped:[]}:null};}};
+function cell(site,store,ym,prod,kind){var o=CONFIRMED_DB[site]=CONFIRMED_DB[site]||{};o=o[store]=o[store]||{};o=o[ym]=o[ym]||{};o=o[prod]=o[prod]||{};return o[kind]=o[kind]||{};}
+window.T={
+ est:function(prod,v){S.onsan.sales['2026-11'].find(function(r){return r.prod===prod;}).qty=v;},
+ // 확정 판매 칸 고치기(엔진처럼 수량이 0 이면 단가도 0, 금액은 그대로)
+ conf:function(ym,prod,kind,field,v){var c=cell('ulsan','confirmedSales',ym,prod,kind);c[field]=v;if(field==='qty'){if(!v){c.unitKrw=0;c.unitUsd=0;}}},
+ price:function(ym,k,v){var o=CONFIRMED_DB.onsan.confirmedPrice;(o[ym]=o[ym]||{})[k]=v;},
+ addMonth:function(ym){cell('ulsan','confirmedSales',ym,'HDPE','dom').qty=9000;cell('ulsan','confirmedSales',ym,'HDPE','dom').amt=12000;cell('ulsan','confirmedSales',ym,'PP','exp').qty=500;T.price(ym,'mopj',790);},
+ dropMonth:function(ym){delete CONFIRMED_DB.ulsan.confirmedSales[ym];},
+ // 화면을 그리며 생기는 빈 자리·계산 오차(변경이 아님)
+ touch:function(){var c=cell('ulsan','confirmedSales','2026-12','HDPE','dom');c.qty=0;c.amt=0;c.unitKrw=0;CONFIRMED_DB.head=CONFIRMED_DB.head||{};CONFIRMED_DB.head.confirmedCost=CONFIRMED_DB.head.confirmedCost||{};
+  var j=cell('ulsan','confirmedSales','2026-01','HDPE','dom');j.amt=j.amt*(1+1e-13);},
+ C:function(){return JSON.parse(JSON.stringify(CONFIRMED_DB));}, S:function(){return S;}
+};
+</script></body></html>
