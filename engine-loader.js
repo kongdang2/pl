@@ -56,6 +56,29 @@
     });
   }
 
+  // 칸 글자 끌어 옮기기 막기(hong 11-27 「재발방지도」). 표 칸을 두 번 눌러 고치는 상태에서 글자를 선택한 채 끌면 브라우저가 그 글자를
+  // 다른 칸으로 「옮긴다」(끌어 놓기 기본 동작): 원래 칸은 빈칸(=0)이 되고, 놓인 칸은 글자가 이어 붙어 앞부분만 숫자로 읽힌다.
+  // 실제 사고(11-26): 울산 「판매 ▸ 확정」 ’26.1월 HDPE 내수 수량 13374.825 가 10월 칸 9463.525 뒤에 붙어 9463.52513374 로 저장, 1월 수량 0.
+  // 엔진 문서에서 ① 입력 칸에서 시작하는 끌기 ② 입력 칸에 글자 놓기(칸 밖·다른 창에서 끌어 온 글자 포함)를 막는다.
+  // 그대로 두는 것: 파일 끌어 놓기(업로드 칸), 칸 안에서 마우스로 글자 선택, 복사·붙여넣기, 표 범위 선택.
+  function guardTextDrag(win) {
+    let doc = null;
+    try { doc = win && win.document; } catch (_) { /* 다른 출처 */ }
+    if (!doc || doc.__sonikDragGuard) return false;
+    doc.__sonikDragGuard = true;
+    const field = (t) => {
+      const el = t && (t.nodeType === 1 ? t : t.parentElement);
+      return el && el.closest ? el.closest('input,textarea,[contenteditable=""],[contenteditable="true"]') : null;
+    };
+    doc.addEventListener('dragstart', (e) => { if (field(e.target)) e.preventDefault(); }, true);
+    doc.addEventListener('drop', (e) => {
+      const ty = e.dataTransfer && e.dataTransfer.types;
+      const files = !!ty && Array.prototype.indexOf.call(ty, 'Files') >= 0;
+      if (!files && field(e.target)) e.preventDefault();
+    }, true);
+    return true;
+  }
+
   // iframe을 만들고 엔진이 준비될 때까지 기다린다. 반환: {frame, win, bridge}
   async function mount(container, html, onMessage, timeoutMs) {
     container.innerHTML = '';
@@ -73,6 +96,7 @@
       try { if (w && w.__sonikWebBridge && w.__sonikWebBridge.info()) break; } catch (_) { /* 아직 부팅 중 */ }
       if (Date.now() - t0 > limit) throw new Error('엔진이 ' + Math.round(limit / 1000) + '초 안에 열리지 않았습니다');
     }
+    guardTextDrag(frame.contentWindow); // 칸 글자를 끌어 다른 칸으로 옮기는 브라우저 기본 동작 막기
     await new Promise((r) => setTimeout(r, 800)); // 부팅 직후 refresh 마무리
     URL.revokeObjectURL(url);
     return { frame, win: frame.contentWindow, bridge: guardBridge(frame.contentWindow, frame.contentWindow.__sonikWebBridge), dispose: () => window.removeEventListener('message', handler) };
@@ -149,5 +173,5 @@
     },
   };
 
-  window.SonikEngine = { checkEmptyEngine, inject, mount, inMain, leaveLt, gzip, gunzipToText, sha256, checkSnapshot, LocalCache };
+  window.SonikEngine = { checkEmptyEngine, inject, mount, guardTextDrag, inMain, leaveLt, gzip, gunzipToText, sha256, checkSnapshot, LocalCache };
 })();
